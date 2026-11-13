@@ -36,10 +36,10 @@ async def test_idle_when_nothing_happens(db):
 
 @pytest.mark.asyncio
 async def test_pending_request_outranks_everything(db):
-    failed = await task_store.add_task(db, user_id=1, title="失败任务")
+    failed = await task_store.add_task(db, user_id=1, title="Failed task")
     await task_store.update_task(db, failed["id"], 1, status="failed")
-    task = await task_store.add_task(db, user_id=1, title="发邮件")
-    await rs.create_request(db, user_id=1, request_type="approval", title="确认发送", task_id=task["id"])
+    task = await task_store.add_task(db, user_id=1, title="Send email")
+    await rs.create_request(db, user_id=1, request_type="approval", title="Confirm send", task_id=task["id"])
 
     summary = await attention.get_attention_summary(db, 1)
 
@@ -52,9 +52,9 @@ async def test_pending_request_outranks_everything(db):
 
 @pytest.mark.asyncio
 async def test_unread_results_appear_until_viewed(db):
-    task = await task_store.add_task(db, user_id=1, title="写报告")
+    task = await task_store.add_task(db, user_id=1, title="Write report")
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
-    await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="报告完成")
+    await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="Report completed")
 
     summary = await attention.get_attention_summary(db, 1)
     assert len(summary["groups"]["unread_results"]) == 1
@@ -66,13 +66,13 @@ async def test_unread_results_appear_until_viewed(db):
 
 @pytest.mark.asyncio
 async def test_active_runs_and_partial_tasks_grouped(db):
-    running = await task_store.add_task(db, user_id=1, title="进行中")
+    running = await task_store.add_task(db, user_id=1, title="In progress")
     await task_service.start_agent_run(db, running["id"], 1)
     # in_progress without a live run (e.g. waiting for a resume) also counts
-    lingering = await task_store.add_task(db, user_id=1, title="待续跑")
+    lingering = await task_store.add_task(db, user_id=1, title="Needs resume")
     await task_store.update_task(db, lingering["id"], 1, status="in_progress")
 
-    partial = await task_store.add_task(db, user_id=1, title="部分完成")
+    partial = await task_store.add_task(db, user_id=1, title="Partially done")
     await task_store.update_task(db, partial["id"], 1, status="partial")
 
     summary = await attention.get_attention_summary(db, 1)
@@ -87,10 +87,10 @@ async def test_active_runs_and_partial_tasks_grouped(db):
 
 @pytest.mark.asyncio
 async def test_partial_tasks_stop_after_result_viewed(db):
-    task = await task_store.add_task(db, user_id=1, title="素材包")
+    task = await task_store.add_task(db, user_id=1, title="Asset bundle")
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
     await task_service.finish_agent_run(
-        db, run_id, 1, "partial", result_summary="生成了大部分素材"
+        db, run_id, 1, "partial", result_summary="Generated most of the assets"
     )
     await task_store.update_task(db, task["id"], 1, status="partial")
 
@@ -109,14 +109,14 @@ async def test_due_human_tasks_within_24h(db):
     soon = await task_store.add_task(
         db,
         user_id=1,
-        title="明天截止",
+        title="Due tomorrow",
         deadline=datetime.datetime.now() + datetime.timedelta(hours=12),
     )
     # assignee "xcl" → human owner
     far = await task_store.add_task(
         db,
         user_id=1,
-        title="远期截止",
+        title="Due later",
         assignee="xcl",
         deadline=datetime.datetime.now() + datetime.timedelta(days=7),
     )
@@ -124,23 +124,23 @@ async def test_due_human_tasks_within_24h(db):
     summary = await attention.get_attention_summary(db, 1)
 
     due_titles = {item["message"] for item in summary["groups"]["due_human_tasks"]}
-    assert any("明天截止" in m for m in due_titles)
-    assert not any("远期截止" in m for m in due_titles)
+    assert any("Due tomorrow" in m for m in due_titles)
+    assert not any("Due later" in m for m in due_titles)
     assert far["owner_type"] == "human"
     assert soon["id"] != far["id"]
 
 
 @pytest.mark.asyncio
 async def test_attention_by_workspace(db):
-    task_a = await task_store.add_task(db, user_id=1, title="A 任务", workspace="工作区A")
+    task_a = await task_store.add_task(db, user_id=1, title="Task A", workspace="Workspace A")
     await task_store.update_task(db, task_a["id"], 1, status="failed")
-    task_b = await task_store.add_task(db, user_id=1, title="B 任务", workspace="工作区B")
+    task_b = await task_store.add_task(db, user_id=1, title="Task B", workspace="Workspace B")
     await task_service.start_agent_run(db, task_b["id"], 1)
 
     by_ws = await attention.get_attention_by_workspace(db, 1)
 
     assert len(by_ws) == 2
-    # 工作区A (failed, priority 1) ranks above 工作区B (working, priority 4)
-    assert by_ws[0]["workspace"] == "工作区A"
+    # Workspace A (failed, priority 1) ranks above Workspace B (working, priority 4)
+    assert by_ws[0]["workspace"] == "Workspace A"
     assert by_ws[0]["status"] == "failed"
     assert by_ws[1]["status"] == "working"

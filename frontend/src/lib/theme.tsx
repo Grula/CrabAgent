@@ -3,72 +3,72 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 
 export type Theme = "light" | "dark";
 export type ThemeMode = Theme | "system";
+/** Font of assistant replies: serif (default) or the UI sans-serif */
+export type ChatFont = "serif" | "sans";
 export const DEFAULT_COLORS = {
   "light": {
-    "bg-primary": "#f8f2e7",
-    "bg-secondary": "#fffcf5",
-    "bg-tertiary": "#f0e6d2",
-    "bg-elevated": "#e7dac2",
-    "text-primary": "#3e2f21",
-    "text-secondary": "#7d6851",
-    "text-tertiary": "#a5916f",
+    "bg-primary": "#faf9f5",
+    "bg-secondary": "#ffffff",
+    "bg-tertiary": "#f0eee6",
+    "bg-elevated": "#e8e6dc",
+    "text-primary": "#141413",
+    "text-secondary": "#3d3d3a",
+    "text-tertiary": "#73726c",
     "text-on-accent": "#ffffff",
     "text-on-brand": "#ffffff",
-    "border": "#e4d5bc",
-    "border-subtle": "#efe3cd",
-    "border-strong": "#cbb48e",
-    "brand": "#2f8f86",
-    "brand-hover": "#3fab9f",
-    "brand-active": "#237a72",
-    "accent": "#d97e42",
-    "accent-hover": "#e59457",
-    "accent-2": "#9a6fc0",
-    "accent-2-hover": "#ac85cf",
-    "success": "#4f9a5c",
-    "warning": "#c9922f",
-    "danger": "#c8524f",
-    "danger-hover": "#d56764",
-    "agent-researcher": "#4d86bd",
-    "agent-analyst": "#9a6fc0",
-    "agent-coder": "#4f9a5c",
-    "agent-writer": "#d98a2b",
-    "agent-plan_creater": "#0f92b5",
-    "code-bg": "#f5edda",
-    "code-border": "#e4d5bc",
- 
+    "border": "#dedcd1",
+    "border-subtle": "#ebe9e0",
+    "border-strong": "#cbc9bd",
+    "brand": "#c96442",
+    "brand-hover": "#b65838",
+    "brand-active": "#a14d30",
+    "accent": "#2c84db",
+    "accent-hover": "#1f6fbf",
+    "accent-2": "#8a6bbd",
+    "accent-2-hover": "#7a5aae",
+    "success": "#3d8a4f",
+    "warning": "#a86f12",
+    "danger": "#b8433a",
+    "danger-hover": "#a3372f",
+    "agent-researcher": "#3f7cb5",
+    "agent-analyst": "#8a6bbd",
+    "agent-coder": "#3d8a4f",
+    "agent-writer": "#c27a1a",
+    "agent-plan_creater": "#1b8a9e",
+    "code-bg": "#f3f1ea",
+    "code-border": "#e6e4da",
   },
   "dark": {
-    "bg-primary": "#221b14",
-    "bg-secondary": "#2e251c",
-    "bg-tertiary": "#3b3025",
-    "bg-elevated": "#483b2e",
-    "text-primary": "#f4ebdc",
-    "text-secondary": "#c6b599",
-    "text-tertiary": "#99886c",
+    "bg-primary": "#262624",
+    "bg-secondary": "#30302e",
+    "bg-tertiary": "#3a3a37",
+    "bg-elevated": "#454541",
+    "text-primary": "#f5f4ef",
+    "text-secondary": "#c2c0b6",
+    "text-tertiary": "#9c9a92",
     "text-on-accent": "#ffffff",
     "text-on-brand": "#ffffff",
-    "border": "#483b2e",
-    "border-subtle": "#332a20",
-    "border-strong": "#5e4e3b",
-    "brand": "#43b3a6",
-    "brand-hover": "#5bc5b8",
-    "brand-active": "#2f9488",
-    "accent": "#e89a5e",
-    "accent-hover": "#f2ad76",
-    "accent-2": "#b993e2",
-    "accent-2-hover": "#c8a8ec",
-    "success": "#70c27c",
-    "warning": "#e7b95f",
-    "danger": "#f06e6c",
-    "danger-hover": "#f68886",
-    "agent-researcher": "#6ea4d6",
-    "agent-analyst": "#b993e2",
-    "agent-coder": "#70c27c",
-    "agent-writer": "#f0b45a",
-    "agent-plan_creater": "#2cc4de",
-    "code-bg": "#191309",
-    "code-border": "#332a20",
- 
+    "border": "#42413d",
+    "border-subtle": "#34342f",
+    "border-strong": "#57564f",
+    "brand": "#d97757",
+    "brand-hover": "#e2896b",
+    "brand-active": "#c4643f",
+    "accent": "#5aa1e6",
+    "accent-hover": "#79b4ee",
+    "accent-2": "#b394dc",
+    "accent-2-hover": "#c3aae5",
+    "success": "#7cbf86",
+    "warning": "#dcae58",
+    "danger": "#e5706a",
+    "danger-hover": "#ec8984",
+    "agent-researcher": "#6fa4d8",
+    "agent-analyst": "#b394dc",
+    "agent-coder": "#7cbf86",
+    "agent-writer": "#e0a64e",
+    "agent-plan_creater": "#3fbfd4",
+    "code-bg": "#1f1e1d",
+    "code-border": "#3a3a37",
   }
 } as const;
 export type ColorKey = keyof typeof DEFAULT_COLORS.light;
@@ -77,9 +77,10 @@ export interface CustomTheme { id: string; name: string; colors: Record<Theme, T
 const STORAGE_KEY = "crabagent.theme";
 const CUSTOM_KEY = "crabagent.customThemes";
 const ACTIVE_KEY = "crabagent.activeTheme";
+const CHAT_FONT_KEY = "crabagent.chatFont";
 const colorKeys = Object.keys(DEFAULT_COLORS.light) as ColorKey[];
 
-/** 升级前的默认色板，用于识别并自动迁移仍使用旧配色的已存主题（如"新主题"） */
+/** Pre-upgrade default palette, used to detect and auto-migrate stored themes still on the old colors (e.g. "New theme") */
 export const LEGACY_DEFAULT_COLORS = {
   "light": {
     "bg-primary": "#faf7f2",
@@ -147,9 +148,80 @@ export const LEGACY_DEFAULT_COLORS = {
   }
 } as const;
 
-/** 主题浅色或深色色板与旧默认完全一致时返回 true；用户改过颜色的主题不受影响 */
+/** The default palette before the ivory/clay redesign (teal brand). Stored themes that still match it exactly are upgraded. */
+export const PREVIOUS_DEFAULT_COLORS = {
+  "light": {
+    "bg-primary": "#f8f2e7",
+    "bg-secondary": "#fffcf5",
+    "bg-tertiary": "#f0e6d2",
+    "bg-elevated": "#e7dac2",
+    "text-primary": "#3e2f21",
+    "text-secondary": "#7d6851",
+    "text-tertiary": "#a5916f",
+    "text-on-accent": "#ffffff",
+    "text-on-brand": "#ffffff",
+    "border": "#e4d5bc",
+    "border-subtle": "#efe3cd",
+    "border-strong": "#cbb48e",
+    "brand": "#2f8f86",
+    "brand-hover": "#3fab9f",
+    "brand-active": "#237a72",
+    "accent": "#d97e42",
+    "accent-hover": "#e59457",
+    "accent-2": "#9a6fc0",
+    "accent-2-hover": "#ac85cf",
+    "success": "#4f9a5c",
+    "warning": "#c9922f",
+    "danger": "#c8524f",
+    "danger-hover": "#d56764",
+    "agent-researcher": "#4d86bd",
+    "agent-analyst": "#9a6fc0",
+    "agent-coder": "#4f9a5c",
+    "agent-writer": "#d98a2b",
+    "agent-plan_creater": "#0f92b5",
+    "code-bg": "#f5edda",
+    "code-border": "#e4d5bc",
+ 
+  },
+  "dark": {
+    "bg-primary": "#221b14",
+    "bg-secondary": "#2e251c",
+    "bg-tertiary": "#3b3025",
+    "bg-elevated": "#483b2e",
+    "text-primary": "#f4ebdc",
+    "text-secondary": "#c6b599",
+    "text-tertiary": "#99886c",
+    "text-on-accent": "#ffffff",
+    "text-on-brand": "#ffffff",
+    "border": "#483b2e",
+    "border-subtle": "#332a20",
+    "border-strong": "#5e4e3b",
+    "brand": "#43b3a6",
+    "brand-hover": "#5bc5b8",
+    "brand-active": "#2f9488",
+    "accent": "#e89a5e",
+    "accent-hover": "#f2ad76",
+    "accent-2": "#b993e2",
+    "accent-2-hover": "#c8a8ec",
+    "success": "#70c27c",
+    "warning": "#e7b95f",
+    "danger": "#f06e6c",
+    "danger-hover": "#f68886",
+    "agent-researcher": "#6ea4d6",
+    "agent-analyst": "#b993e2",
+    "agent-coder": "#70c27c",
+    "agent-writer": "#f0b45a",
+    "agent-plan_creater": "#2cc4de",
+    "code-bg": "#191309",
+    "code-border": "#332a20",
+ 
+  }
+} as const;
+
+/** Upgrades themes whose light or dark palette exactly matches an earlier default; themes the user recolored are untouched */
 export function migrateLegacyDefaultThemes(themes: CustomTheme[]): CustomTheme[] {
-  const isLegacyPalette = (mode: Theme, palette: ThemeColors) => colorKeys.every(key => palette[key] === LEGACY_DEFAULT_COLORS[mode][key]);
+  const outdated = [LEGACY_DEFAULT_COLORS, PREVIOUS_DEFAULT_COLORS];
+  const isLegacyPalette = (mode: Theme, palette: ThemeColors) => outdated.some(old => colorKeys.every(key => palette[key] === old[mode][key]));
   return themes.map(item => (["light", "dark"] as const).some(mode => isLegacyPalette(mode, item.colors[mode]))
     ? { ...item, colors: { light: { ...DEFAULT_COLORS.light }, dark: { ...DEFAULT_COLORS.dark } } }
     : item);
@@ -157,12 +229,12 @@ export function migrateLegacyDefaultThemes(themes: CustomTheme[]): CustomTheme[]
 
 export interface ThemeScheme { name: string; backgroundOverlay: number; colors: Record<Theme, ThemeColors> }
 
-/** 导出主题配色为可移植 JSON（不含背景图片，二进制无法跨设备共享） */
+/** Exports a theme's colors as portable JSON (no background image — binaries can't be shared across devices) */
 export function exportThemeJSON(item: CustomTheme): string {
   return JSON.stringify({ name: item.name, backgroundOverlay: item.backgroundOverlay ?? 0, colors: item.colors }, null, 2);
 }
 
-/** 解析导入的配色 JSON：要求 name 及完整的浅色/深色色板，遮罩可选（0-100） */
+/** Parses imported color JSON: requires name and complete light/dark palettes, overlay optional (0-100) */
 export function parseThemeScheme(raw: string): ThemeScheme | null {
   try {
     const item: unknown = JSON.parse(raw);
@@ -210,10 +282,12 @@ export function parseThemes(raw: string | null): CustomTheme[] {
 interface ThemeContextValue {
   theme: Theme; mode: ThemeMode; setTheme: (t: Theme) => void; setMode: (t: ThemeMode) => void; toggleTheme: () => void;
   colors: ThemeColors | undefined; themes: CustomTheme[]; activeId: string; selectTheme: (id: string) => void; saveTheme: (theme: CustomTheme, image?: Blob) => Promise<void>; deleteTheme: (id: string) => Promise<void>; imageError: string;
+  chatFont: ChatFont; setChatFont: (font: ChatFont) => void;
 }
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 const read = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
 function initialMode(): ThemeMode { const value = read(STORAGE_KEY); return value === "light" || value === "dark" || value === "system" ? value : "system"; }
+function initialChatFont(): ChatFont { return read(CHAT_FONT_KEY) === "sans" ? "sans" : "serif"; }
 function systemTheme(): Theme { return typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark"; }
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [mode, setModeState] = useState<ThemeMode>(initialMode);
@@ -222,13 +296,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const stored = parseThemes(read(CUSTOM_KEY));
     const migrated = migrateLegacyDefaultThemes(stored);
     if (migrated.some((item, i) => item !== stored[i])) {
-      try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(migrated)); } catch { /* 迁移失败时本次会话仍使用新配色 */ }
+      try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(migrated)); } catch { /* if migration fails this session still uses the new colors */ }
     }
     return migrated;
   });
   const [activeId, setActiveId] = useState(() => read(ACTIVE_KEY) || "");
   const [imageUrl, setImageUrl] = useState("");
   const [imageError, setImageError] = useState("");
+  const [chatFont, setChatFontState] = useState<ChatFont>(initialChatFont);
+  useEffect(() => { document.documentElement.setAttribute("data-chat-font", chatFont); }, [chatFont]);
+  const setChatFont = (font: ChatFont) => { try { localStorage.setItem(CHAT_FONT_KEY, font); } catch { /* still applies for this session */ } setChatFontState(font); };
   const theme = mode === "system" ? system : mode;
   const active = themes.find(item => item.id === activeId);
   useEffect(() => {
@@ -248,7 +325,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     getThemeImage(image.slice(IMAGE_PREFIX.length)).then(blob => {
       if (!blob) throw new Error("Image not found");
       if (!cancelled) { url = URL.createObjectURL(blob); setImageUrl(url); }
-    }).catch(() => { if (!cancelled) setImageError("背景图片读取失败，请检查浏览器存储或重新上传。"); });
+    }).catch(() => { if (!cancelled) setImageError("Failed to read the background image. Check browser storage or upload it again."); });
     return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
   }, [active?.backgroundImage]);
   useEffect(() => {
@@ -308,7 +385,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (activeId === id) selectTheme("");
     if (previous.startsWith(IMAGE_PREFIX)) await deleteThemeImage(previous.slice(IMAGE_PREFIX.length));
   };
-  return <ThemeContext.Provider value={{ theme, mode, setTheme: setMode, setMode, toggleTheme: () => setMode(theme === "dark" ? "light" : "dark"), colors: active?.colors[theme], themes, activeId, selectTheme, saveTheme, deleteTheme, imageError }}>{children}</ThemeContext.Provider>;
+  return <ThemeContext.Provider value={{ theme, mode, setTheme: setMode, setMode, toggleTheme: () => setMode(theme === "dark" ? "light" : "dark"), colors: active?.colors[theme], themes, activeId, selectTheme, saveTheme, deleteTheme, imageError, chatFont, setChatFont }}>{children}</ThemeContext.Provider>;
 }
 export function useTheme(): ThemeContextValue {
   const ctx = useContext(ThemeContext);

@@ -1,4 +1,3 @@
-import { useTranslation } from "react-i18next";
 import { useState, useEffect, useRef } from "react";
 import { Plus, Trash2, Star, StarOff, ChevronDown, ChevronRight, X, Check, ExternalLink, Loader2 } from "lucide-react";
 import { Provider, CatalogEntry } from "../api/providers";
@@ -8,17 +7,17 @@ import * as chatgptApi from "../api/chatgpt";
 /** Format a duration in seconds to a human-readable window label. */
 function formatWindow(seconds: number | null | undefined): string {
   if (!seconds) return "";
-  if (seconds >= 86400) return `${Math.round(seconds / 86400)} 天窗口`;
-  if (seconds >= 3600) return `${Math.round(seconds / 3600)} 小时窗口`;
-  return `${Math.round(seconds / 60)} 分钟窗口`;
+  if (seconds >= 86400) return `${Math.round(seconds / 86400)}d window`;
+  if (seconds >= 3600) return `${Math.round(seconds / 3600)}h window`;
+  return `${Math.round(seconds / 60)}min window`;
 }
 
 /** Format remaining time before reset. */
 function formatReset(seconds: number | null | undefined): string {
   if (!seconds) return "";
-  if (seconds >= 86400) return `${(seconds / 86400).toFixed(1)} 天后重置`;
-  if (seconds >= 3600) return `${(seconds / 3600).toFixed(1)} 小时后重置`;
-  return `${Math.round(seconds / 60)} 分钟后重置`;
+  if (seconds >= 86400) return `${(seconds / 86400).toFixed(1)}d until reset`;
+  if (seconds >= 3600) return `${(seconds / 3600).toFixed(1)}h until reset`;
+  return `${Math.round(seconds / 60)}min until reset`;
 }
 
 function providerLabel(provider: Provider): string {
@@ -48,7 +47,6 @@ export default function ProviderPanel({
   onClose,
   onRefresh,
 }: Props) {
-  const { t } = useTranslation();
   const [mode, setMode] = useState<"list" | "add">("list");
   const [formType, setFormType] = useState(catalog[0]?.type || "");
   const [formVariantId, setFormVariantId] = useState<string>("");
@@ -104,7 +102,7 @@ export default function ProviderPanel({
             setChatgptPolling(false);
             setChatgptDeviceCode(null);
             if (pollRef.current) clearInterval(pollRef.current);
-            toast.success("ChatGPT 登录成功");
+            toast.success("ChatGPT login successful");
           }
         } catch {
           // Ignore polling errors
@@ -123,9 +121,9 @@ export default function ProviderPanel({
       await chatgptApi.logout();
       setChatgptAuth({ authenticated: false });
       setChatgptAccount(null);
-      toast.success("已退出 ChatGPT 登录");
+      toast.success("Signed out of ChatGPT");
     } catch {
-      toast.error("退出失败");
+      toast.error("Sign-out failed");
     }
   };
 
@@ -135,7 +133,7 @@ export default function ProviderPanel({
       const info = await chatgptApi.getAccountInfo();
       setChatgptAccount(info);
     } catch {
-      toast.error("获取账户信息失败");
+      toast.error("Failed to fetch account info");
     } finally {
       setChatgptAccountBusy(false);
     }
@@ -145,7 +143,7 @@ export default function ProviderPanel({
     const credits = chatgptAccount?.rate_limits?.banked_resets;
     const available = credits?.available_count ?? 0;
     if (available <= 0) {
-      toast.error("没有可用的重置额度");
+      toast.error("No reset credits available");
       return;
     }
     setResetConfirmTarget(true);
@@ -156,19 +154,19 @@ export default function ProviderPanel({
     const firstCredit = credits?.credits?.[0];
     const creditId = firstCredit?.id;
     if (!creditId) {
-      toast.error("无法获取重置额度 ID");
+      toast.error("Could not get the reset credit ID");
       return;
     }
     setResetConfirmTarget(false);
     setResetBusy(true);
     try {
       await chatgptApi.consumeResetCredit(creditId);
-      toast.success("额度已重置！");
+      toast.success("Quota reset!");
       // Refresh account info after reset
       const info = await chatgptApi.getAccountInfo();
       setChatgptAccount(info);
     } catch {
-      toast.error("重置失败，请稍后重试");
+      toast.error("Reset failed. Try again later");
     } finally {
       setResetBusy(false);
     }
@@ -180,7 +178,7 @@ export default function ProviderPanel({
       const info = await quotaApi.getProviderQuota(name);
       setDeepseekQuotas((current) => ({ ...current, [name]: info }));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "获取 DeepSeek 余额失败");
+      toast.error(error instanceof Error ? error.message : "Failed to fetch DeepSeek balance");
     } finally {
       setDeepseekBusy(null);
     }
@@ -192,7 +190,7 @@ export default function ProviderPanel({
       const info = await quotaApi.getProviderQuota(name);
       setOpencodeQuotas((current) => ({ ...current, [name]: info.summary as quotaApi.OpenCodeGoQuota }));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "获取 OpenCode Go 额度失败");
+      toast.error(error instanceof Error ? error.message : "Failed to fetch OpenCode Go quota");
     } finally {
       setOpencodeBusy(null);
     }
@@ -204,7 +202,7 @@ export default function ProviderPanel({
       const info = await quotaApi.getProviderQuota(name);
       setZhipuQuotas((current) => ({ ...current, [name]: info }));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "获取智谱额度失败");
+      toast.error(error instanceof Error ? error.message : "Failed to fetch Zhipu quota");
     } finally {
       setZhipuBusy(null);
     }
@@ -312,7 +310,7 @@ export default function ProviderPanel({
         api_key: formKey,
         variant_id: formVariantId || undefined,
       });
-      toast.success(t("provider.providerAdded"));
+      toast.success("Provider added");
       emitProvidersChanged();
       onRefresh();
       setMode("list");
@@ -329,22 +327,22 @@ export default function ProviderPanel({
   const handleSetDefault = async (name: string) => {
     try {
       await providersApi.updateProvider(name, { is_default: true });
-      toast.success(t("provider.defaultUpdated"));
+      toast.success("Default provider updated");
       emitProvidersChanged();
       onRefresh();
     } catch {
-      toast.error(t("provider.setDefaultFailed"));
+      toast.error("Failed to set default");
     }
   };
 
   const handleDelete = async (name: string) => {
     try {
       await providersApi.deleteProvider(name);
-      toast.success(t("provider.providerDeleted"));
+      toast.success("Provider deleted");
       emitProvidersChanged();
       onRefresh();
     } catch {
-      toast.error(t("provider.deleteFailed"));
+      toast.error("Failed to delete provider");
     } finally {
       setDeleteTarget(null);
     }
@@ -359,26 +357,26 @@ export default function ProviderPanel({
       <Modal
         open={true}
         onOpenChange={(o) => !o && onClose()}
-        title={mode === "list" ? t("provider.title") : t("provider.addProvider")}
+        title={mode === "list" ? "LLM Providers" : "Add Provider"}
         description={
           mode === "list"
-            ? t("provider.manageDesc")
-            : t("provider.configureDesc")
+            ? "Manage your LLM provider credentials"
+            : "Configure a new provider connection"
         }
         size="md"
         footer={
           mode === "add" ? (
             <>
               <Button variant="ghost" onClick={() => setMode("list")}>
-                {t("common.cancel")}
+                {"Cancel"}
               </Button>
               <Button variant="brand" loading={busy} onClick={handleAdd}>
-                {t("provider.addProvider")}
+                {"Add Provider"}
               </Button>
             </>
           ) : (
             <Button variant="brand" onClick={() => setMode("add")}>
-              <Plus size={14} /> {t("provider.addProvider")}
+              <Plus size={14} /> {"Add Provider"}
             </Button>
           )
         }
@@ -387,11 +385,11 @@ export default function ProviderPanel({
           <div className="space-y-2">
             {providers.length === 0 ? (
               <EmptyState
-                title={t("provider.noProviders")}
-                description={t("provider.addProviderDesc")}
+                title={"No providers configured"}
+                description={"Add an LLM provider to start using CrabAgent."}
                 action={
                   <Button variant="brand" size="sm" onClick={() => setMode("add")}>
-                    <Plus size={14} /> {t("provider.addProvider")}
+                    <Plus size={14} /> {"Add Provider"}
                   </Button>
                 }
               />
@@ -415,7 +413,7 @@ export default function ProviderPanel({
                         )}
                         {(p.extra_models?.length ?? 0) > 0 && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--bg-secondary)] text-[var(--text-tertiary)] border border-[var(--border)] shrink-0">
-                            +{p.extra_models!.length} 模型
+                            +{p.extra_models!.length} models
                           </span>
                         )}
                       </div>
@@ -428,7 +426,7 @@ export default function ProviderPanel({
                         variant="ghost"
                         size="sm"
                         onClick={() => setExpandedProvider(expandedProvider === p.name ? null : p.name)}
-                        title="额外模型"
+                        title="Extra models"
                       >
                         {expandedProvider === p.name ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </Button>
@@ -437,7 +435,7 @@ export default function ProviderPanel({
                           variant="ghost"
                           size="sm"
                           onClick={() => handleSetDefault(p.name)}
-                          title={t("provider.setAsDefault")}
+                          title={"Set as default"}
                         >
                           <StarOff size={14} />
                         </Button>
@@ -446,7 +444,7 @@ export default function ProviderPanel({
                         variant="ghost"
                         size="sm"
                         onClick={() => setDeleteTarget(p.name)}
-                        title={t("common.delete")}
+                        title={"Delete"}
                         className="text-[var(--danger)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)]"
                       >
                         <Trash2 size={14} />
@@ -459,14 +457,14 @@ export default function ProviderPanel({
                       {p.type === "chatgpt" && (
                         <div className="pt-1.5 space-y-2">
                           <div className="text-[11px] font-medium text-[var(--text-secondary)] flex items-center gap-1.5">
-                            ChatGPT 订阅登录
+                            ChatGPT subscription sign-in
                             {chatgptAuth?.authenticated ? (
                               <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-500/15 text-green-600 border border-green-500/20">
-                                <Check size={9} /> 已连接
+                                <Check size={9} /> Connected
                               </span>
                             ) : (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--danger-bg)] text-[var(--danger)] border border-[var(--danger-border)]">
-                                未登录
+                                Not signed in
                               </span>
                             )}
                           </div>
@@ -475,7 +473,7 @@ export default function ProviderPanel({
                           {chatgptDeviceCode && chatgptPolling && (
                             <div className="p-3 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] space-y-2">
                               <p className="text-xs text-[var(--text-primary)]">
-                                1. 打开下方链接，登录 ChatGPT 账号
+                                1. Open the link below and sign in to your ChatGPT account
                               </p>
                               <a
                                 href={chatgptDeviceCode.verification_url}
@@ -486,7 +484,7 @@ export default function ProviderPanel({
                                 {chatgptDeviceCode.verification_url}
                                 <ExternalLink size={10} />
                               </a>
-                              <p className="text-xs text-[var(--text-primary)]">2. 输入以下授权码：</p>
+                              <p className="text-xs text-[var(--text-primary)]">2. Enter this authorization code:</p>
                               <div className="flex items-center gap-2">
                                 <code className="px-3 py-1.5 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border)] text-sm font-mono tracking-wider text-[var(--brand)]">
                                   {chatgptDeviceCode.user_code}
@@ -496,15 +494,15 @@ export default function ProviderPanel({
                                   size="sm"
                                   onClick={() => {
                                     navigator.clipboard.writeText(chatgptDeviceCode.user_code);
-                                    toast.success("已复制到剪贴板");
+                                    toast.success("Copied to clipboard");
                                   }}
                                 >
-                                  复制
+                                  Copy
                                 </Button>
                               </div>
                               <div className="flex items-center gap-1.5 text-[11px] text-[var(--text-tertiary)]">
                                 <Loader2 size={10} className="animate-spin" />
-                                等待授权完成...
+                                Waiting for authorization...
                               </div>
                             </div>
                           )}
@@ -514,15 +512,15 @@ export default function ProviderPanel({
                             {chatgptAuth?.authenticated ? (
                               <>
                                 <Button variant="secondary" size="sm" onClick={handleChatgptAccountInfo} loading={chatgptAccountBusy}>
-                                  {chatgptAccountBusy ? "查询中..." : "查看额度"}
+                                  {chatgptAccountBusy ? "Querying..." : "View quota"}
                                 </Button>
                                 <Button variant="ghost" size="sm" onClick={handleChatgptLogout} className="text-[var(--danger)]">
-                                  退出登录
+                                  Sign out
                                 </Button>
                               </>
                             ) : (
                               <Button variant="brand" size="sm" onClick={handleChatgptLogin} loading={chatgptBusy}>
-                                登录 ChatGPT
+                                Sign in to ChatGPT
                               </Button>
                             )}
                           </div>
@@ -532,11 +530,11 @@ export default function ProviderPanel({
                             <div className="p-3 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-[11px] space-y-2">
                               {/* Basic info */}
                               <div className="flex justify-between">
-                                <span className="text-[var(--text-tertiary)]">邮箱</span>
+                                <span className="text-[var(--text-tertiary)]">Email</span>
                                 <span className="text-[var(--text-primary)]">{chatgptAccount.email || "—"}</span>
                               </div>
                               <div className="flex justify-between">
-                                <span className="text-[var(--text-tertiary)]">订阅</span>
+                                <span className="text-[var(--text-tertiary)]">Subscription</span>
                                 <span className="px-1.5 py-0.5 rounded bg-[var(--brand-bg)] text-[var(--brand)] border border-[var(--brand-border)] font-medium uppercase text-[10px]">
                                   {chatgptAccount.plan || "?"}
                                 </span>
@@ -546,7 +544,7 @@ export default function ProviderPanel({
                               {chatgptAccount.rate_limits && !chatgptAccount.rate_limits.error && (
                                 <div className="pt-2 border-t border-[var(--border)] space-y-2.5">
                                   <div className="text-[var(--text-secondary)] font-medium flex items-center gap-1.5">
-                                    实时额度
+                                    Live quota
                                     {chatgptAccount.rate_limits.active_limit && (
                                       <span className="text-[10px] px-1 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-tertiary)]">
                                         {chatgptAccount.rate_limits.active_limit}
@@ -557,11 +555,11 @@ export default function ProviderPanel({
                                   {/* Primary window — label and format are derived from raw seconds */}
                                   {chatgptAccount.rate_limits.primary && (
                                     <UsageBar
-                                      label={formatWindow(chatgptAccount.rate_limits.primary.window_seconds) || "使用窗口"}
+                                      label={formatWindow(chatgptAccount.rate_limits.primary.window_seconds) || "Usage window"}
                                       usedPercent={chatgptAccount.rate_limits.primary.used_percent}
                                       windowText={
                                         chatgptAccount.rate_limits.primary.window_seconds
-                                          ? formatWindow(chatgptAccount.rate_limits.primary.window_seconds).replace("窗口", "滚动窗口")
+                                          ? formatWindow(chatgptAccount.rate_limits.primary.window_seconds).replace("window", "rolling window")
                                           : ""
                                       }
                                       resetText={formatReset(chatgptAccount.rate_limits.primary.reset_after_seconds)}
@@ -571,11 +569,11 @@ export default function ProviderPanel({
                                   {/* Secondary window — only rendered when API returns one */}
                                   {chatgptAccount.rate_limits.secondary && (
                                     <UsageBar
-                                      label={formatWindow(chatgptAccount.rate_limits.secondary.window_seconds) || "次级窗口"}
+                                      label={formatWindow(chatgptAccount.rate_limits.secondary.window_seconds) || "Secondary window"}
                                       usedPercent={chatgptAccount.rate_limits.secondary.used_percent}
                                       windowText={
                                         chatgptAccount.rate_limits.secondary.window_seconds
-                                          ? formatWindow(chatgptAccount.rate_limits.secondary.window_seconds).replace("窗口", "滚动窗口")
+                                          ? formatWindow(chatgptAccount.rate_limits.secondary.window_seconds).replace("window", "rolling window")
                                           : ""
                                       }
                                       resetText={formatReset(chatgptAccount.rate_limits.secondary.reset_after_seconds)}
@@ -587,9 +585,9 @@ export default function ProviderPanel({
                                     <div className="flex justify-between text-[10px] text-[var(--text-tertiary)]">
                                       <span>Credits</span>
                                       <span>
-                                        {chatgptAccount.rate_limits.credits.unlimited ? "无限" :
-                                         chatgptAccount.rate_limits.credits.has_credits ? `余额: ${chatgptAccount.rate_limits.credits.balance || "—"}` :
-                                         "无额外 credits"}
+                                        {chatgptAccount.rate_limits.credits.unlimited ? "Unlimited" :
+                                         chatgptAccount.rate_limits.credits.has_credits ? `Balance: ${chatgptAccount.rate_limits.credits.balance || "—"}` :
+                                         "No extra credits"}
                                       </span>
                                     </div>
                                   )}
@@ -598,17 +596,17 @@ export default function ProviderPanel({
                                   {chatgptAccount.rate_limits.banked_resets && (
                                     <div className="pt-2 border-t border-[var(--border)] space-y-1.5">
                                       <div className="flex items-center justify-between">
-                                        <span className="text-[var(--text-secondary)] font-medium">手动重置额度</span>
+                                        <span className="text-[var(--text-secondary)] font-medium">Manual quota reset</span>
                                         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${chatgptAccount.rate_limits.banked_resets.available_count && chatgptAccount.rate_limits.banked_resets.available_count > 0 ? "bg-[var(--success-bg)] text-[var(--success)]" : "bg-[var(--bg-tertiary)] text-[var(--text-tertiary)]"}`}>
-                                          {chatgptAccount.rate_limits.banked_resets.available_count ?? 0} 个可用
+                                          {chatgptAccount.rate_limits.banked_resets.available_count ?? 0} available
                                         </span>
                                       </div>
                                       {chatgptAccount.rate_limits.banked_resets.credits && chatgptAccount.rate_limits.banked_resets.credits.length > 0 && (
                                         <div className="space-y-1">
                                           {chatgptAccount.rate_limits.banked_resets.credits.map((c, idx) => (
                                             <div key={c.id || idx} className="flex justify-between text-[10px] text-[var(--text-tertiary)]">
-                                              <span>{c.reset_type === "codex_rate_limits" ? "Codex 限流重置" : c.reset_type || "限流重置"}</span>
-                                              {c.expires_at && <span>过期: {new Date(c.expires_at).toLocaleDateString("zh-CN")}</span>}
+                                              <span>{c.reset_type === "codex_rate_limits" ? "Codex rate-limit reset" : c.reset_type || "Rate-limit reset"}</span>
+                                              {c.expires_at && <span>Expires: {new Date(c.expires_at).toLocaleDateString()}</span>}
                                             </div>
                                           ))}
                                         </div>
@@ -621,7 +619,7 @@ export default function ProviderPanel({
                                           loading={resetBusy}
                                           className="w-full mt-1"
                                         >
-                                          {resetBusy ? "重置中..." : "⚡ 立即使用重置"}
+                                          {resetBusy ? "Resetting..." : "⚡ Use reset now"}
                                         </Button>
                                       )}
                                     </div>
@@ -636,7 +634,7 @@ export default function ProviderPanel({
                               )}
 
                               {!chatgptAccount.email && !chatgptAccount.plan && (
-                                <div className="text-[var(--text-tertiary)]">无法获取账户信息，请重新登录</div>
+                                <div className="text-[var(--text-tertiary)]">Could not fetch account info. Please sign in again</div>
                               )}
                             </div>
                           )}
@@ -646,16 +644,16 @@ export default function ProviderPanel({
                       {p.type === "opencode-go" && (
                         <div className="pt-1.5 space-y-2">
                           <Button variant="secondary" size="sm" onClick={() => handleOpenCodeQuota(p.name)} loading={opencodeBusy === p.name}>
-                            {opencodeBusy === p.name ? "查询中..." : "查看额度"}
+                            {opencodeBusy === p.name ? "Querying..." : "View quota"}
                           </Button>
                           {opencodeQuotas[p.name] && (
                             <div className="p-3 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-[11px] space-y-3">
-                              {([["rolling", "5 小时窗口"], ["weekly", "每周"], ["monthly", "每月"]] as const).map(([key, label]) => {
+                              {([["rolling", "5-hour window"], ["weekly", "Weekly"], ["monthly", "Monthly"]] as const).map(([key, label]) => {
                                 const window = opencodeQuotas[p.name][key];
                                 const reset = window.resetsAt ? Date.parse(window.resetsAt) : NaN;
-                                return <UsageBar key={key} label={`${label} · 已用`} usedPercent={window.percent}
-                                  windowText={`剩余 ${Math.max(0, 100 - window.percent).toFixed(1)}%`}
-                                  resetText={Number.isFinite(reset) ? `${new Date(reset).toLocaleString()} 重置` : ""} />;
+                                return <UsageBar key={key} label={`${label} · used`} usedPercent={window.percent}
+                                  windowText={`Remaining ${Math.max(0, 100 - window.percent).toFixed(1)}%`}
+                                  resetText={Number.isFinite(reset) ? `${new Date(reset).toLocaleString()} · reset` : ""} />;
                               })}
                             </div>
                           )}
@@ -667,32 +665,32 @@ export default function ProviderPanel({
                         <div className="pt-1.5 space-y-2">
                           <div className="flex items-center gap-2">
                             <Button variant="secondary" size="sm" onClick={() => handleDeepSeekQuota(p.name)} loading={deepseekBusy === p.name}>
-                              {deepseekBusy === p.name ? "查询中..." : "查看余额"}
+                              {deepseekBusy === p.name ? "Querying..." : "View balance"}
                             </Button>
                           </div>
                           {deepseekQuotas[p.name] && (
                             <div className="p-3 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-[11px] space-y-2">
                               <div className="flex justify-between">
-                                <span className="text-[var(--text-tertiary)]">可用</span>
+                                <span className="text-[var(--text-tertiary)]">Available</span>
                                 <span className={(deepseekQuotas[p.name].summary as quotaApi.DeepSeekQuota).is_available ? "text-green-500" : "text-[var(--danger)]"}>
-                                  {(deepseekQuotas[p.name].summary as quotaApi.DeepSeekQuota).is_available ? "是" : "否"}
+                                  {(deepseekQuotas[p.name].summary as quotaApi.DeepSeekQuota).is_available ? "Yes" : "No"}
                                 </span>
                               </div>
                               {(deepseekQuotas[p.name].summary as quotaApi.DeepSeekQuota).balances.map((b, i) => (
                                 <div key={i} className="pt-1.5 border-t border-[var(--border)] space-y-1.5">
                                   <div className="text-[var(--text-secondary)] font-medium">
-                                    {b.currency === "CNY" ? "💴 人民币" : "💵 美元"}
+                                    {b.currency === "CNY" ? "💴 CNY" : "💵 USD"}
                                   </div>
                                   <div className="flex justify-between">
-                                    <span className="text-[var(--text-tertiary)]">总余额</span>
+                                    <span className="text-[var(--text-tertiary)]">Total balance</span>
                                     <span className="text-[var(--text-primary)] font-medium">{b.total}</span>
                                   </div>
                                   <div className="flex justify-between">
-                                    <span className="text-[var(--text-tertiary)]">充值余额</span>
+                                    <span className="text-[var(--text-tertiary)]">Top-up balance</span>
                                     <span className="text-[var(--text-primary)]">{b.topped_up}</span>
                                   </div>
                                   <div className="flex justify-between">
-                                    <span className="text-[var(--text-tertiary)]">赠送余额</span>
+                                    <span className="text-[var(--text-tertiary)]">Granted balance</span>
                                     <span className="text-[var(--text-primary)]">{b.granted}</span>
                                   </div>
                                 </div>
@@ -709,7 +707,7 @@ export default function ProviderPanel({
                             <>
                               <div className="flex items-center gap-2">
                                 <Button variant="secondary" size="sm" onClick={() => handleZhipuQuota(p.name)} loading={zhipuBusy === p.name}>
-                                  {zhipuBusy === p.name ? "查询中..." : "查看额度"}
+                                  {zhipuBusy === p.name ? "Querying..." : "View quota"}
                                 </Button>
                               </div>
                               {zhipuQuotas[p.name] && (() => {
@@ -717,7 +715,7 @@ export default function ProviderPanel({
                                 return (
                                   <div className="p-3 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-[11px] space-y-2">
                                     <div className="flex justify-between">
-                                      <span className="text-[var(--text-tertiary)]">套餐等级</span>
+                                      <span className="text-[var(--text-tertiary)]">Plan tier</span>
                                       <span className="px-1.5 py-0.5 rounded bg-[var(--brand-bg)] text-[var(--brand)] border border-[var(--brand-border)] font-medium uppercase text-[10px]">
                                         {quota.level || "?"}
                                       </span>
@@ -725,7 +723,7 @@ export default function ProviderPanel({
                                     {quota.token_limits.map((tl, i) => (
                                       <div key={i} className="pt-2 border-t border-[var(--border)]">
                                         <UsageBar
-                                          label={tl.label === "WEEK" ? "📅 周窗口" : `⏱ ${tl.number} 小时窗口`}
+                                          label={tl.label === "WEEK" ? "📅 Week window" : `⏱ ${tl.number}h window`}
                                           usedPercent={tl.percentage}
                                           resetText={formatResetCountdown(tl.nextResetTime)}
                                         />
@@ -733,10 +731,10 @@ export default function ProviderPanel({
                                     ))}
                                     {quota.time_limit && (
                                       <div className="pt-2 border-t border-[var(--border)] space-y-1.5">
-                                        <div className="text-[var(--text-secondary)] font-medium">📊 MCP 月度配额</div>
-                                        <UsageBar label="已用" usedPercent={quota.time_limit.percentage} />
+                                        <div className="text-[var(--text-secondary)] font-medium">📊 MCP monthly quota</div>
+                                        <UsageBar label="used" usedPercent={quota.time_limit.percentage} />
                                         <div className="flex justify-between text-[10px] text-[var(--text-tertiary)]">
-                                          <span>剩余: {quota.time_limit.remaining} / {quota.time_limit.usage}</span>
+                                          <span>Remaining: {quota.time_limit.remaining} / {quota.time_limit.usage}</span>
                                           {quota.time_limit.nextResetTime && (
                                             <span>{formatResetCountdown(quota.time_limit.nextResetTime)}</span>
                                           )}
@@ -749,7 +747,7 @@ export default function ProviderPanel({
                             </>
                           ) : (
                             <div className="text-[10px] text-[var(--text-tertiary)]">
-                              组织版或标准开放平台 API Key 暂不支持在此查询额度；智谱用量接口仅支持个人版 Coding Plan。
+                              Organization or standard open-platform API keys cannot query quota here; the Zhipu usage API only supports the personal Coding Plan.
                             </div>
                           )}
                         </div>
@@ -759,7 +757,7 @@ export default function ProviderPanel({
                       <div className="pt-1.5">
                         <div className="flex items-center justify-between mb-1.5">
                           <span className="text-[11px] font-medium text-[var(--text-secondary)]">
-                            网络代理
+                            Network proxy
                           </span>
                           <button
                             onClick={() => handleToggleProxy(p.name)}
@@ -784,7 +782,7 @@ export default function ProviderPanel({
                               value={proxyInput[p.name] ?? p.proxy_url ?? ""}
                               onChange={(e) => setProxyInput({ ...proxyInput, [p.name]: e.target.value })}
                               onKeyDown={(e) => { if (e.key === "Enter") handleSaveProxyUrl(p.name); }}
-                              placeholder="代理地址（留空则使用全局代理）"
+                              placeholder="Proxy address (leave blank to use the global proxy)"
                               className="flex-1 h-8 px-2.5 text-xs rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--brand)] focus:ring-1 focus:ring-[var(--brand)]/30"
                             />
                             <Button
@@ -798,14 +796,14 @@ export default function ProviderPanel({
                           </div>
                         )}
                         <p className="text-[10px] text-[var(--text-tertiary)] mt-1">
-                          启用后此 Provider 的请求将通过代理访问
+                          When enabled, requests for this provider go through the proxy
                         </p>
                       </div>
 
                       {/* Extra Models Section */}
                       <div className="border-t border-[var(--border)] pt-2">
                         <div className="text-[11px] font-medium text-[var(--text-secondary)] mb-1.5">
-                          额外模型（API 未返回但可调用的模型）
+                          Extra models (callable but not returned by the API)
                         </div>
                       <div className="flex flex-wrap gap-1.5">
                         {(p.extra_models || []).map((m) => (
@@ -824,7 +822,7 @@ export default function ProviderPanel({
                           </span>
                         ))}
                         {(p.extra_models || []).length === 0 && (
-                          <span className="text-[11px] text-[var(--text-tertiary)]">暂无额外模型</span>
+                          <span className="text-[11px] text-[var(--text-tertiary)]">No extra models</span>
                         )}
                       </div>
                       <div className="flex items-center gap-1.5">
@@ -833,7 +831,7 @@ export default function ProviderPanel({
                           value={newModelInput[p.name] || ""}
                           onChange={(e) => setNewModelInput({ ...newModelInput, [p.name]: e.target.value })}
                           onKeyDown={(e) => { if (e.key === "Enter") handleAddExtraModel(p.name); }}
-                          placeholder="输入模型 ID，如 glm-5.2"
+                          placeholder="Enter a model ID, e.g. glm-5.2"
                           className="flex-1 h-8 px-2.5 text-xs rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--brand)] focus:ring-1 focus:ring-[var(--brand)]/30"
                         />
                         <Button
@@ -879,7 +877,7 @@ export default function ProviderPanel({
               </select>
               {selectedCatalog && (
                 <p className="text-[11px] text-[var(--text-tertiary)] font-mono">
-                  Base URL: {selectedCatalog.auth_type === "oauth" ? "OAuth (无需 Base URL)" : displayBaseUrl}
+                  Base URL: {selectedCatalog.auth_type === "oauth" ? "OAuth (no Base URL needed)" : displayBaseUrl}
                 </p>
               )}
             </div>
@@ -893,7 +891,7 @@ export default function ProviderPanel({
                   onChange={(e) => setFormVariantId(e.target.value)}
                   className="w-full h-9 px-3 text-sm rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/30"
                 >
-                  <option value="">{t("provider.defaultLabel")}</option>
+                  <option value="">{"Default"}</option>
                   {selectedCatalog.variants.map((v) => (
                     <option key={v.id} value={v.id}>
                       {v.display_name}
@@ -903,29 +901,29 @@ export default function ProviderPanel({
               </div>
             )}
             <Input
-              label={t("provider.name")}
+              label={"Name"}
               value={formName}
               onChange={(e) => setFormName(e.target.value)}
-              placeholder={t("provider.namePlaceholder2")}
+              placeholder={"my-provider"}
             />
             {selectedCatalog?.auth_type === "oauth" ? (
               <div className="px-3 py-3 rounded-lg bg-[var(--brand-bg)] border border-[var(--brand-border)] text-xs text-[var(--text-secondary)]">
-                <div className="font-medium text-[var(--text-primary)] mb-1">🔒 OAuth 认证</div>
-                <p>此 Provider 使用 ChatGPT 订阅登录，无需 API Key。</p>
-                <p className="mt-1">添加后请在 Provider 列表中点击「登录 ChatGPT」完成授权。</p>
+                <div className="font-medium text-[var(--text-primary)] mb-1">🔒 OAuth authentication</div>
+                <p>This provider signs in with a ChatGPT subscription and needs no API key.</p>
+                <p className="mt-1">After adding it, click “Sign in to ChatGPT” in the provider list to finish authorizing.</p>
                 {selectedCatalog.models && selectedCatalog.models.length > 0 && (
                   <p className="mt-1 text-[var(--text-tertiary)]">
-                    可用模型: {selectedCatalog.models.slice(0, 4).join(", ")}
+                    Available models: {selectedCatalog.models.slice(0, 4).join(", ")}
                     {selectedCatalog.models.length > 4 ? " ..." : ""}
                   </p>
                 )}
               </div>
             ) : (
               <PasswordInput
-                label={t("provider.apiKey")}
+                label={"API Key"}
                 value={formKey}
                 onChange={(e) => setFormKey(e.target.value)}
-                placeholder={t("provider.apiKeyPlaceholder2")}
+                placeholder={"sk-…"}
               />
             )}
           </div>
@@ -936,8 +934,8 @@ export default function ProviderPanel({
         open={!!deleteTarget}
         onOpenChange={(o) => !o && setDeleteTarget(null)}
         title={`Delete provider "${deleteTarget}"?`}
-        description={t("provider.deleteProviderDesc")}
-        confirmText={t("common.delete")}
+        description={"This will permanently remove the provider and its encrypted API key."}
+        confirmText={"Delete"}
         tone="danger"
         onConfirm={() => { if (deleteTarget) handleDelete(deleteTarget); }}
       />
@@ -946,9 +944,9 @@ export default function ProviderPanel({
       <ConfirmDialog
         open={resetConfirmTarget}
         onOpenChange={setResetConfirmTarget}
-        title="确认重置额度"
-        description="此操作将立即消耗一张重置卡，清除当前 5 小时窗口和 7 天窗口的使用量。确定要继续吗？"
-        confirmText="确认重置"
+        title="Confirm quota reset"
+        description="This immediately consumes one reset card and clears usage for the current 5-hour and 7-day windows. Continue?"
+        confirmText="Confirm reset"
         tone="warning"
         onConfirm={handleConfirmReset}
       />
@@ -956,19 +954,19 @@ export default function ProviderPanel({
   );
 }
 
-/** 将时间戳（ms 或 s）转换为倒计时文本，如 "3天2h后重置" 或 "15min后重置" */
+/** Converts a timestamp (ms or s) into countdown text like "resets in 3d 2h" or "resets in 15min" */
 function formatResetCountdown(nextResetTime?: number): string {
   if (!nextResetTime) return "";
-  // 兼容秒级和毫秒级时间戳
+  // Accept both second and millisecond timestamps
   const ts = nextResetTime > 1e12 ? nextResetTime : nextResetTime * 1000;
   const diff = ts - Date.now();
-  if (diff <= 0) return "已可重置";
+  if (diff <= 0) return "Reset available";
   const min = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
-  if (days > 0) return `${days}天${hours % 24}h后重置`;
-  if (hours > 0) return `${hours}h${min % 60}min后重置`;
-  return `${min}min后重置`;
+  if (days > 0) return `${days}d ${hours % 24}h until reset`;
+  if (hours > 0) return `${hours}h ${min % 60}min until reset`;
+  return `${min}min until reset`;
 }
 
 function UsageBar({

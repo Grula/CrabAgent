@@ -453,12 +453,12 @@ async def test_run_agent_reasoning_only_reply_not_duplicated(monkeypatch: pytest
 
 
 def test_classify_rate_limit_distinguishes_model_permission_from_throttling():
-    denied = loop._classify_rate_limit_error(RuntimeError("OpenAIException - 当前订阅套餐暂未开放GLM-5.3-FlashX权限"))
+    denied = loop._classify_rate_limit_error(RuntimeError("OpenAIException - GLM-5.3-FlashX is not available for your plan"))
     throttled = loop._classify_rate_limit_error(RuntimeError("429 Too Many Requests"))
 
     assert denied["code"] == "model_access_denied"
     assert denied["retryable"] is False
-    assert denied["message"] == "当前订阅套餐暂未开放GLM-5.3-FlashX权限"
+    assert denied["message"] == "GLM-5.3-FlashX is not available for your plan"
     assert throttled["code"] == "rate_limited"
     assert throttled["retryable"] is True
 
@@ -471,13 +471,13 @@ async def test_run_agent_reports_model_access_denied_without_retry(monkeypatch: 
     context.event_bus.subscribe(lambda event: events.append(event))
 
     async def fake_provider(provider_name=None):
-        return SimpleNamespace(name="组织", provider_type="zhipu", api_key="k", base_url="", enabled=True)
+        return SimpleNamespace(name="Org", provider_type="zhipu", api_key="k", base_url="", enabled=True)
 
     async def fake_acompletion(**kwargs):
         nonlocal calls
         calls += 1
         raise loop.litellm.exceptions.RateLimitError(
-            message="当前订阅套餐暂未开放GLM-5.3-FlashX权限",
+            message="GLM-5.3-FlashX is not available for your plan",
             llm_provider="openai",
             model="glm-5.3-flashx",
         )
@@ -492,9 +492,9 @@ async def test_run_agent_reports_model_access_denied_without_retry(monkeypatch: 
 
     error_event = next(event for event in events if event.type == EventType.AGENT_ERROR)
     assert calls == 1
-    assert error_event.data["error"] == "当前套餐不支持此模型"
+    assert error_event.data["error"] == "This model is not available on your current plan"
     assert error_event.data["error_info"]["code"] == "model_access_denied"
-    assert "切换" in error_event.data["error_info"]["action"]
+    assert "Switch" in error_event.data["error_info"]["action"]
 
 
 @pytest.mark.asyncio
@@ -524,7 +524,7 @@ async def test_run_agent_emits_auth_error_and_stops(monkeypatch: pytest.MonkeyPa
     assert messages[0]["role"] == "user"
     assert any(event.type == EventType.AGENT_ERROR for event in events)
     error_event = next(event for event in events if event.type == EventType.AGENT_ERROR)
-    assert "API 密钥" in error_event.data["error"]
+    assert "API key" in error_event.data["error"]
 
 
 @pytest.mark.asyncio
@@ -588,7 +588,7 @@ async def test_run_agent_retries_context_window_with_compression(monkeypatch: py
     assert calls["count"] == 2
     assert context.metadata["compressed"] == "openai/gpt-4o"
     assert messages[-1]["content"] == "done"
-    assert any(event.type == EventType.AGENT_INFO and "自动压缩" in event.data["message"] for event in events)
+    assert any(event.type == EventType.AGENT_INFO and "auto-compression" in event.data["message"] for event in events)
 
 
 class _Stream:

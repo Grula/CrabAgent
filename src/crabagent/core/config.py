@@ -37,8 +37,6 @@ class Settings(BaseSettings):
 
     web_proxy: str = ""
 
-    language: str = "en"
-
     default_model: str = "gpt-4o"
 
     encryption_key: str = ""
@@ -61,6 +59,11 @@ class Settings(BaseSettings):
     bash_block_privilege_escalation: bool = True
     bash_max_output_length: int = 50000
     bash_block_background: bool = False
+
+    # Load rarely used tool groups (office, browser, email, ...) only when a
+    # conversation needs them, instead of sending every tool definition with
+    # every request. Set CRAB_DEFER_TOOLS=false to always send all tools.
+    defer_tools: bool = True
 
     model_token_limits: dict[str, int] = {}
     context_compression_threshold: float = 0.8
@@ -117,7 +120,17 @@ class Settings(BaseSettings):
         return None
 
     def skill_discovery_dirs(self) -> list[Path]:
+        """Directories scanned for skills, lowest priority first.
+
+        A skill found in a later directory replaces one with the same name from
+        an earlier directory, so workspace and user skills override bundled ones.
+        """
         dirs: list[Path] = []
+        # Skills shipped with CrabAgent. Listed first so that every workspace
+        # gets them, including workspaces created before a skill was added.
+        bundled = Path(__file__).resolve().parents[1] / "skills"
+        if bundled.is_dir():
+            dirs.append(bundled)
         if self.skills_dir:
             dirs.append(self.skills_dir)
         for p in self.skills_paths:

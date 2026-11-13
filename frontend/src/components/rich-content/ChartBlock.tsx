@@ -12,11 +12,11 @@ import { useStableVisualization } from "./stableVisualization";
 const COLORS = ["var(--brand)", "var(--warning)", "var(--accent)", "var(--danger)", "var(--accent-2)", "var(--success)"];
 
 function InvalidVisualization({ label, error, source }: { label: string; error: string; source: string }) {
-  return <VisualizationFrame title={label} source={source}><div className="visualization-error"><AlertTriangle size={17} /><span>{error}，已保留源内容。</span></div></VisualizationFrame>;
+  return <VisualizationFrame title={label} source={source}><div className="visualization-error"><AlertTriangle size={17} /><span>{error}; original source preserved.</span></div></VisualizationFrame>;
 }
 
 function VisualizationLoading() {
-  return <div className="visualization-loading"><Loader2 size={16} className="animate-spin" />正在生成图表…</div>;
+  return <div className="visualization-loading"><Loader2 size={16} className="animate-spin" />Generating chart…</div>;
 }
 
 function stableChartSpec(source: string) {
@@ -33,18 +33,18 @@ export function ChartBlock({ source, isStreaming = false }: { source: string; is
   const spec = stable?.value;
 
   if (!candidate && !isStreaming) {
-    return <InvalidVisualization label="数据图表" error="图表配置无效" source={source} />;
+    return <InvalidVisualization label="Data chart" error="Invalid chart config" source={source} />;
   }
   if (!spec) {
-    return <VisualizationFrame title="数据图表" source={source}><VisualizationLoading /></VisualizationFrame>;
+    return <VisualizationFrame title="Data chart" source={source}><VisualizationLoading /></VisualizationFrame>;
   }
 
   // The frame may update with prose deltas, but this memoized chart only sees a
   // new spec reference when the parsed visualization payload actually changes.
-  return <VisualizationFrame title={spec.title || "数据图表"} source={source}>
+  return <VisualizationFrame title={spec.title || "Data chart"} source={source}>
     {spec.description && <p className="visualization-description">{spec.description}</p>}
     <ChartCanvas spec={spec} />
-    {!candidate && isStreaming && <span className="sr-only">图表数据已保持为最后一个有效版本</span>}
+    {!candidate && isStreaming && <span className="sr-only">Chart data kept at the last valid version</span>}
   </VisualizationFrame>;
 }
 
@@ -75,13 +75,13 @@ export function KpiBlock({ source, isStreaming = false }: { source: string; isSt
   const spec = stable?.value;
 
   if (!candidate && !isStreaming) {
-    return <InvalidVisualization label="数据摘要" error="指标卡配置无效" source={source} />;
+    return <InvalidVisualization label="Data summary" error="Invalid KPI card config" source={source} />;
   }
   if (!spec) {
-    return <VisualizationFrame title="数据摘要" source={source}><VisualizationLoading /></VisualizationFrame>;
+    return <VisualizationFrame title="Data summary" source={source}><VisualizationLoading /></VisualizationFrame>;
   }
 
-  return <VisualizationFrame title="数据摘要" source={source}><KpiContent spec={spec} /></VisualizationFrame>;
+  return <VisualizationFrame title="Data summary" source={source}><KpiContent spec={spec} /></VisualizationFrame>;
 }
 
 const KpiContent = memo(function KpiContent({ spec }: { spec: CrabKpiSpec }) {

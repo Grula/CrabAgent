@@ -1,5 +1,4 @@
 import { useRef, useEffect, useState, useCallback } from "react";
-import { useTranslation } from "react-i18next";
 import { Loader2, AlertTriangle, FileText } from "lucide-react";
 import { cn } from "../lib/cn";
 
@@ -9,17 +8,17 @@ interface Props {
   error?: string;
   className?: string;
   onQuickEdit?: (oldText: string, newText: string) => void;
-  /** 用户拖拽列边框调整宽度后触发 */
+  /** Fired after the user drags a column border to resize its width */
   onStyleEdit?: (element: string, props: Record<string, string | number | boolean>) => void;
-  /** 大纲变化时通知父组件 */
+  /** Notifies the parent when the outline changes */
   onOutlineChange?: (items: { level: number; text: string; index: number }[]) => void;
-  /** 当前可见的大纲索引变化 */
+  /** Fires when the currently visible outline index changes */
   onOutlineActive?: (index: number) => void;
-  /** 当前选中元素信息（单击选中或双击编辑时） */
+  /** Info about the currently selected element (on click-select or double-click edit) */
   onEditElement?: (info: { tagName: string; path: string; text: string; style: Record<string, string> }) => void;
-  /** Excel 单元格直接编辑 */
+  /** Direct Excel cell editing */
   onCellEdit?: (path: string, newText: string) => void;
-  /** Excel 单元格选择范围 */
+  /** Excel cell selection range */
   onCellRangeSelect?: (range: string | null, sheet?: string) => void;
 }
 
@@ -183,16 +182,16 @@ const EDIT_SCRIPT = `
   var el_isCell = false, el_path = '';
   var selectedEl = null;
 
-  // ── Excel 单元格选择 ──
+  // ── Excel cell selection ──
   var selStart = null, selEnd = null;
   var cellMouseDown = false;
 
-  // ★ 覆盖层：保证选区始终显示为完整矩形（挂载到 .table-wrapper 内）
+  // ★ Overlay: keeps the selection always drawn as a complete rectangle (mounted inside .table-wrapper)
   var overlay = document.createElement('div');
   overlay.id = 'excel-selection-overlay';
   overlay.style.cssText = 'position:absolute;pointer-events:none;z-index:100;border:2px solid #217346;background:rgba(33,115,70,0.08);display:none;';
 
-  // 辅助函数：获取单元格实际占用的行列数
+  // Helper: get the number of rows/columns a cell actually spans
   function getCellSpan(td) {
     var cs = td.getAttribute('colspan');
     var rs = td.getAttribute('rowspan');
@@ -203,7 +202,7 @@ const EDIT_SCRIPT = `
   }
 
   function parseCellPath(path) {
-    // path = "/采购计划样表/C6" → split("/") → ["", "采购计划样表", "C6"]
+    // path = "/Purchase Plan Sample/C6" → split("/") → ["", "Purchase Plan Sample", "C6"]
     var parts = path.split('/');
     var cellRef = parts[parts.length - 1];  // "C6"
     if (!cellRef) return null;
@@ -223,18 +222,18 @@ const EDIT_SCRIPT = `
   function clearCellSelection() {
     var cells = document.querySelectorAll('td[data-path]');
     for (var i = 0; i < cells.length; i++) { cells[i].style.backgroundColor = ''; cells[i].style.outline = ''; cells[i].style.outlineOffset = ''; }
-    // 清除行背景
+    // Clear the row background
     var rows = document.querySelectorAll('tr[data-row]');
     for (var i = 0; i < rows.length; i++) { rows[i].style.backgroundColor = ''; rows[i].style.outline = ''; }
-    // 隐藏覆盖层
+    // Hide the overlay
     var ov = document.getElementById('excel-selection-overlay');
     if (ov) ov.style.display = 'none';
   }
-  // ★ 定位覆盖层：计算选区完整矩形的物理位置
+  // ★ Position the overlay: compute the physical position of the full selection rectangle
   function positionOverlay(minR, maxR, minC, maxC) {
     var ov = document.getElementById('excel-selection-overlay');
     if (!ov) return;
-    // 找到选区左上角和右下角的 td 元素
+    // Find the td elements at the top-left and bottom-right corners of the selection
     var topLeft = null, bottomRight = null;
     var all = document.querySelectorAll('td[data-path]');
     for (var i = 0; i < all.length; i++) {
@@ -244,7 +243,7 @@ const EDIT_SCRIPT = `
       if (info.row === maxR && info.colIdx === maxC) bottomRight = all[i];
       if (topLeft && bottomRight) break;
     }
-    // fallback：如果找不到精确匹配，取范围内任意单元格
+    // fallback: if there is no exact match, take any cell within the range
     if (!topLeft) {
       for (var i = 0; i < all.length; i++) {
         var info = parseCellPath(all[i].getAttribute('data-path') || '');
@@ -258,7 +257,7 @@ const EDIT_SCRIPT = `
       }
     }
     if (!topLeft || !bottomRight) { ov.style.display = 'none'; return; }
-    // 把覆盖层挂在 .table-wrapper 内部，position:absolute 自然相对于 wrapper 定位
+    // Mount the overlay inside .table-wrapper so position:absolute is naturally relative to the wrapper
     var wrapper = document.querySelector('.table-wrapper') || document.body;
     if (ov.parentNode !== wrapper) wrapper.appendChild(ov);
     var wr = wrapper.getBoundingClientRect();
@@ -273,14 +272,14 @@ const EDIT_SCRIPT = `
 
   function highlightRange(a, b) {
     clearCellSelection();
-    // ★ 使用物理范围（考虑 colspan/rowspan）计算矩形
+    // ★ Compute the rectangle from the physical range (accounting for colspan/rowspan)
     var minR = Math.min(a.row, b.row);
     var maxR = Math.max(a.bottomRow !== undefined ? a.bottomRow : a.row, b.bottomRow !== undefined ? b.bottomRow : b.row);
     var minC = Math.min(a.colIdx, b.colIdx);
     var maxC = Math.max(a.rightCol !== undefined ? a.rightCol : a.colIdx, b.rightCol !== undefined ? b.rightCol : b.colIdx);
 
-    // ★ 关键修复：扩展范围以覆盖选区内所有合并单元格的完整行列
-    // 例如 A6(rowspan=2) 在选区内时，选区要自动扩展到第7行
+    // ★ Key fix: expand the range to cover the full rows/columns of every merged cell in the selection
+    // e.g. when A6(rowspan=2) is inside the selection, the selection must expand to row 7 automatically
     var changed = true;
     while (changed) {
       changed = false;
@@ -298,7 +297,7 @@ const EDIT_SCRIPT = `
       }
     }
 
-    // 整行高亮：覆盖选中行整个宽度（即使某些列没有 td）
+    // Whole-row highlight: covers the full width of the selected row (even if some columns have no td)
     var rows = document.querySelectorAll('tr[data-row]');
     for (var i = 0; i < rows.length; i++) {
       var rowAttr = rows[i].getAttribute('data-row') || '';
@@ -308,7 +307,7 @@ const EDIT_SCRIPT = `
         rows[i].style.backgroundColor = 'rgba(33,115,70,0.06)';
       }
     }
-    // 单元格高亮：给选中的具体单元格加边框（使用扩展后的范围）
+    // Cell highlight: outline the specific selected cells (using the expanded range)
     var all = document.querySelectorAll('td[data-path]');
     for (var i = 0; i < all.length; i++) {
       var info = parseCellPath(all[i].getAttribute('data-path') || '');
@@ -319,7 +318,7 @@ const EDIT_SCRIPT = `
         all[i].style.outlineOffset = '-1px';
       }
     }
-    // ★ 覆盖层：保证选区始终显示为完整矩形
+    // ★ Overlay: keeps the selection always drawn as a complete rectangle
     positionOverlay(minR, maxR, minC, maxC);
     return formatRangeStr({ colIdx: minC, row: minR }, { colIdx: maxC, row: maxR });
   }
@@ -391,7 +390,7 @@ const EDIT_SCRIPT = `
   // selectionchange
   document.addEventListener('selectionchange', function() {
     if (el) return;
-    if (selStart) return; // 单元格选择模式不反选
+    if (selStart) return; // no deselection while in cell-selection mode
     var sel = window.getSelection();
     var selText = sel ? sel.toString().trim() : '';
     if (!selText && selectedEl) {
@@ -410,8 +409,8 @@ const EDIT_SCRIPT = `
     }, '*');
   }
 
-  // ── 单元格选择（支持合并单元格） ──
-  // 辅助函数：从 td 构建包含物理范围的位置对象
+  // ── Cell selection (supports merged cells) ──
+  // Helper: build a position object with the physical range from a td
   function makeCellPos(td) {
     var info = parseCellPath(td.getAttribute('data-path') || '');
     if (!info) return null;
@@ -454,7 +453,7 @@ const EDIT_SCRIPT = `
     if (cellMouseDown) e.preventDefault();
   });
 
-  // 点击非 td 区域清除选区
+  // Clicking outside any td clears the selection
   document.addEventListener('mousedown', function(e) {
     if (el) return;
     var td = e.target.closest ? e.target.closest('td[data-path]') : null;
@@ -465,12 +464,12 @@ const EDIT_SCRIPT = `
     }
   });
 
-  // ── 双击编辑（支持 Excel 单元格） ──
+  // ── Double-click editing (supports Excel cells) ──
   document.addEventListener('dblclick', function(e) {
     var t = e.target;
     if (!t || t.tagName === 'BODY' || t.tagName === 'HTML' || t.tagName === 'SCRIPT' || t.tagName === 'STYLE') return;
 
-    // Excel 单元格直接编辑（通过 data-path 精确定位）
+    // Direct Excel cell editing (precisely located via data-path)
     var td = t.closest ? t.closest('td[data-path]') : null;
     if (td) {
       var cellPath = td.getAttribute('data-path') || '';
@@ -484,7 +483,7 @@ const EDIT_SCRIPT = `
       return;
     }
 
-    // 普通元素编辑
+    // Regular element editing
     var block = findBlock(t);
     if (!block) return;
     var txt = (block.innerText || block.textContent).trim();
@@ -529,7 +528,7 @@ const EDIT_SCRIPT = `
     var n = (el.innerText || el.textContent).trim();
     el.contentEditable = 'false';
     if (el_isCell && el_path) {
-      // Excel 单元格：用 data-path 精确定位
+      // Excel cell: precisely located via data-path
       if (n !== oldText) window.parent.postMessage({ type: 'cell-edit', path: el_path, new_text: n }, '*');
     } else {
       if (n && n !== oldText) window.parent.postMessage({ type: 'quick-edit', old_text: oldText, new_text: n }, '*');
@@ -550,7 +549,6 @@ const EDIT_SCRIPT = `
 `;
 
 export function DocumentPreview({ html, loading, error, className, onQuickEdit, onStyleEdit, onOutlineChange, onOutlineActive, onEditElement, onCellEdit, onCellRangeSelect }: Props) {
-  const { t } = useTranslation();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const editHandlerRef = useRef(onQuickEdit);
   const styleHandlerRef = useRef(onStyleEdit);
@@ -688,7 +686,7 @@ export function DocumentPreview({ html, loading, error, className, onQuickEdit, 
     return (
       <div className={cn("flex flex-col items-center justify-center h-full gap-3", className)}>
         <Loader2 size={24} className="animate-spin text-[var(--text-tertiary)]" />
-        <span className="text-xs text-[var(--text-tertiary)]">{t("document.loadingPreview")}</span>
+        <span className="text-xs text-[var(--text-tertiary)]">{"Loading preview..."}</span>
       </div>
     );
   }
@@ -716,7 +714,7 @@ export function DocumentPreview({ html, loading, error, className, onQuickEdit, 
     return (
       <div className={cn("flex flex-col items-center justify-center h-full gap-3", className)}>
         <FileText size={28} className="text-[var(--text-tertiary)]" opacity={0.4} />
-        <span className="text-xs text-[var(--text-tertiary)]">{t("document.previewFailed")}</span>
+        <span className="text-xs text-[var(--text-tertiary)]">{"Preview unavailable"}</span>
       </div>
     );
   }

@@ -32,7 +32,7 @@ TOOL_ARTIFACT_MAP: dict[str, tuple[str, str]] = {
 }
 
 # Substrings that mark a tool result as failed (best-effort guard).
-_FAILURE_MARKERS = ("创建失败", "修改失败", "失败:", "Failed", "Error:", "error:", "not found", "File not found")
+_FAILURE_MARKERS = ("creation failed", "update failed", "failed:", "Failed", "Error:", "error:", "not found", "File not found")
 
 
 def _artifact_to_dict(a: TaskArtifact) -> dict:

@@ -278,10 +278,10 @@ async def test_single_cancel_waits_for_cleanup_before_group_completion(session_f
 async def test_group_input_limits_use_utf8_bytes(session_factory, monkeypatch):
     monkeypatch.setattr(background_group, "MAX_STEP_INPUT_BYTES", 6)
     monkeypatch.setattr(background_group, "MAX_GROUP_INPUT_BYTES", 1000)
-    step = {"id": "a", "agent_name": "a", "task": "中文"}
+    step = {"id": "a", "agent_name": "a", "task": "abcdef"}
     background_group._validate([step])
     with pytest.raises(ValueError, match="step input bytes"):
-        background_group._validate([dict(step, task="中文x")])
+        background_group._validate([dict(step, task="abcdefg")])
     monkeypatch.setattr(background_group, "MAX_GROUP_INPUT_BYTES", 10)
     with pytest.raises(ValueError, match="group input bytes"):
         background_group._validate([step])
@@ -291,7 +291,7 @@ async def test_dependency_budget_fails_step_and_skips_descendant(session_factory
     async def agent(_): return {"name": "a"}
     async def spawn(name, task, ctx, **kwargs):
         assert task == "first"
-        return agents.BackgroundAgentResult("succeeded", "中文中文")
+        return agents.BackgroundAgentResult("succeeded", "abcdefghijkl")
     monkeypatch.setattr(agents, "get_agent", agent)
     monkeypatch.setattr(agents, "spawn_sub_agent", spawn)
     monkeypatch.setattr(background_group, "MAX_DEPENDENCY_BYTES", 12)

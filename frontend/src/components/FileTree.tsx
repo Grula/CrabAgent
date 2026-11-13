@@ -107,7 +107,7 @@ export default function FileTree({
       setNewFolderName("");
       refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "新建文件夹失败");
+      setError(cause instanceof Error ? cause.message : "Failed to create folder");
     } finally {
       setBusy(false);
     }
@@ -123,7 +123,7 @@ export default function FileTree({
       setSelected(new Set());
       refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "移动失败");
+      setError(cause instanceof Error ? cause.message : "Move failed");
     } finally {
       setBusy(false);
       setDraggedPaths([]);
@@ -138,16 +138,16 @@ export default function FileTree({
       onDrop={(event) => { event.preventDefault(); setRootDragOver(false); moveTo(rootPath); }}
     >
       <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 text-[10px] text-[var(--text-tertiary)] shadow-sm">
-        <span>{selectedPaths.length ? `已选择 ${selectedPaths.length} 项；拖到文件夹即可移动` : "按 Cmd/Ctrl 或 Shift 多选；拖到文件夹移动"}</span>
+        <span>{selectedPaths.length ? `${selectedPaths.length} items; drag into a folder to move` : "Use Cmd/Ctrl or Shift to multi-select; drag into a folder to move"}</span>
         <div className="flex items-center gap-1">
-          {selectedPaths.length > 0 && <button type="button" onClick={() => { setSelected(new Set()); onClearSelection?.(); }} className="rounded px-1 py-0.5 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]" title="取消选择">取消选择</button>}
+          {selectedPaths.length > 0 && <button type="button" onClick={() => { setSelected(new Set()); onClearSelection?.(); }} className="rounded px-1 py-0.5 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]" title="Clear selection">Clear selection</button>}
           <button
             type="button"
             onClick={() => { setCreatingAt(activeDirectory ?? rootPath); setNewFolderName(""); setError(null); }}
             className="inline-flex items-center gap-1 rounded px-1 py-0.5 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-            title="新建文件夹"
+            title="New folder"
           >
-            <FolderPlus size={13} /> 新建
+            <FolderPlus size={13} /> New
           </button>
         </div>
       </div>
@@ -156,7 +156,7 @@ export default function FileTree({
         <NewFolderInput value={newFolderName} busy={busy} onChange={setNewFolderName} onSubmit={createFolder} onCancel={() => setCreatingAt(null)} />
       )}
       {entries.length === 0 ? (
-        <div className="text-xs p-3 text-center text-[var(--text-tertiary)] italic">空文件夹</div>
+        <div className="text-xs p-3 text-center text-[var(--text-tertiary)] italic">Empty folder</div>
       ) : (
         <TreeItems
           entries={entries}
@@ -175,7 +175,7 @@ export default function FileTree({
           onCreateChange={setNewFolderName}
           onCreate={createFolder}
           onCancelCreate={() => setCreatingAt(null)}
-          onDelete={async (path) => { if (confirm("确定删除此项目吗？")) { await deleteFile(path, absolute); refresh(); } }}
+          onDelete={async (path) => { if (confirm("Delete this item?")) { await deleteFile(path, absolute); refresh(); } }}
           onOpenDoc={onOpenDoc}
         />
       )}
@@ -186,9 +186,9 @@ export default function FileTree({
 function NewFolderInput({ value, busy, onChange, onSubmit, onCancel }: { value: string; busy: boolean; onChange: (value: string) => void; onSubmit: () => void; onCancel: () => void }) {
   return <div className="flex items-center gap-1 px-2 py-1">
     <Folder size={13} className="text-[var(--warning)] shrink-0" />
-    <input autoFocus value={value} disabled={busy} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onSubmit(); } if (event.key === "Escape") { event.preventDefault(); onCancel(); } }} placeholder="文件夹名称" className="min-w-0 flex-1 rounded border border-[var(--brand)] bg-[var(--bg-primary)] px-1.5 py-0.5 text-xs outline-none" />
-    <button type="button" disabled={busy || !value.trim()} onClick={onSubmit} className="rounded p-1 text-[var(--brand)] hover:bg-[var(--brand-bg)] disabled:opacity-40" title="创建文件夹"><Check size={14} /></button>
-    <button type="button" disabled={busy} onClick={onCancel} className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--danger)]" title="取消"><X size={14} /></button>
+    <input autoFocus value={value} disabled={busy} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onSubmit(); } if (event.key === "Escape") { event.preventDefault(); onCancel(); } }} placeholder="Folder name" className="min-w-0 flex-1 rounded border border-[var(--brand)] bg-[var(--bg-primary)] px-1.5 py-0.5 text-xs outline-none" />
+    <button type="button" disabled={busy || !value.trim()} onClick={onSubmit} className="rounded p-1 text-[var(--brand)] hover:bg-[var(--brand-bg)] disabled:opacity-40" title="Create folder"><Check size={14} /></button>
+    <button type="button" disabled={busy} onClick={onCancel} className="rounded p-1 text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--danger)]" title="Cancel"><X size={14} /></button>
   </div>;
 }
 
@@ -263,19 +263,19 @@ function TreeNode({ entry, entries: _entries, depth, absolute, rootPath, selecte
       <span className="w-3 shrink-0 text-[var(--text-tertiary)]">{isDir ? expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} /> : null}</span>
       {isDir ? expanded ? <FolderOpen size={13} className="text-[var(--warning)] shrink-0" /> : <Folder size={13} className="text-[var(--warning)] shrink-0" /> : isImageFile(entry.name) ? <ImageIcon size={13} className="text-[var(--accent)] shrink-0" /> : <FileText size={13} className="text-[var(--text-tertiary)] shrink-0" />}
       {renaming ? <input autoFocus value={renameValue} onClick={(event) => event.stopPropagation()} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") commitRename(); if (event.key === "Escape") setRenaming(false); }} onBlur={commitRename} className="min-w-0 flex-1 rounded border border-[var(--brand)] bg-[var(--bg-primary)] px-1 py-0.5 text-xs outline-none" /> : <span className="min-w-0 flex-1 truncate">{entry.name}</span>}
-      {!isDir && onOpenDoc && opensInWorkspace(entry.name) && <button type="button" onClick={(event) => { event.stopPropagation(); onOpenDoc(entry.path, entry.name); }} className="hidden group-hover:inline rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--brand-bg)] hover:text-[var(--brand)]" title="在工作区打开"><ExternalLink size={12} /></button>}
-      {isDir && <button type="button" onClick={(event) => { event.stopPropagation(); if (!expanded) toggle(); onCreateAt(entry.path); }} className="hidden group-hover:inline p-0.5 text-[var(--text-tertiary)] hover:text-[var(--brand)]" title="在此新建文件夹"><FolderPlus size={12} /></button>}
-      <button type="button" onClick={(event) => { event.stopPropagation(); onDelete(entry.path); }} className="hidden group-hover:inline p-0.5 text-[var(--text-tertiary)] hover:text-[var(--danger)]" title="删除"><Trash2 size={12} /></button>
+      {!isDir && onOpenDoc && opensInWorkspace(entry.name) && <button type="button" onClick={(event) => { event.stopPropagation(); onOpenDoc(entry.path, entry.name); }} className="hidden group-hover:inline rounded p-0.5 text-[var(--text-tertiary)] hover:bg-[var(--brand-bg)] hover:text-[var(--brand)]" title="Open in workspace"><ExternalLink size={12} /></button>}
+      {isDir && <button type="button" onClick={(event) => { event.stopPropagation(); if (!expanded) toggle(); onCreateAt(entry.path); }} className="hidden group-hover:inline p-0.5 text-[var(--text-tertiary)] hover:text-[var(--brand)]" title="New folder here"><FolderPlus size={12} /></button>}
+      <button type="button" onClick={(event) => { event.stopPropagation(); onDelete(entry.path); }} className="hidden group-hover:inline p-0.5 text-[var(--text-tertiary)] hover:text-[var(--danger)]" title="Delete"><Trash2 size={12} /></button>
     </div>
     {menuPosition && <div className="fixed z-[100] min-w-36 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] py-1 shadow-[var(--shadow-lg)]" style={{ left: Math.min(menuPosition.x, window.innerWidth - 176), top: Math.min(menuPosition.y, window.innerHeight - (isDir ? 180 : 150)) }} onClick={(event) => event.stopPropagation()}>
-      <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(entry.path); } catch { const input = document.createElement("textarea"); input.value = entry.path; input.style.position = "fixed"; input.style.opacity = "0"; document.body.appendChild(input); input.select(); document.execCommand("copy"); input.remove(); } setMenuPosition(null); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--bg-tertiary)]"><Copy size={13} />复制路径</button>
-      {!isDir && <button type="button" onClick={() => { const link = document.createElement("a"); link.href = getDownloadUrl(entry.path, absolute); link.download = entry.name; link.click(); setMenuPosition(null); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--bg-tertiary)]"><ExternalLink size={13} />下载</button>}
-      <button type="button" onClick={() => { setRenameValue(entry.name); setRenaming(true); setMenuPosition(null); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--bg-tertiary)]"><Pencil size={13} />重命名</button>
-      {isDir && <button type="button" onClick={() => { if (!expanded) toggle(); onCreateAt(entry.path); setMenuPosition(null); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--bg-tertiary)]"><FolderPlus size={13} />新建文件夹</button>}
-      <button type="button" onClick={() => { setMenuPosition(null); onDelete(entry.path); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--danger)] hover:bg-[var(--danger-bg)]"><Trash2 size={13} />删除</button>
+      <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(entry.path); } catch { const input = document.createElement("textarea"); input.value = entry.path; input.style.position = "fixed"; input.style.opacity = "0"; document.body.appendChild(input); input.select(); document.execCommand("copy"); input.remove(); } setMenuPosition(null); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--bg-tertiary)]"><Copy size={13} />Copy path</button>
+      {!isDir && <button type="button" onClick={() => { const link = document.createElement("a"); link.href = getDownloadUrl(entry.path, absolute); link.download = entry.name; link.click(); setMenuPosition(null); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--bg-tertiary)]"><ExternalLink size={13} />Download</button>}
+      <button type="button" onClick={() => { setRenameValue(entry.name); setRenaming(true); setMenuPosition(null); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--bg-tertiary)]"><Pencil size={13} />Rename</button>
+      {isDir && <button type="button" onClick={() => { if (!expanded) toggle(); onCreateAt(entry.path); setMenuPosition(null); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--bg-tertiary)]"><FolderPlus size={13} />New folder</button>}
+      <button type="button" onClick={() => { setMenuPosition(null); onDelete(entry.path); }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--danger)] hover:bg-[var(--danger-bg)]"><Trash2 size={13} />Delete</button>
     </div>}
     {isDir && expanded && <div>
-      {loading ? <div className="flex items-center gap-1 px-2 py-1 text-xs text-[var(--text-tertiary)]" style={{ paddingLeft: 22 + depth * 14 }}><Loader2 size={11} className="animate-spin" />加载中</div> : <TreeItems entries={children || []} depth={depth + 1} absolute={absolute} rootPath={rootPath} selected={selected} selectedPath={selectedPath} busy={busy} creatingAt={creatingAt} newFolderName={newFolderName} onSelect={onSelect} onDragPaths={onDragPaths} onMove={onMove} onCreateAt={onCreateAt} onCreateChange={onCreateChange} onCreate={onCreate} onCancelCreate={onCancelCreate} onDelete={onDelete} onOpenDoc={onOpenDoc} />}
+      {loading ? <div className="flex items-center gap-1 px-2 py-1 text-xs text-[var(--text-tertiary)]" style={{ paddingLeft: 22 + depth * 14 }}><Loader2 size={11} className="animate-spin" />Loading</div> : <TreeItems entries={children || []} depth={depth + 1} absolute={absolute} rootPath={rootPath} selected={selected} selectedPath={selectedPath} busy={busy} creatingAt={creatingAt} newFolderName={newFolderName} onSelect={onSelect} onDragPaths={onDragPaths} onMove={onMove} onCreateAt={onCreateAt} onCreateChange={onCreateChange} onCreate={onCreate} onCancelCreate={onCancelCreate} onDelete={onDelete} onOpenDoc={onOpenDoc} />}
       {creatingAt === entry.path && <NewFolderInput value={newFolderName} busy={busy} onChange={onCreateChange} onSubmit={onCreate} onCancel={onCancelCreate} />}
     </div>}
   </div>;

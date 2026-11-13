@@ -28,16 +28,16 @@ export class AppErrorBoundary extends Component<Props, State> {
         <section className="max-w-md w-full rounded-2xl border border-[var(--danger-border)] bg-[var(--bg-secondary)] p-6 shadow-[var(--shadow-lg)]">
           <div className="flex items-center gap-3 text-[var(--danger)]">
             <AlertTriangle size={22} />
-            <h1 className="text-lg font-semibold">页面遇到异常</h1>
+            <h1 className="text-lg font-semibold">Something went wrong on this page</h1>
           </div>
           <p className="mt-3 text-sm leading-relaxed text-[var(--text-secondary)]">
-            已阻止异常继续影响页面。请刷新以恢复当前界面；若问题重复出现，请复制控制台错误反馈给我们。
+            The error was contained. Refresh to restore this view; if it keeps happening, copy the console error and report it to us.
           </p>
           <button
             className="mt-5 inline-flex items-center gap-2 rounded-lg bg-[var(--brand)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--brand-hover)]"
             onClick={() => window.location.reload()}
           >
-            <RefreshCw size={15} />刷新页面
+            <RefreshCw size={15} />Refresh page
           </button>
         </section>
       </main>

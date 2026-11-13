@@ -6,7 +6,7 @@ One query surface for "what needs the user right now":
     partial tasks     > active runs  > unread results
 
 Consumers (TaskPanel, desktop pet, notification bell, workspace switcher,
-daily digest, WeChat) all read from here instead of interpreting
+daily digest) all read from here instead of interpreting
 Task.status on their own. Notification read-state is independent from
 request handled / result viewed.
 """
@@ -33,21 +33,21 @@ ACTIVE_RUNS = 4
 UNREAD_RESULTS = 5
 
 _KIND_LABELS = {
-    "pending_requests": "等待你的处理",
-    "failed_tasks": "失败任务",
-    "due_human_tasks": "临近截止",
-    "partial_tasks": "部分完成",
-    "active_runs": "正在执行",
-    "unread_results": "新成果",
+    "pending_requests": "Waiting for you",
+    "failed_tasks": "Failed tasks",
+    "due_human_tasks": "Due soon",
+    "partial_tasks": "Partially done",
+    "active_runs": "Running",
+    "unread_results": "New results",
 }
 
 
 _REQUEST_TYPE_LABELS = {
-    "input": "输入",
-    "choice": "选择",
-    "approval": "确认",
-    "human_step": "人工操作",
-    "review": "复核",
+    "input": "Input",
+    "choice": "Choice",
+    "approval": "Confirm",
+    "human_step": "Manual step",
+    "review": "Review",
 }
 
 _STATUS_BY_KIND = {
@@ -90,13 +90,13 @@ async def get_attention_summary(db: AsyncSession, user_id: int) -> dict:
             .order_by(TaskRequest.created_at.asc())
         )
     ).all()
-    # 注意：select(TaskRequest, Task.title) 解包后 r 就是 Task.title 标量
-    # （任务已删除时为 None），不能再取 .title 属性。
+    # Note: after unpacking select(TaskRequest, Task.title), r is the Task.title
+    # scalar (None when the task was deleted), so .title cannot be accessed on it.
     pending_requests = [
         {
             "kind": "pending_requests",
             "priority": PENDING_REQUESTS,
-            "message": r or f"等待你的{_REQUEST_TYPE_LABELS.get(t.request_type, '处理')}",
+            "message": r or f"Waiting for your {_REQUEST_TYPE_LABELS.get(t.request_type, 'action')}",
             "detail": t.question or t.title,
             "target": {
                 "type": "task_request",
@@ -225,15 +225,15 @@ async def get_attention_summary(db: AsyncSession, user_id: int) -> dict:
 
     items: list[dict] = []
     items.extend(pending_requests)
-    items.extend(_task_item(t, "failed_tasks", FAILED_TASKS, f"任务失败：{t.title}", view="error") for t in failed)
-    items.extend(_task_item(t, "due_human_tasks", DUE_HUMAN_TASKS, f"临近截止：{t.title}") for t in due_human)
-    items.extend(_task_item(t, "partial_tasks", PARTIAL_TASKS, f"部分完成：{t.title}", view="result") for t in partial)
-    items.extend(_task_item(t, "active_runs", ACTIVE_RUNS, f"正在处理：{t.title}") for t in active_tasks)
+    items.extend(_task_item(t, "failed_tasks", FAILED_TASKS, f"Task failed: {t.title}", view="error") for t in failed)
+    items.extend(_task_item(t, "due_human_tasks", DUE_HUMAN_TASKS, f"Due soon: {t.title}") for t in due_human)
+    items.extend(_task_item(t, "partial_tasks", PARTIAL_TASKS, f"Partially done: {t.title}", view="result") for t in partial)
+    items.extend(_task_item(t, "active_runs", ACTIVE_RUNS, f"In progress: {t.title}") for t in active_tasks)
     items.extend(
         {
             "kind": "active_runs",
             "priority": ACTIVE_RUNS,
-            "message": r.task_summary or f"{r.agent_name} 执行中",
+            "message": r.task_summary or f"{r.agent_name} is running",
             "detail": r.phase or "",
             "target": (
                 _task_target({"id": r.task_id, "title": r.task_summary or ""})
@@ -244,7 +244,7 @@ async def get_attention_summary(db: AsyncSession, user_id: int) -> dict:
         }
         for r in running_runs
     )
-    items.extend(_task_item(t, "unread_results", UNREAD_RESULTS, f"新成果：{t.title}", view="result") for t in unread)
+    items.extend(_task_item(t, "unread_results", UNREAD_RESULTS, f"New results: {t.title}", view="result") for t in unread)
 
     items.sort(key=lambda item: (item["priority"], item.get("updated_at") or ""))
 
@@ -255,7 +255,7 @@ async def get_attention_summary(db: AsyncSession, user_id: int) -> dict:
     top = items[0] if items else None
     return {
         "status": top["kind"] if top else "idle",
-        "message": top["message"] if top else "随时可以开始",
+        "message": top["message"] if top else "Ready when you are",
         "priority": top["priority"] if top is not None else 99,
         "count": len(items),
         "target": top["target"] if top else None,
@@ -273,7 +273,7 @@ async def get_attention_by_workspace(db: AsyncSession, user_id: int) -> list[dic
     workspace_of_task: dict[int, str] = {}
     rows = await db.execute(select(Task.id, Task.workspace).where(Task.user_id == user_id))
     for task_id, workspace in rows.all():
-        workspace_of_task[task_id] = workspace or "默认工作区"
+        workspace_of_task[task_id] = workspace or "Default workspace"
 
     buckets: dict[str, dict] = {}
     for kind, items in summary["groups"].items():

@@ -56,7 +56,7 @@ def classify_owner(assignee: str) -> tuple[str, str]:
     if name.lower() in KNOWN_AGENT_NAMES:
         return ("agent", "CrabAgent")
     # Chinese/English professional agent titles also count as agent owners
-    if any(marker in name.lower() for marker in ("agent", "分析师", "研究员", "撰写员", "专家", "计划")):
+    if any(marker in name.lower() for marker in ("agent", "analyst", "researcher", "writer", "expert", "planner")):
         return ("agent", name)
     return ("human", name)
 
@@ -233,7 +233,7 @@ async def update_task(
     if updates.get("status") in (TaskStatus.DONE.value, TaskStatus.PARTIAL.value):
         updates.setdefault("completed_at", now)
         # A (re-)completion produces a fresh unread result: re-arm the
-        # "新成果" attention notification even if an earlier result was seen.
+        # "new result" attention notification even if an earlier result was seen.
         updates["result_viewed_at"] = None
     if updates.get("status") == TaskStatus.IN_PROGRESS.value:
         # only stamp started_at once; keep the original start time on retries

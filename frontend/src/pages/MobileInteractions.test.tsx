@@ -7,7 +7,6 @@ import AgentsPage from "./AgentsPage";
 import CalendarPage from "./CalendarPage";
 import ChatInput from "../components/ChatInput";
 
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 const mocks = vi.hoisted(() => ({ save: vi.fn(), cache: vi.fn() }));
 vi.mock("../hooks/useSettingsData", () => ({ useSettingsData: () => ({
   settings: mockSettings,
@@ -42,27 +41,27 @@ describe("mobile interaction flows", () => {
     await render(<SettingsPage />);
     const select = container.querySelector("select")!;
     await value(select, "search");
-    const input = container.querySelector<HTMLInputElement>('input[placeholder="settingsPage.searxngUrlPlaceholder"]')!;
+    const input = container.querySelector<HTMLInputElement>('input[placeholder="http://localhost:8888"]')!;
     expect(input.value).toBe("old");
     await value(input, "https://search.example");
     await value(select, "privacy");
     await value(select, "search");
-    expect(container.querySelector<HTMLInputElement>('input[placeholder="settingsPage.searxngUrlPlaceholder"]')!.value).toBe("https://search.example");
-    await click(button("settingsPage.save"));
+    expect(container.querySelector<HTMLInputElement>('input[placeholder="http://localhost:8888"]')!.value).toBe("https://search.example");
+    await click(button("Save Settings"));
     expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({ searxng_url: "https://search.example" }));
     expect(mocks.cache).toHaveBeenCalledWith(expect.objectContaining({ searxng_url: "https://search.example" }));
     await value(select, "push");
-    expect([...container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "settingsPage.save")).toBe(false);
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Save Settings")).toBe(false);
   });
   it("does not update the settings cache when saving fails", async () => {
     mocks.save.mockRejectedValueOnce(new Error("Save failed"));
     await render(<SettingsPage />);
     await value(container.querySelector("select")!, "search");
-    await value(container.querySelector<HTMLInputElement>('input[placeholder="settingsPage.searxngUrlPlaceholder"]')!, "https://search.example");
-    await click(button("settingsPage.save"));
+    await value(container.querySelector<HTMLInputElement>('input[placeholder="http://localhost:8888"]')!, "https://search.example");
+    await click(button("Save Settings"));
     expect(mocks.save).toHaveBeenCalledOnce();
     expect(mocks.cache).not.toHaveBeenCalled();
-    expect(button("settingsPage.save").disabled).toBe(false);
+    expect(button("Save Settings").disabled).toBe(false);
   });
   it("opens agent details and returns to the list", async () => {
     await render(<AgentsPage />);
@@ -71,16 +70,16 @@ describe("mobile interaction flows", () => {
     expect(list.className).not.toContain("hidden md:flex");
     await click(agent);
     expect(list.className).toContain("hidden md:flex");
-    await click(button("agentsPage.title"));
+    await click(button("Agent Team"));
     expect(list.className).not.toContain("hidden md:flex");
   });
   it("switches calendar overview and returns to the agenda", async () => {
     await render(<CalendarPage />);
-    const agenda = container.querySelector('[aria-label="日程列表"]')!;
+    const agenda = container.querySelector('[aria-label="Schedule list"]')!;
     const main = agenda.closest(".min-w-0.flex-1.flex-col")!;
-    await click(button("今日概览"));
+    await click(button("Today's overview"));
     expect(main.className).toContain("hidden md:flex");
-    await click(button("← 返回日历"));
+    await click(button("← Back to calendar"));
     expect(main.className).not.toContain("hidden md:flex");
   });
   it("sends trimmed chat text, supports actions and abort", async () => {
@@ -88,7 +87,7 @@ describe("mobile interaction flows", () => {
     const props = { sending: false, replaying: false, onSend: send, onAbort: abort, onFileUpload: upload, onFilePaste: vi.fn(), onDelegateOpen: vi.fn() };
     await render(<ChatInput {...props} />);
     const textarea = container.querySelector("textarea")!;
-    const sendButton = container.querySelector<HTMLButtonElement>('[aria-label="common.send"]')!;
+    const sendButton = container.querySelector<HTMLButtonElement>('[aria-label="Send"]')!;
     expect(sendButton.disabled).toBe(true);
     await value(textarea, "  hello  ");
     await click(sendButton);
@@ -99,10 +98,10 @@ describe("mobile interaction flows", () => {
     expect(send).toHaveBeenCalledTimes(1);
     await act(async () => { textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
     expect(send).toHaveBeenLastCalledWith("keyboard");
-    await click(container.querySelector<HTMLElement>('[aria-label="chat.attachFile"]')!);
+    await click(container.querySelector<HTMLElement>('[aria-label="Attach file"]')!);
     expect(upload).toHaveBeenCalledOnce();
     await render(<ChatInput {...props} sending />);
-    await click(container.querySelector<HTMLElement>('[aria-label="common.stop"]')!);
+    await click(container.querySelector<HTMLElement>('[aria-label="Stop"]')!);
     expect(abort).toHaveBeenCalledOnce();
   });
 });

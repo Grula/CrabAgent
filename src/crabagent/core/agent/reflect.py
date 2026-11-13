@@ -48,67 +48,41 @@ def classify_task(task: str) -> str:
     tl = task.lower()
     code_kw = [
         "code",
-        "代码",
         "bug",
         "debug",
         "refactor",
-        "重构",
         "implement",
-        "实现",
         "function",
-        "函数",
         "class",
         "api",
         "test",
-        "测试",
         "write",
-        "编写",
         "fix",
-        "修复",
     ]
     research_kw = [
         "search",
-        "搜索",
         "research",
-        "调研",
         "find",
-        "查找",
         "browse",
-        "浏览",
         "scrape",
-        "爬取",
         "look up",
-        "查询",
     ]
     analysis_kw = [
         "analyze",
-        "分析",
         "compare",
-        "比较",
         "report",
-        "报告",
         "review",
-        "审查",
         "evaluate",
-        "评估",
         "check",
-        "检查",
     ]
     writing_kw = [
         "translate",
-        "翻译",
         "edit",
-        "编辑",
         "format",
-        "格式化",
         "document",
-        "文档",
         "content",
-        "内容",
         "article",
-        "文章",
         "write",
-        "撰写",
     ]
     scores = {"code": 0, "research": 0, "analysis": 0, "writing": 0}
     for kw in code_kw:
@@ -236,11 +210,11 @@ async def llm_reflect_lesson(
         insight = ""
         for line in text.split("\n"):
             line = line.strip()
-            if line.lower().startswith("category:") or line.startswith("类别:"):
+            if line.lower().startswith("category:"):
                 cat = line.split(":", 1)[1].strip().lower()
                 if cat in {"code", "research", "analysis", "writing", "general"}:
                     category = cat
-            elif line.lower().startswith("insight:") or line.startswith("经验:") or line.startswith("反思:"):
+            elif line.lower().startswith("insight:"):
                 insight = line.split(":", 1)[1].strip()
 
         if not insight:
@@ -304,8 +278,7 @@ _PREF_BAD_PHRASES = [
     "none",
     "nothing notable",
     "no clear preference",
-    "无明显偏好",
-    "无",
+    "no strong preference",
 ]
 
 
@@ -407,9 +380,9 @@ async def llm_extract_user_preferences(
             pref = ""
             for line in block.splitlines():
                 line = line.strip()
-                if line.lower().startswith("category:") or line.startswith("类别:"):
+                if line.lower().startswith("category:"):
                     cat = line.split(":", 1)[1].strip().lower() or "general"
-                elif line.lower().startswith("preference:") or line.startswith("偏好:"):
+                elif line.lower().startswith("preference:"):
                     pref = line.split(":", 1)[1].strip()
             if not pref:
                 continue
@@ -544,7 +517,7 @@ async def _enforce_lesson_cap(user_id: int, agent_name: str, cap: int = 30) -> N
         content = (item.get("content") or "").strip()
         score = float(item.get("importance", 0.5))
         score += min(len(content), 300) / 300 * 0.1
-        if _re.search(r'\d+\.\d+|`[a-z_]+`|\.py|\.ts|\(e\.g\.|（例如', content):
+        if _re.search(r'\d+\.\d+|`[a-z_]+`|\.py|\.ts|\(e\.g\.', content):
             score += 0.05
         return (score, item.get("id", 0))
 
@@ -649,11 +622,10 @@ _GENERIC_PRAISE = [
     "well done",
     "great job",
     "successfully completed",
-    "完成任务",
-    "完成得很好",
-    "做得很好",
-    "顺利完成",
     "completed the task",
+    "did a great job",
+    "did well",
+    "completed successfully",
 ]
 
 

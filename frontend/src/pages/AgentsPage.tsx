@@ -1,4 +1,3 @@
-import { useTranslation } from "react-i18next";
 import { useState, useEffect } from "react";
 import {
   Plus,
@@ -85,6 +84,7 @@ const emptyForm: FormState = {
 };
 
 const PERM_LABELS: Record<Permission, string> = { auto: "Auto", confirm: "Confirm", deny: "Deny" };
+
 const PERM_COLORS: Record<Permission, string> = {
   auto: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
   confirm: "bg-amber-500/15 text-amber-400 border-amber-500/30",
@@ -98,7 +98,6 @@ const PERM_COLORS_ACTIVE: Record<Permission, string> = {
 const DEFAULT_KEY = "__default__";
 
 export default function AgentsPage() {
-  const { t: tr } = useTranslation();
   const [agents, setAgents] = useState<AgentProfile[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -211,11 +210,11 @@ export default function AgentsPage() {
     setError("");
     try {
       await updateAgentProfile(selected.name, form);
-      toast.success(tr("agents.saved"));
+      toast.success("Agent saved");
       await fetchAgents();
       setEditing(false);
     } catch (e: any) {
-      setError(e?.message || tr("agents.saveFailed"));
+      setError(e?.message || "Save failed");
     } finally {
       setSaving(false);
     }
@@ -228,7 +227,7 @@ export default function AgentsPage() {
       !form.role.trim() ||
       !form.goal.trim()
     ) {
-      setError(tr("agents.allFieldsRequired"));
+      setError("Name, display name, role and goal are required");
       return;
     }
     setSaving(true);
@@ -244,12 +243,12 @@ export default function AgentsPage() {
         icon: form.icon,
         tool_permissions: form.tool_permissions,
       });
-      toast.success(tr("agents.created"));
+      toast.success("Agent created");
       await fetchAgents();
       setShowCreate(false);
       setSelectedName(created.name);
     } catch (e: any) {
-      setError(e?.message || tr("agents.createFailed"));
+      setError(e?.message || "Create failed");
     } finally {
       setSaving(false);
     }
@@ -259,11 +258,11 @@ export default function AgentsPage() {
     if (!deleteTarget) return;
     try {
       await deleteAgentProfile(deleteTarget.name);
-      toast.success(tr("agents.deleted"));
+      toast.success("Agent deleted");
       if (selectedName === deleteTarget.name) setSelectedName(null);
       await fetchAgents();
     } catch (e: any) {
-      toast.error(e?.message || tr("agents.deleteFailed"));
+      toast.error(e?.message || "Delete failed");
     } finally {
       setDeleteTarget(null);
     }
@@ -298,10 +297,10 @@ export default function AgentsPage() {
     try {
       await setDefaultToolPermissions(defaultForm);
       setDefaultPerms({ ...defaultForm });
-      toast.success(tr("agents.permsSaved"));
+      toast.success("Default permissions saved");
       setEditingDefault(false);
     } catch (e: any) {
-      setError(e?.message || tr("agents.saveFailed"));
+      setError(e?.message || "Save failed");
     } finally {
       setSaving(false);
     }
@@ -311,23 +310,23 @@ export default function AgentsPage() {
     <div className="space-y-3">
       {showCreate && (
         <Input
-          label={tr("agentForm.agentId")}
+          label={"Agent ID"}
           value={createName}
           onChange={(e) => setCreateName(e.target.value)}
-          placeholder={tr("agentForm.agentIdPlaceholder")}
+          placeholder={"e.g. designer, translator"}
         />
       )}
       <div className="flex gap-3 items-end">
         <div className="flex-1">
           <Input
-            label={tr("agentForm.displayName")}
+            label={"Display Name"}
             value={form.display_name}
             onChange={(e) => setForm({ ...form, display_name: e.target.value })}
           />
         </div>
         <div>
           <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1.5">
-            {tr("agentForm.icon")}
+            {"Icon"}
           </label>
           <div className="flex flex-wrap gap-0.5 p-1.5 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border)] max-w-[200px]">
             {ICON_OPTIONS.map((ic) => (
@@ -349,32 +348,32 @@ export default function AgentsPage() {
         </div>
       </div>
       <Input
-        label={tr("agentForm.role")}
+        label={"Role"}
         value={form.role}
         onChange={(e) => setForm({ ...form, role: e.target.value })}
       />
       <Textarea
-        label={tr("agentForm.goal")}
+        label={"Goal"}
         value={form.goal}
         onChange={(e) => setForm({ ...form, goal: e.target.value })}
         rows={2}
       />
       <Textarea
-        label={tr("agentForm.backstory")}
+        label={"Backstory"}
         value={form.backstory}
         onChange={(e) => setForm({ ...form, backstory: e.target.value })}
         rows={2}
-        placeholder={tr("agentForm.backstoryPlaceholder")}
+        placeholder={"Optional personality and expertise context"}
       />
       <Input
-        label={tr("agentForm.modelOverride")}
+        label={"Model Override"}
         value={form.model}
         onChange={(e) => setForm({ ...form, model: e.target.value })}
-        placeholder={tr("agentForm.modelPlaceholder")}
+        placeholder={"Leave empty to use default"}
       />
       <div>
         <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1.5">
-          {tr("agentForm.toolPermissions")}
+          {"Tool Permissions"}
         </label>
         <div className="space-y-1">
           {(toolInfoList.length > 0 ? toolInfoList : AVAILABLE_TOOLS.map((t) => ({ name: t, description: "", default_permission: "auto" as const }))).map((ti) => {
@@ -405,9 +404,9 @@ export default function AgentsPage() {
                           : PERM_COLORS[p],
                         !isExplicit && resolved === p && "opacity-60",
                       )}
-                      title={!isExplicit && resolved === p ? tr("agentForm.defaultOverride") : tr(`agents.permission${p.charAt(0).toUpperCase() + p.slice(1)}`)}
+                      title={!isExplicit && resolved === p ? "Default (click to override)" : PERM_LABELS[p]}
                     >
-                      {tr(`agents.permission${p.charAt(0).toUpperCase() + p.slice(1)}`)}
+                      {PERM_LABELS[p]}
                     </button>
                   ))}
                 </div>
@@ -422,10 +421,10 @@ export default function AgentsPage() {
           loading={saving}
           onClick={showCreate ? handleCreate : handleSave}
         >
-          {showCreate ? tr("common.create") : tr("common.save")}
+          {showCreate ? "Create" : "Save"}
         </Button>
         <Button variant="ghost" onClick={cancelForm}>
-          {tr("agentForm.cancel")}
+          {"Cancel"}
         </Button>
       </div>
     </div>
@@ -440,15 +439,15 @@ export default function AgentsPage() {
       <header className="flex items-center justify-between gap-2 px-3 sm:px-6 h-12 border-b border-[var(--border)] bg-[var(--bg-secondary)] shrink-0">
         <div className="flex items-center gap-3">
           <h1 className="text-sm font-semibold text-[var(--text-primary)]">
-            {tr("agentsPage.title")}
+            {"Agent Team"}
           </h1>
           <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">
-            {tr("agentsPage.activeCount", { active: activeCount, total: agents.length })}
+            {`${activeCount}/${agents.length} active`}
           </span>
         </div>
         {!showCreate && !editing && (
           <Button variant="brand" size="sm" onClick={startCreate}>
-            <Plus size={14} /> {tr("agentsPage.newAgent")}
+            <Plus size={14} /> {"New Agent"}
           </Button>
         )}
       </header>
@@ -460,15 +459,15 @@ export default function AgentsPage() {
           <div className="flex-1 overflow-y-auto p-2">
             {initialLoading && (
               <div className="flex items-center justify-center py-8 text-xs text-[var(--text-tertiary)]">
-                <Loader2 size={14} className="animate-spin mr-2" /> {tr("agentsPage.loading")}
+                <Loader2 size={14} className="animate-spin mr-2" /> {"Loading…"}
               </div>
             )}
             {!initialLoading && agents.length === 0 && (
               <div className="px-2 py-8">
                 <EmptyState
                   icon={<Bot size={24} className="text-[var(--text-tertiary)]" />}
-                  title={tr("agentsPage.noAgents")}
-                  description={tr("agentsPage.createFirstAgent")}
+                  title={"No agents"}
+                  description={"Create your first agent."}
                 />
               </div>
             )}
@@ -549,16 +548,16 @@ export default function AgentsPage() {
         <div className={cn("min-w-0 flex-1 overflow-y-auto bg-[var(--bg-primary)]", mobileDetail ? "block" : "hidden md:block")}>
           {mobileDetail && (
             <button type="button" onClick={() => { setSelectedName(null); cancelForm(); }} className="md:hidden flex items-center gap-1 px-4 pt-4 text-sm text-[var(--text-secondary)]">
-              <ArrowLeft size={16} /> {tr("agentsPage.title")}
+              <ArrowLeft size={16} /> {"Agent Team"}
             </button>
           )}
           {editingDefault && (
             <div className="max-w-2xl mx-auto p-4 sm:p-6">
               <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-4">
-                {tr("agentsPage.defaultPermissions")}
+                {"Default Tool Permissions"}
               </h2>
               <p className="text-xs text-[var(--text-tertiary)] mb-4">
-                {tr("agentsPage.defaultPermissionsDesc")}
+                {"These permissions apply when an agent does not have its own override."}
               </p>
               <div className="space-y-1">
                 {(toolInfoList.length > 0 ? toolInfoList : AVAILABLE_TOOLS.map((t) => ({ name: t, description: "", default_permission: "auto" as Permission }))).map((ti) => {
@@ -588,10 +587,10 @@ export default function AgentsPage() {
               </div>
               <div className="flex gap-2 pt-4">
                 <Button variant="brand" loading={saving} onClick={handleSaveDefault}>
-                  {tr("agentForm.save")}
+                  {"Save"}
                 </Button>
                 <Button variant="ghost" onClick={cancelForm}>
-                  {tr("agentForm.cancel")}
+                  {"Cancel"}
                 </Button>
               </div>
               {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
@@ -605,16 +604,16 @@ export default function AgentsPage() {
                     {agents.length > 0 ? "👈" : "🤖"}
                   </span>
                 }
-                title={agents.length > 0 ? tr("agentsPage.selectAgent") : tr("agentsPage.noAgents")}
+                title={agents.length > 0 ? "Select an agent" : "No agents"}
                 description={
                   agents.length > 0
-                    ? tr("agentsPage.selectAgentDesc")
-                    : tr("agentsPage.createFirstAgent")
+                    ? "Choose from the list to view details"
+                    : "Create your first agent."
                 }
                 action={
                   agents.length === 0 ? (
                     <Button variant="brand" size="sm" onClick={startCreate}>
-                      <Plus size={14} /> {tr("agentsPage.createNew")}
+                      <Plus size={14} /> {"New Agent"}
                     </Button>
                   ) : undefined
                 }
@@ -625,7 +624,7 @@ export default function AgentsPage() {
           {showCreate && (
             <div className="max-w-lg mx-auto p-4 sm:p-6">
               <h2 className="text-sm font-semibold text-[var(--text-primary)] mb-4">
-                {tr("agentsPage.createNew")}
+                {"New Agent"}
               </h2>
               {error && (
                 <div className="mb-3 px-3 py-2 rounded-lg bg-[var(--danger-bg)] border border-[var(--danger-border)] text-xs text-[var(--danger)]">
@@ -647,7 +646,7 @@ export default function AgentsPage() {
               {editing ? (
                 <>
                   <h2 className="text-sm font-semibold text-[var(--text-primary)] mb-4">
-                    {tr("agentsPage.editAgent", { name: selected.display_name })}
+                    {`Edit ${selected.display_name}`}
                   </h2>
                   {renderForm()}
                 </>
@@ -683,7 +682,7 @@ export default function AgentsPage() {
                       </Button>
                       <button
                         onClick={() => handleToggle(selected)}
-                        title={selected.enabled ? tr("agentsPage.disable") : tr("agentsPage.enable")}
+                        title={selected.enabled ? "Disable" : "Enable"}
                         className={cn(
                           "flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] font-medium border transition-colors",
                           selected.enabled
@@ -696,7 +695,7 @@ export default function AgentsPage() {
                         ) : (
                           <ToggleLeft size={14} />
                         )}
-                        {selected.enabled ? tr("agentsPage.on") : tr("agentsPage.off")}
+                        {selected.enabled ? "On" : "Off"}
                       </button>
                       {!selected.is_default && (
                         <Button
@@ -715,7 +714,7 @@ export default function AgentsPage() {
                   <div className="space-y-4">
                     <div>
                       <label className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
-                        {tr("agentsPage.detailRole")}
+                        {"Role"}
                       </label>
                       <p className="text-sm text-[var(--text-primary)] mt-1">
                         {selected.role}
@@ -723,7 +722,7 @@ export default function AgentsPage() {
                     </div>
                     <div>
                       <label className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
-                        {tr("agentsPage.detailGoal")}
+                        {"Goal"}
                       </label>
                       <p className="text-sm text-[var(--text-secondary)] mt-1 whitespace-pre-wrap leading-relaxed">
                         {selected.goal}
@@ -732,7 +731,7 @@ export default function AgentsPage() {
                     {selected.backstory && (
                       <div>
                         <label className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
-                          {tr("agentsPage.detailBackstory")}
+                          {"Backstory"}
                         </label>
                         <p className="text-sm text-[var(--text-secondary)] mt-1 whitespace-pre-wrap leading-relaxed">
                           {selected.backstory}
@@ -747,7 +746,7 @@ export default function AgentsPage() {
                       return (
                         <div>
                           <label className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
-                            {tr("agentsPage.detailPermissions")}
+                            {"Permissions"}
                           </label>
                           <div className="flex flex-wrap gap-1 mt-1.5">
                             {auto.map(([t]) => (
@@ -757,7 +756,7 @@ export default function AgentsPage() {
                             ))}
                             {confirmed.map(([t]) => (
                               <span key={t} className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                                {t} ({tr("agentsPage.permissionConfirm").trim()})
+                                {t} ({" (confirm)".trim()})
                               </span>
                             ))}
                           </div>
@@ -771,12 +770,12 @@ export default function AgentsPage() {
                         <div className="flex items-center gap-2 mb-3">
                           <Activity size={13} className="text-[var(--text-tertiary)]" />
                           <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                            {tr("agentsPage.statistics")}
+                            {"Statistics"}
                           </span>
                         </div>
                         {loadingLearn && (
                           <div className="flex items-center gap-2 py-2 text-xs text-[var(--text-tertiary)]">
-                            <Loader2 size={12} className="animate-spin" /> {tr("agentsPage.loading")}
+                            <Loader2 size={12} className="animate-spin" /> {"Loading…"}
                           </div>
                         )}
                         {agentStats && !loadingLearn && (
@@ -787,25 +786,25 @@ export default function AgentsPage() {
                                 <div className="text-lg font-semibold text-[var(--text-primary)]">
                                   {agentStats.total}
                                 </div>
-                                <div className="text-[10px] text-[var(--text-tertiary)]">{tr("agentsPage.statTasks")}</div>
+                                <div className="text-[10px] text-[var(--text-tertiary)]">{"Tasks"}</div>
                               </div>
                               <div className="rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border)] px-3 py-2 text-center">
                                 <div className="text-lg font-semibold text-[var(--success)]">
                                   {agentStats.success_rate}%
                                 </div>
-                                <div className="text-[10px] text-[var(--text-tertiary)]">{tr("agentsPage.statSuccess")}</div>
+                                <div className="text-[10px] text-[var(--text-tertiary)]">{"Success"}</div>
                               </div>
                               <div className="rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border)] px-3 py-2 text-center">
                                 <div className="text-lg font-semibold text-[var(--text-primary)]">
                                   {agentStats.avg_elapsed}s
                                 </div>
-                                <div className="text-[10px] text-[var(--text-tertiary)]">{tr("agentsPage.statAvgTime")}</div>
+                                <div className="text-[10px] text-[var(--text-tertiary)]">{"Avg Time"}</div>
                               </div>
                               <div className="rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border)] px-3 py-2 text-center">
                                 <div className="text-lg font-semibold text-[var(--text-primary)]">
                                   {agentStats.avg_tokens}
                                 </div>
-                                <div className="text-[10px] text-[var(--text-tertiary)]">{tr("agentsPage.statAvgTokens")}</div>
+                                <div className="text-[10px] text-[var(--text-tertiary)]">{"Avg Tokens"}</div>
                               </div>
                             </div>
                             {/* Growth chart */}
@@ -820,7 +819,7 @@ export default function AgentsPage() {
                           </div>
                         )}
                         {!agentStats && !loadingLearn && (
-                          <p className="text-[11px] text-[var(--text-tertiary)]">{tr("agentsPage.noData")}</p>
+                          <p className="text-[11px] text-[var(--text-tertiary)]">{"No data available"}</p>
                         )}
                       </div>
                     )}
@@ -831,16 +830,16 @@ export default function AgentsPage() {
                         <div className="flex items-center gap-2 mb-3">
                           <Clock size={13} className="text-[var(--text-tertiary)]" />
                           <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-                            {tr("agentsPage.recentRuns")}
+                            {"Recent Runs"}
                           </span>
                         </div>
                         {loadingRuns && (
                           <div className="flex items-center gap-2 py-2 text-xs text-[var(--text-tertiary)]">
-                            <Loader2 size={12} className="animate-spin" /> {tr("agentsPage.loading")}
+                            <Loader2 size={12} className="animate-spin" /> {"Loading…"}
                           </div>
                         )}
                         {!loadingRuns && recentRuns.length === 0 && (
-                          <p className="text-[11px] text-[var(--text-tertiary)]">{tr("agentsPage.noRuns")}</p>
+                          <p className="text-[11px] text-[var(--text-tertiary)]">{"No runs yet"}</p>
                         )}
                         {!loadingRuns && recentRuns.length > 0 && (
                           <div className="space-y-1">
@@ -857,7 +856,7 @@ export default function AgentsPage() {
                                   <Circle size={8} className="shrink-0 text-[var(--text-tertiary)]" />
                                 )}
                                 <span className="text-xs flex-1 truncate text-[var(--text-secondary)]">
-                                  {run.task_summary || tr("agentsPage.noSummary")}
+                                  {run.task_summary || "(no summary)"}
                                 </span>
                                 <span className="text-[10px] font-mono tabular-nums text-[var(--text-tertiary)] shrink-0">
                                   {run.elapsed?.toFixed(1)}s
@@ -879,9 +878,9 @@ export default function AgentsPage() {
       <ConfirmDialog
         open={!!deleteTarget}
         onOpenChange={(o) => !o && setDeleteTarget(null)}
-        title={tr("agentsPage.deleteConfirm", { name: deleteTarget?.display_name || "" })}
-        description={tr("agentsPage.deleteDesc")}
-        confirmText={tr("common.delete")}
+        title={`Delete agent "${deleteTarget?.display_name || ""}"?`}
+        description={"This permanently removes the agent profile and its learning data."}
+        confirmText={"Delete"}
         tone="danger"
         onConfirm={handleDelete}
       />

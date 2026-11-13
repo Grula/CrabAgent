@@ -103,13 +103,13 @@ async def _sync_ical_source(db: AsyncSession, source: CalendarIcalSource, defaul
 
 
 # ---------------------------------------------------------------------------
-# CalDAV sync (企业微信)
+# CalDAV sync (WeCom)
 # ---------------------------------------------------------------------------
 
 async def _sync_caldav_source(db: AsyncSession, source: CalendarIcalSource, default_reminder_minutes: int = 15) -> int:
     """Sync via CalDAV protocol.
 
-    企业微信 CalDAV note: the REPORT/calendar-query response only returns
+    WeCom CalDAV note: the REPORT/calendar-query response only returns
     etags for ICS files, not inline ``calendar-data``.  We therefore:
     1. PROPFIND → discover calendar collections
     2. REPORT on each calendar → list .ics file URLs
@@ -235,11 +235,11 @@ async def _sync_caldav_source(db: AsyncSession, source: CalendarIcalSource, defa
     try:
         vevents = await asyncio.wait_for(asyncio.to_thread(_fetch), timeout=60.0)
     except asyncio.TimeoutError:
-        raise RuntimeError("CalDAV 同步超时 (60s)") from None
+        raise RuntimeError("CalDAV sync timed out (60s)") from None
     except Exception as e:
         err_msg = str(e).lower()
         if "auth" in err_msg or "401" in err_msg or "403" in err_msg or "unauthorized" in err_msg:
-            raise RuntimeError("CalDAV 认证失败，请在企业微信重新获取密码并更新配置") from e
+            raise RuntimeError("CalDAV authentication failed; re-fetch the password from WeCom and update the configuration") from e
         raise
 
     return await _upsert_events(db, source, vevents, default_reminder_minutes)
@@ -273,7 +273,7 @@ async def _upsert_events(
     synced = 0
     for component in vevents:
         uid = str(component.get("uid", ""))
-        summary = str(component.get("summary", "(无标题)"))
+        summary = str(component.get("summary", "(untitled)"))
         location_val = component.get("location")
         location = str(location_val) if location_val else ""
         desc_val = component.get("description")

@@ -1,6 +1,6 @@
 """Push notification channel API — status / config / test.
 
-Mirrors ``serve/api/wechat.py`` style. Config is stored in the
+Config is stored in the
 ``app_settings`` table (key=``push_config``); secrets are masked on read.
 """
 
@@ -39,8 +39,8 @@ class PushConfigRequest(BaseModel):
 
 
 class PushTestRequest(BaseModel):
-    title: str = "🔔 CrabAgent 推送测试"
-    body: str = "如果你看到这条通知，说明推送通道已打通。"
+    title: str = "🔔 CrabAgent push test"
+    body: str = "If you can see this notification, the push channel is working."
 
 
 def _apply_updates(cfg: PushConfig, req: PushConfigRequest) -> None:

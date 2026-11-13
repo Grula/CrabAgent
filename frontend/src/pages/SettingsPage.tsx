@@ -1,23 +1,18 @@
-import { useTranslation } from "react-i18next";
 import { useState, useEffect } from "react";
-import { Save, FlaskConical, Search, Check, Smartphone, SlidersHorizontal, Globe, Wifi, Cat, ShieldCheck, MonitorSmartphone, Bell } from "lucide-react";
+import { Save, FlaskConical, Search, Check, SlidersHorizontal, Globe, Wifi, ShieldCheck, Bell } from "lucide-react";
 import { Input, Button } from "../components/ui";
 import { toast } from "../components/ui/Toast";
 import { cn } from "../lib/cn";
 import * as settingsApi from "../api/settings";
 import ModelSelector from "../components/ModelSelector";
 import { SubAgentModelMapEditor, parseModelMap, serializeModelMap, type ModelMapRow } from "../components/SubAgentModelMapEditor";
-import WeChatPanel from "../components/WeChatPanel";
 import PushPanel from "../components/PushPanel";
-import { PetsSettingsPanel } from "../components/PetsSettingsPanel";
-import MacosComputerPanel from "../components/MacosComputerPanel";
 import ThemeSettingsPanel from "../components/ThemeSettingsPanel";
 import { useSettingsData } from "../hooks/useSettingsData";
 
-type SettingsTab = "appearance" | "general" | "search" | "privacy" | "network" | "wechat" | "push" | "pets" | "macos";
+type SettingsTab = "appearance" | "general" | "search" | "privacy" | "network" | "push";
 
 export default function SettingsPage() {
-  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
 
   // Cached store — survives tab switches (no reload flash on re-mount).
@@ -103,7 +98,7 @@ export default function SettingsPage() {
         sub_agent_model_map: data.sub_agent_model_map,
         conversation_history_tool_enabled: data.conversation_history_tool_enabled,
       });
-      toast.success(t("settingsPage.saved"));
+      toast.success("Settings saved");
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Failed to save");
     } finally {
@@ -118,18 +113,16 @@ export default function SettingsPage() {
       const result = await settingsApi.testSearxng(searxngUrl);
       if (result.success) {
         toast.success(
-          t("settingsPage.testSuccess", { count: result.result_count ?? 0 }),
+          `Connection successful (${result.result_count ?? 0} results)`,
         );
       } else {
         toast.error(
-          t("settingsPage.testFailed", { error: result.error ?? "unknown" }),
+          `Connection failed: ${result.error ?? "unknown"}`,
         );
       }
     } catch (e: unknown) {
       toast.error(
-        t("settingsPage.testFailed", {
-          error: e instanceof Error ? e.message : "unknown",
-        }),
+        `Connection failed: ${e instanceof Error ? e.message : "unknown"}`,
       );
     } finally {
       setTesting(false);
@@ -143,18 +136,16 @@ export default function SettingsPage() {
       const result = await settingsApi.testProxy(globalProxy);
       if (result.success) {
         toast.success(
-          t("settingsPage.proxyTestSuccess", { latency: result.latency_ms ?? 0, ip: result.ip ?? "" }),
+          `Proxy works (${result.latency_ms ?? 0}ms, IP: ${result.ip ?? ""})`,
         );
       } else {
         toast.error(
-          t("settingsPage.testFailed", { error: result.error ?? "unknown" }),
+          `Connection failed: ${result.error ?? "unknown"}`,
         );
       }
     } catch (e: unknown) {
       toast.error(
-        t("settingsPage.testFailed", {
-          error: e instanceof Error ? e.message : "unknown",
-        }),
+        `Connection failed: ${e instanceof Error ? e.message : "unknown"}`,
       );
     } finally {
       setTestingProxy(false);
@@ -167,22 +158,19 @@ export default function SettingsPage() {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-sm text-[var(--text-tertiary)]">
-          {t("common.loading")}
+          {"Loading…"}
         </div>
       </div>
     );
   }
 
   const tabs: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
-    { id: "appearance", label: "外观", icon: <SlidersHorizontal size={14} /> },
-    { id: "general", label: t("settingsPage.sectionGeneral"), icon: <SlidersHorizontal size={14} /> },
-    { id: "search", label: t("settingsPage.sectionSearch"), icon: <Search size={14} /> },
-    { id: "privacy", label: "隐私", icon: <ShieldCheck size={14} /> },
-    { id: "network", label: t("settingsPage.sectionNetwork"), icon: <Globe size={14} /> },
-    { id: "pets", label: t("settingsPage.sectionPets"), icon: <Cat size={14} /> },
-    { id: "wechat", label: "微信渠道", icon: <Smartphone size={14} /> },
-    { id: "push", label: "手机推送", icon: <Bell size={14} /> },
-    { id: "macos", label: "macOS 控制", icon: <MonitorSmartphone size={14} /> },
+    { id: "appearance", label: "Appearance", icon: <SlidersHorizontal size={14} /> },
+    { id: "general", label: "General", icon: <SlidersHorizontal size={14} /> },
+    { id: "search", label: "Search Engine", icon: <Search size={14} /> },
+    { id: "privacy", label: "Privacy", icon: <ShieldCheck size={14} /> },
+    { id: "network", label: "Network", icon: <Globe size={14} /> },
+    { id: "push", label: "Mobile push", icon: <Bell size={14} /> },
   ];
 
   const showSaveButton = activeTab === "general" || activeTab === "search" || activeTab === "privacy" || activeTab === "network";
@@ -190,10 +178,10 @@ export default function SettingsPage() {
   return (
     <div className="h-full min-w-0 flex flex-col p-4 sm:p-8 max-w-5xl mx-auto w-full">
       <h1 className="text-xl font-semibold text-[var(--text-primary)] mb-4">
-        {t("settingsPage.title")}
+        {"Settings"}
       </h1>
 
-      <select aria-label={t("settingsPage.title")} value={activeTab} onChange={(event) => setActiveTab(event.target.value as SettingsTab)} className="sm:hidden mb-4 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)]">
+      <select aria-label={"Settings"} value={activeTab} onChange={(event) => setActiveTab(event.target.value as SettingsTab)} className="sm:hidden mb-4 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)]">
         {tabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
       </select>
       {/* Desktop tabs remain available at wider widths. */}
@@ -223,12 +211,12 @@ export default function SettingsPage() {
           <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 sm:p-5 space-y-4">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-[var(--text-secondary)]">
-                {t("settingsPage.defaultModel")}
+                {"Default LLM Model"}
               </label>
               <div className="flex items-center gap-2">
                 {providersLoading ? (
                   <div className="h-9 flex items-center text-xs text-[var(--text-tertiary)]">
-                    {t("common.loading")}
+                    {"Loading…"}
                   </div>
                 ) : (
                   <ModelSelector
@@ -241,21 +229,21 @@ export default function SettingsPage() {
                 )}
               </div>
               <p className="text-xs text-[var(--text-tertiary)]">
-                {t("settingsPage.defaultModelDesc")}
+                {"Used by email processing, scheduled tasks, and other automated workflows when no model is specified."}
               </p>
             </div>
 
             {/* Sub-Agent Model Map */}
             <div className="flex flex-col gap-1.5 pt-2 border-t border-[var(--border)]">
               <label className="text-xs font-medium text-[var(--text-secondary)]">
-                {t("settingsPage.subAgentMapTitle")}
+                {"Sub-Agent Model Mapping"}
               </label>
               <p className="text-xs text-[var(--text-tertiary)] mb-1">
-                {t("settingsPage.subAgentMapDesc")}
+                {"When the main agent delegates using the left model, the sub-agent switches to the right model (cross-provider allowed, for cost control). Unmatched combos fall through to the default chain."}
               </p>
               {providersLoading ? (
                 <div className="h-9 flex items-center text-xs text-[var(--text-tertiary)]">
-                  {t("common.loading")}
+                  {"Loading…"}
                 </div>
               ) : (
                 <SubAgentModelMapEditor
@@ -271,9 +259,9 @@ export default function SettingsPage() {
         {activeTab === "search" && (
           <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 sm:p-5 space-y-4">
             <Input
-              label={t("settingsPage.searxngUrl")}
-              hint={t("settingsPage.searxngUrlDesc")}
-              placeholder={t("settingsPage.searxngUrlPlaceholder")}
+              label={"SearXNG URL"}
+              hint={"Self-hosted search engine. Leave empty to use fallback web search."}
+              placeholder={"http://localhost:8888"}
               value={searxngUrl}
               onChange={(e) => setSearxngUrl(e.target.value)}
               leftIcon={<Search size={14} />}
@@ -288,12 +276,12 @@ export default function SettingsPage() {
                 {testing ? (
                   <>
                     <FlaskConical size={14} className="animate-spin" />
-                    {t("settingsPage.testing")}
+                    {"Testing…"}
                   </>
                 ) : (
                   <>
                     <FlaskConical size={14} />
-                    {t("settingsPage.testSearxng")}
+                    {"Test Connection"}
                   </>
                 )}
               </Button>
@@ -305,13 +293,13 @@ export default function SettingsPage() {
           <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 sm:p-5 space-y-4">
             <div className="flex items-start justify-between gap-5">
               <div className="space-y-1">
-                <h2 className="text-sm font-medium text-[var(--text-primary)]">允许 Agent 检索历史会话</h2>
+                <h2 className="text-sm font-medium text-[var(--text-primary)]">Allow the agent to search past sessions</h2>
                 <p className="text-xs leading-5 text-[var(--text-tertiary)] max-w-lg">
-                  开启后，Agent 可搜索并读取您拥有的其他会话和工作空间内容。检索结果会作为上下文发送给当前选择的模型服务。
+                  When enabled, the agent can search and read your other sessions and workspaces. Results are sent as context to the currently selected model service.
                 </p>
               </div>
               <input
-                aria-label="允许 Agent 检索历史会话"
+                aria-label="Allow agent to search past sessions"
                 type="checkbox"
                 checked={conversationHistoryEnabled}
                 onChange={(event) => setConversationHistoryEnabled(event.target.checked)}
@@ -319,7 +307,7 @@ export default function SettingsPage() {
               />
             </div>
             <p className="rounded-lg bg-[var(--warning-bg)] px-3 py-2 text-xs leading-5 text-[var(--text-secondary)]">
-              历史内容可能包含不可信指令。请仅在信任当前模型服务时开启；其他用户的会话永远不可访问。
+              Historical content may contain untrusted instructions. Only enable this if you trust the current model service; other users' sessions are never accessible.
             </p>
           </div>
         )}
@@ -329,14 +317,14 @@ export default function SettingsPage() {
             <div className="flex items-center gap-2 mb-2">
               <Wifi size={14} className="text-[var(--brand)]" />
               <span className="text-xs font-medium text-[var(--text-secondary)]">
-                {t("settingsPage.proxySectionTitle")}
+                {"Proxy Settings"}
               </span>
             </div>
 
             {/* Global Proxy */}
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-[var(--text-secondary)]">
-                {t("settingsPage.globalProxy")}
+                {"Global Proxy"}
               </label>
               <div className="flex items-center gap-2">
                 <input
@@ -355,37 +343,37 @@ export default function SettingsPage() {
                   {testingProxy ? (
                     <>
                       <FlaskConical size={14} className="animate-spin" />
-                      {t("settingsPage.testing")}
+                      {"Testing…"}
                     </>
                   ) : (
                     <>
                       <FlaskConical size={14} />
-                      {t("settingsPage.testProxy")}
+                      {"Test"}
                     </>
                   )}
                 </Button>
               </div>
               <p className="text-xs text-[var(--text-tertiary)]">
-                {t("settingsPage.globalProxyDesc")}
+                {"Default proxy for all network requests. Supports http:// and socks5:// protocols."}
               </p>
             </div>
 
             {/* Divider */}
             <div className="border-t border-[var(--border)] pt-4">
               <p className="text-[11px] font-medium text-[var(--text-tertiary)] mb-3">
-                {t("settingsPage.categoryProxyDesc")}
+                {"Category-specific proxies (leave empty to use global proxy)"}
               </p>
 
               {/* Web Proxy */}
               <div className="flex flex-col gap-1.5 mb-3">
                 <label className="text-xs font-medium text-[var(--text-secondary)]">
-                  {t("settingsPage.webProxy")}
+                  {"Web Tools Proxy"}
                 </label>
                 <input
                   type="text"
                   value={webProxy}
                   onChange={(e) => setWebProxy(e.target.value)}
-                  placeholder={t("settingsPage.proxyPlaceholder")}
+                  placeholder={"Leave empty to use global proxy"}
                   className="w-full h-9 px-3 text-sm rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--brand)] focus:ring-1 focus:ring-[var(--brand)]/30"
                 />
               </div>
@@ -393,13 +381,13 @@ export default function SettingsPage() {
               {/* LLM Proxy */}
               <div className="flex flex-col gap-1.5 mb-3">
                 <label className="text-xs font-medium text-[var(--text-secondary)]">
-                  {t("settingsPage.llmProxy")}
+                  {"LLM Calls Proxy"}
                 </label>
                 <input
                   type="text"
                   value={llmProxy}
                   onChange={(e) => setLlmProxy(e.target.value)}
-                  placeholder={t("settingsPage.proxyPlaceholder")}
+                  placeholder={"Leave empty to use global proxy"}
                   className="w-full h-9 px-3 text-sm rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--brand)] focus:ring-1 focus:ring-[var(--brand)]/30"
                 />
               </div>
@@ -407,13 +395,13 @@ export default function SettingsPage() {
               {/* Browser Proxy */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-medium text-[var(--text-secondary)]">
-                  {t("settingsPage.browserProxy")}
+                  {"Browser Proxy"}
                 </label>
                 <input
                   type="text"
                   value={browserProxy}
                   onChange={(e) => setBrowserProxy(e.target.value)}
-                  placeholder={t("settingsPage.proxyPlaceholder")}
+                  placeholder={"Leave empty to use global proxy"}
                   className="w-full h-9 px-3 text-sm rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--brand)] focus:ring-1 focus:ring-[var(--brand)]/30"
                 />
               </div>
@@ -421,20 +409,8 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {activeTab === "wechat" && <WeChatPanel />}
         {activeTab === "push" && <PushPanel />}
 
-        {activeTab === "pets" && (
-          <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-5">
-            <PetsSettingsPanel />
-          </div>
-        )}
-
-        {activeTab === "macos" && (
-          <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-5">
-            <MacosComputerPanel />
-          </div>
-        )}
       </div>
 
       {/* Save Button — only for general/search tabs */}
@@ -449,12 +425,12 @@ export default function SettingsPage() {
             {saving ? (
               <>
                 <Save size={15} className="animate-spin" />
-                {t("settingsPage.saving")}
+                {"Saving…"}
               </>
             ) : (
               <>
                 <Check size={15} />
-                {t("settingsPage.save")}
+                {"Save Settings"}
               </>
             )}
           </Button>

@@ -66,9 +66,11 @@ def configure_litellm() -> None:
     )
 
 
+import crabagent.core.agent.tools.agent_runs  # noqa: F401
 import crabagent.core.agent.tools.bash  # noqa: F401
 import crabagent.core.agent.tools.conversation  # noqa: F401
 import crabagent.core.agent.tools.edit  # noqa: F401
+import crabagent.core.agent.tools.git  # noqa: F401
 import crabagent.core.agent.tools.glob  # noqa: F401
 import crabagent.core.agent.tools.grep  # noqa: F401
 import crabagent.core.agent.tools.image  # noqa: F401
@@ -76,6 +78,7 @@ import crabagent.core.agent.tools.memory  # noqa: F401
 import crabagent.core.agent.tools.office  # noqa: F401
 import crabagent.core.agent.tools.read  # noqa: F401
 import crabagent.core.agent.tools.shared  # noqa: F401
+import crabagent.core.agent.tools.tool_search  # noqa: F401
 import crabagent.core.agent.tools.web  # noqa: F401
 import crabagent.core.agent.tools.write  # noqa: F401
 from crabagent.core.agent.context import AgentContext

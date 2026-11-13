@@ -311,7 +311,7 @@ export default function ExecutionTreePanel({ sessionId }: { sessionId: string })
           <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-subtle)] bg-[var(--bg-tertiary)]/40">
             <AlertTriangle size={14} className="text-[var(--warning)]" />
             <span className="text-xs font-semibold">
-              {insights.length} 条洞察
+              {insights.length} insights
             </span>
           </div>
           <div className="divide-y divide-[var(--border-subtle)]">

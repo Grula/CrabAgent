@@ -23,7 +23,7 @@ def test_message_to_dict_handles_compressed_role_and_json_content():
 def test_message_to_dict_flattens_task_result_card_for_llm():
     payload = {
         "task_id": 22,
-        "title": "预算报告",
+        "title": "Budget report",
         "status": "done",
         "verification_status": "passed",
     }
@@ -35,9 +35,9 @@ def test_message_to_dict_flattens_task_result_card_for_llm():
     )
     d = message_service.message_to_dict(msg)
     assert d["role"] == "user"
-    assert "[任务结果卡片]" in d["content"]
-    assert "预算报告" in d["content"]
-    assert "已完成" in d["content"]
+    assert "[Task result card]" in d["content"]
+    assert "Budget report" in d["content"]
+    assert "Completed" in d["content"]
 
 
 def test_message_to_response_preserves_task_result_role():
@@ -94,7 +94,7 @@ def test_strip_base64_images_from_user_content():
     """User message with embedded base64 image should be stripped in list view."""
     big_b64 = "A" * 10000  # simulate large base64 data
     content = json.dumps([
-        {"type": "text", "text": "看这张图"},
+        {"type": "text", "text": "Look at this image"},
         {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{big_b64}"}},
     ])
     msg = _make_msg(conversation_id=1, sequence=6, role="user", content=content)
@@ -102,7 +102,7 @@ def test_strip_base64_images_from_user_content():
     assert d.get("has_images") is True
     assert big_b64 not in d["content"]  # base64 data stripped
     # Text content preserved
-    assert "看这张图" in d["content"]
+    assert "Look at this image" in d["content"]
 
 
 def test_strip_base64_images_no_images():

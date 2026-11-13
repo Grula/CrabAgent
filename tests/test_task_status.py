@@ -54,14 +54,14 @@ def test_validate_task_status_accepts_known_and_rejects_unknown():
 
 @pytest.mark.asyncio
 async def test_new_task_defaults_to_pending(db):
-    t = await task_store.add_task(db, user_id=1, title="写报告")
+    t = await task_store.add_task(db, user_id=1, title="Write report")
 
     assert t["status"] == "pending"
 
 
 @pytest.mark.asyncio
 async def test_update_task_rejects_invalid_status(db):
-    t = await task_store.add_task(db, user_id=1, title="写报告")
+    t = await task_store.add_task(db, user_id=1, title="Write report")
 
     with pytest.raises(ValueError, match="Invalid task status"):
         await task_store.update_task(db, t["id"], 1, status="planning")
@@ -69,7 +69,7 @@ async def test_update_task_rejects_invalid_status(db):
 
 @pytest.mark.asyncio
 async def test_update_task_accepts_new_semantic_statuses(db):
-    t = await task_store.add_task(db, user_id=1, title="写报告")
+    t = await task_store.add_task(db, user_id=1, title="Write report")
 
     t = await task_store.update_task(db, t["id"], 1, status="waiting_user")
     assert t["status"] == "waiting_user"

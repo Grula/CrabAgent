@@ -1,5 +1,4 @@
 import { CheckCircle2, Loader2, XCircle, FileText } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import { cn } from "../lib/cn";
 
 export interface DocOpEvent {
@@ -14,13 +13,11 @@ interface Props {
 }
 
 export function DocumentTimeline({ events, className }: Props) {
-  const { t } = useTranslation();
-
   if (events.length === 0) {
     return (
       <div className={cn("flex flex-col items-center justify-center h-full text-[var(--text-tertiary)] text-xs gap-2", className)}>
         <FileText size={24} opacity={0.3} />
-        <span>{t("document.noDocument")}</span>
+        <span>{"No document open"}</span>
       </div>
     );
   }

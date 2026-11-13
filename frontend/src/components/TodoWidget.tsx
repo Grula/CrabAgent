@@ -1,4 +1,3 @@
-import { useTranslation } from "react-i18next";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { ListTodo, X as XIcon, Plus } from "lucide-react";
 import { TodoItem, listTodos, addTodo, markTodoDone } from "../api/sessions";
@@ -11,7 +10,6 @@ interface Props {
 const DRAG_THRESHOLD = 4;
 
 export default function TodoWidget({ sessionId, refreshKey = 0 }: Props) {
-  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [newTask, setNewTask] = useState("");
@@ -117,7 +115,7 @@ export default function TodoWidget({ sessionId, refreshKey = 0 }: Props) {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         title={`${pendingCount} pending tasks`}
-        className="fixed right-3 sm:right-4 z-40 w-12 h-12 sm:w-14 sm:h-14 rounded-full flex flex-col items-center justify-center text-white shadow-[var(--shadow-md)] bg-[var(--accent)] hover:bg-[var(--accent-hover)] transition-colors select-none touch-none"
+        className="fixed right-3 sm:right-4 z-40 w-11 h-11 sm:w-12 sm:h-12 rounded-full flex flex-col items-center justify-center text-[var(--text-primary)] shadow-[var(--shadow-md)] bg-[var(--bg-secondary)] border border-[var(--border)] hover:border-[var(--border-strong)] hover:bg-[var(--bg-tertiary)] transition-colors select-none touch-none"
         style={{ bottom: pos.bottom }}
       >
         <ListTodo size={20} />
@@ -138,7 +136,7 @@ export default function TodoWidget({ sessionId, refreshKey = 0 }: Props) {
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
         <span className="flex items-center gap-1.5 text-sm font-semibold text-[var(--text-primary)]">
           <ListTodo size={14} className="text-[var(--accent)]" />
-          {t("todo.title")} {pendingCount > 0 && `(${pendingCount})`}
+          {"Checklist"} {pendingCount > 0 && `(${pendingCount})`}
         </span>
         <button
           onClick={() => setExpanded(false)}
@@ -151,7 +149,7 @@ export default function TodoWidget({ sessionId, refreshKey = 0 }: Props) {
       <div className="overflow-y-auto flex-1 max-h-50">
         {todos.length === 0 ? (
           <div className="text-xs p-3 text-[var(--text-secondary)]">
-            {t("todo.empty")}
+            {"No tasks"}
           </div>
         ) : (
           todos.map((t) => (
@@ -189,7 +187,7 @@ export default function TodoWidget({ sessionId, refreshKey = 0 }: Props) {
                 handleAdd();
               }
             }}
-            placeholder={t("todo.addPlaceholder")}
+            placeholder={"Add task…"}
             className="flex-1 px-2 py-1 rounded text-xs outline-none bg-[var(--bg-tertiary)] text-[var(--text-primary)] border border-[var(--border)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/30"
           />
           <button

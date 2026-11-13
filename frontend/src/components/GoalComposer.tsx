@@ -35,19 +35,19 @@ export function GoalComposer({ open, goal, onOpenChange, onSubmit }: Props) {
     }
   };
 
-  return <Modal open={open} onOpenChange={onOpenChange} title={goal ? "编辑目标" : "创建目标"} description="目标会持续显示在本次会话中，聊天输出仍保留在原消息流。" size="lg" footer={<><Button variant="ghost" onClick={() => onOpenChange(false)}>取消</Button><Button variant="brand" onClick={submit} disabled={!draft.objective.trim() || saving}>{saving ? "保存中..." : goal ? "保存目标" : "开始目标"}</Button></>}>
+  return <Modal open={open} onOpenChange={onOpenChange} title={goal ? "Edit goal" : "Create Goal"} description="The goal stays visible in this session; chat output remains in the original message flow." size="lg" footer={<><Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button><Button variant="brand" onClick={submit} disabled={!draft.objective.trim() || saving}>{saving ? "Saving..." : goal ? "Save goal" : "Start goal"}</Button></>}>
     <div className="space-y-4">
-      <label className="block text-xs font-medium text-[var(--text-secondary)]">目标
-        <Textarea value={draft.objective} onChange={(e) => setDraft({ ...draft, objective: e.target.value })} placeholder="例如：完成宠物系统失败重试，并确保相关测试通过" className="mt-1.5" minRows={3} maxRows={6} />
+      <label className="block text-xs font-medium text-[var(--text-secondary)]">Goal
+        <Textarea value={draft.objective} onChange={(e) => setDraft({ ...draft, objective: e.target.value })} placeholder="e.g. finish the pet-system failure retry and make sure the related tests pass" className="mt-1.5" minRows={3} maxRows={6} />
       </label>
-      <label className="block text-xs font-medium text-[var(--text-secondary)]">验收条件 <span className="font-normal text-[var(--text-tertiary)]">每行一项，可选</span>
-        <Textarea value={criteriaText} onChange={(e) => setCriteriaText(e.target.value)} placeholder={"pytest tests/test_pets.py 通过\nElectron IPC 能回传重试状态"} className="mt-1.5" minRows={3} maxRows={6} />
+      <label className="block text-xs font-medium text-[var(--text-secondary)]">Acceptance criteria <span className="font-normal text-[var(--text-tertiary)]">One item per line, optional</span>
+        <Textarea value={criteriaText} onChange={(e) => setCriteriaText(e.target.value)} placeholder={"pytest tests/test_pets.py passes\nElectron IPC returns retry status"} className="mt-1.5" minRows={3} maxRows={6} />
       </label>
-      <label className="block text-xs font-medium text-[var(--text-secondary)]">约束 <span className="font-normal text-[var(--text-tertiary)]">每行一项，可选</span>
-        <Textarea value={constraintsText} onChange={(e) => setConstraintsText(e.target.value)} placeholder="不改变已有宠物设置交互" className="mt-1.5" minRows={2} maxRows={5} />
+      <label className="block text-xs font-medium text-[var(--text-secondary)]">Constraints <span className="font-normal text-[var(--text-tertiary)]">One item per line, optional</span>
+        <Textarea value={constraintsText} onChange={(e) => setConstraintsText(e.target.value)} placeholder="Do not change the existing pet-settings interaction" className="mt-1.5" minRows={2} maxRows={5} />
       </label>
       <label className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] px-3 py-2.5 text-sm text-[var(--text-primary)]">
-        <span><span className="block font-medium">自动继续</span><span className="block mt-0.5 text-xs text-[var(--text-tertiary)]">当前轮结束后继续执行，直到完成、暂停或达到预算。</span></span>
+        <span><span className="block font-medium">Auto-continue</span><span className="block mt-0.5 text-xs text-[var(--text-tertiary)]">Continue after the current turn until done, paused, or the budget is reached.</span></span>
         <input type="checkbox" checked={draft.auto_continue} onChange={(e) => setDraft({ ...draft, auto_continue: e.target.checked })} className="h-4 w-4 accent-[var(--brand)]" />
       </label>
     </div>

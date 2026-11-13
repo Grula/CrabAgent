@@ -48,9 +48,12 @@ def _validate_code(code: str, name: str) -> str | None:
         "Create a reusable custom tool. "
         "The tool is saved to disk and registered immediately — "
         "it will be available in this session and all future sessions. "
-        "Provide a complete 'run' function definition. "
+        "Provide a complete 'run' function definition. It may be sync "
+        "('def run(...)') or async ('async def run(...)'). "
         "The function parameters should match your parameter schema "
-        "and it must return a string. "
+        "and it must return a string. You may import any installed module, "
+        "including crabagent's own modules. An optional 'context' parameter "
+        "is available: it receives the session execution context at call time. "
         "Example code: "
         "'def run(text: str, key: str) -> str:\\n"
         "    import json\\n"
@@ -78,9 +81,12 @@ def _validate_code(code: str, name: str) -> str | None:
             "code": {
                 "type": "string",
                 "description": (
-                    "Python code containing a 'def run(...)' function. "
+                    "Python code containing a 'run' function — sync "
+                    "`def run(...)` or async `async def run(...)`. "
                     "Parameters match your JSON schema. Must return a string. "
-                    "Can import standard library modules."
+                    "May import any installed module, including crabagent modules. "
+                    "Add an optional `context` parameter to receive the session "
+                    "execution context, injected at call time."
                 ),
             },
         },
@@ -215,7 +221,13 @@ async def create_tool(
             },
             "code": {
                 "type": "string",
-                "description": "New Python code containing a complete 'def run(...)' function",
+                "description": (
+                    "New Python code containing a complete 'run' function — sync "
+                    "`def run(...)` or async `async def run(...)`. "
+                    "May import any installed module, including crabagent modules. "
+                    "Add an optional `context` parameter to receive the session "
+                    "execution context, injected at call time."
+                ),
             },
             "description": {
                 "type": "string",

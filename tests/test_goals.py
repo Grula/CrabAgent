@@ -135,8 +135,8 @@ def test_goal_finalization_required_only_when_agent_omits_terminal_status():
 
 
 def test_automatic_completion_evidence_requires_outcome_and_verification():
-    assert service.automatic_completion_evidence("已完成实现，测试通过，前端构建成功。")
-    assert service.automatic_completion_evidence("已完成实现，但还没有测试。") is None
+    assert service.automatic_completion_evidence("Implemented and done; tests pass, build succeeded.")
+    assert service.automatic_completion_evidence("Implemented but there are no tests yet.") is None
 
 
 def test_finalization_checkpoint_includes_response_excerpt():

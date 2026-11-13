@@ -29,7 +29,7 @@ async def test_create_request_persists_pending_state(db):
         db,
         user_id=1,
         request_type="approval",
-        title="确认发送邮件",
+        title="Confirm sending email",
         operation="email_send",
         risk_level="high",
         session_id="sess-1",
@@ -58,7 +58,7 @@ async def test_decide_approve_resolves_live_future(db):
     loop = asyncio.get_running_loop()
     future: asyncio.Future[bool] = loop.create_future()
 
-    req = await rs.create_request(db, user_id=1, request_type="approval", title="确认")
+    req = await rs.create_request(db, user_id=1, request_type="approval", title="Confirm")
     rs.register_live_future(req["request_key"], future)
 
     payload = await rs.decide_request(db, req["request_key"], 1, "approve")
@@ -70,7 +70,7 @@ async def test_decide_approve_resolves_live_future(db):
 
 @pytest.mark.asyncio
 async def test_decide_answer_stores_answer_in_note(db):
-    req = await rs.create_request(db, user_id=1, request_type="choice", title="选择方案", options=["A", "B"])
+    req = await rs.create_request(db, user_id=1, request_type="choice", title="Choose plan", options=["A", "B"])
 
     payload = await rs.decide_request(db, req["request_key"], 1, "answer", answer="A")
 
@@ -80,7 +80,7 @@ async def test_decide_answer_stores_answer_in_note(db):
 
 @pytest.mark.asyncio
 async def test_decide_is_idempotent(db):
-    req = await rs.create_request(db, user_id=1, request_type="approval", title="确认")
+    req = await rs.create_request(db, user_id=1, request_type="approval", title="Confirm")
 
     first = await rs.decide_request(db, req["request_key"], 1, "approve")
     second = await rs.decide_request(db, req["request_key"], 1, "approve")
@@ -92,7 +92,7 @@ async def test_decide_is_idempotent(db):
 
 @pytest.mark.asyncio
 async def test_decide_reject_after_approve_does_not_downgrade(db):
-    req = await rs.create_request(db, user_id=1, request_type="approval", title="确认")
+    req = await rs.create_request(db, user_id=1, request_type="approval", title="Confirm")
     await rs.decide_request(db, req["request_key"], 1, "approve")
 
     payload = await rs.decide_request(db, req["request_key"], 1, "reject")
@@ -106,7 +106,7 @@ async def test_decide_expired_request_returns_expired(db):
         db,
         user_id=1,
         request_type="approval",
-        title="确认",
+        title="Confirm",
         expires_at=datetime.datetime.now() - datetime.timedelta(seconds=1),
     )
 
@@ -118,7 +118,7 @@ async def test_decide_expired_request_returns_expired(db):
 @pytest.mark.asyncio
 async def test_decide_without_live_future_still_records(db):
     """After a restart no Future exists; the decision is still persisted."""
-    req = await rs.create_request(db, user_id=1, request_type="input", title="补充信息", question="收件人？")
+    req = await rs.create_request(db, user_id=1, request_type="input", title="More info", question="Recipient?")
 
     payload = await rs.decide_request(db, req["request_key"], 1, "answer", answer="bob@example.com")
 
@@ -135,7 +135,7 @@ async def test_decide_missing_request_raises(db):
 
 @pytest.mark.asyncio
 async def test_consume_request_single_shot(db):
-    req = await rs.create_request(db, user_id=1, request_type="approval", title="确认")
+    req = await rs.create_request(db, user_id=1, request_type="approval", title="Confirm")
     await rs.decide_request(db, req["request_key"], 1, "approve")
 
     first = await rs.consume_request(db, req["request_key"], 1)
@@ -152,10 +152,10 @@ async def test_list_pending_and_expiry_sweep(db):
         db,
         user_id=1,
         request_type="input",
-        title="旧请求",
+        title="Old request",
         expires_at=datetime.datetime.now() - datetime.timedelta(minutes=5),
     )
-    await rs.create_request(db, user_id=1, request_type="input", title="新请求")
+    await rs.create_request(db, user_id=1, request_type="input", title="New request")
 
     pending = await rs.list_pending_requests(db, 1)
     assert len(pending) == 2
@@ -164,4 +164,4 @@ async def test_list_pending_and_expiry_sweep(db):
 
     assert expired == 1
     pending = await rs.list_pending_requests(db, 1)
-    assert [p["title"] for p in pending] == ["新请求"]
+    assert [p["title"] for p in pending] == ["New request"]

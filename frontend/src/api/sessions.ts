@@ -8,7 +8,6 @@ export interface Session {
   provider: string;
   agent: string;
   active_branch: string;
-  prompt_locale: string;
   history_searchable: boolean;
   created_at: string | null;
   updated_at: string | null;

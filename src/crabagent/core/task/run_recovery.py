@@ -172,7 +172,7 @@ async def rollback_run(
                 conflicts.append(
                     {
                         "file": rel,
-                        "reason": "该文件在本 Run 之后又被修改（存在更晚的恢复点），需 force 确认或先比较差异",
+                        "reason": "This file was modified after this run (a later recovery point exists); use force to confirm or diff first",
                     }
                 )
                 continue
@@ -203,7 +203,7 @@ async def rollback_run(
         run.interrupted_reason = (run.interrupted_reason or "") + f" | rolled back at {_now():%Y-%m-%d %H:%M}"
         task = (await db.execute(select(Task).where(Task.id == task_id))).scalar_one_or_none()
         if task:
-            note = f"Run {run_id} 已回滚（{len(restored)} 个文件恢复）"
+            note = f"Run {run_id} rolled back ({len(restored)} file(s) restored)"
             task.warning_summary = (task.warning_summary + "\n" + note).strip() if task.warning_summary else note
         await db.commit()
 

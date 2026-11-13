@@ -135,7 +135,7 @@ export function AgentRunBoard(props: Props) {
 
   return (
     <>
-      <div className="hidden md:block">
+      <div className="hidden md:flex">
         <DesktopAgentRunBoard {...props} />
       </div>
       <div className="md:hidden">

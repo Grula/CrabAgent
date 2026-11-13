@@ -78,3 +78,29 @@ async def test_cancellation_cleans_up_children(context, monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_passes_same_workspace_to_all_steps(tmp_path, monkeypatch):
+    """Every pipeline step must receive the parent context (same workspace)."""
+    parent_ws = tmp_path / "project"
+    parent_ws.mkdir()
+    ctx = SimpleNamespace(
+        workspace=parent_ws,
+        metadata={},
+        event_bus=SimpleNamespace(emit=AsyncMock()),
+    )
+    monkeypatch.setattr('crabagent.core.database.run_record_create', AsyncMock(return_value=1))
+
+    seen = []
+
+    async def spawn(agent, task, parent_context, **kwargs):
+        seen.append(parent_context.workspace)
+        return BackgroundAgentResult('succeeded', 'ok')
+
+    monkeypatch.setattr('crabagent.core.agent.agents.spawn_sub_agent', spawn)
+
+    await run_pipeline([step('s1'), step('s2', ['s1']), step('s3')], ctx)
+
+    assert len(seen) == 3
+    assert all(ws == parent_ws for ws in seen)

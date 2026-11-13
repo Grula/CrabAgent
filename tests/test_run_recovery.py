@@ -51,7 +51,7 @@ async def test_link_molt_to_run_is_idempotent(db):
 
 @pytest.mark.asyncio
 async def test_list_run_changes_reports_modified_files(db, workspace):
-    task = await task_store.add_task(db, user_id=1, title="改代码", workspace=str(workspace))
+    task = await task_store.add_task(db, user_id=1, title="Edit code", workspace=str(workspace))
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
 
     # pre-run snapshot: a.py had old content
@@ -70,7 +70,7 @@ async def test_list_run_changes_reports_modified_files(db, workspace):
 
 @pytest.mark.asyncio
 async def test_rollback_run_restores_pre_run_content(db, workspace):
-    task = await task_store.add_task(db, user_id=1, title="改代码", workspace=str(workspace))
+    task = await task_store.add_task(db, user_id=1, title="Edit code", workspace=str(workspace))
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
 
     _make_molt_on_disk(workspace, "molt_a", {"a.py": "old"})
@@ -87,7 +87,7 @@ async def test_rollback_run_restores_pre_run_content(db, workspace):
 
 @pytest.mark.asyncio
 async def test_rollback_run_removes_files_created_by_run(db, workspace):
-    task = await task_store.add_task(db, user_id=1, title="生成文件", workspace=str(workspace))
+    task = await task_store.add_task(db, user_id=1, title="Generate file", workspace=str(workspace))
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
 
     # empty snapshot file = file did not exist before the run
@@ -104,7 +104,7 @@ async def test_rollback_run_removes_files_created_by_run(db, workspace):
 
 @pytest.mark.asyncio
 async def test_rollback_conflicts_when_later_run_touched_file(db, workspace):
-    task = await task_store.add_task(db, user_id=1, title="改代码", workspace=str(workspace))
+    task = await task_store.add_task(db, user_id=1, title="Edit code", workspace=str(workspace))
     _, run1 = await task_service.start_agent_run(db, task["id"], 1)
     await task_service.finish_agent_run(db, run1, 1, "failed", error="x")
 
@@ -137,9 +137,9 @@ async def test_rollback_conflicts_when_later_run_touched_file(db, workspace):
 
 @pytest.mark.asyncio
 async def test_retry_task_creates_new_run_and_keeps_history(db):
-    task = await task_store.add_task(db, user_id=1, title="生成报告")
+    task = await task_store.add_task(db, user_id=1, title="Generate report")
     _, run1 = await task_service.start_agent_run(db, task["id"], 1)
-    await task_service.finish_agent_run(db, run1, 1, "failed", error="超时")
+    await task_service.finish_agent_run(db, run1, 1, "failed", error="timeout")
 
     updated, run2 = await run_recovery.retry_task(db, task["id"], 1)
 
@@ -152,7 +152,7 @@ async def test_retry_task_creates_new_run_and_keeps_history(db):
 
 @pytest.mark.asyncio
 async def test_retry_rejects_non_retryable_status(db):
-    task = await task_store.add_task(db, user_id=1, title="进行中")
+    task = await task_store.add_task(db, user_id=1, title="In progress")
     await task_service.start_agent_run(db, task["id"], 1)
 
     with pytest.raises(ValueError, match="only failed/partial/cancelled"):

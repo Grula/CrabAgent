@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
 import { Area, AreaChart, Tooltip, XAxis, YAxis } from "recharts";
 import { CalendarDays, RefreshCw } from "lucide-react";
 
@@ -48,7 +47,6 @@ interface GridCell {
 }
 
 export default function UsageHeatmap({ workspace }: { workspace: string }) {
-  const { t } = useTranslation();
   const [mode, setMode] = useState<ViewMode>("daily");
   const [trend, setTrend] = useState<DayEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -182,9 +180,9 @@ export default function UsageHeatmap({ workspace }: { workspace: string }) {
   }, [trend]);
 
   const tabs: { key: ViewMode; label: string }[] = [
-    { key: "daily", label: t("usage.heatmapDaily") },
-    { key: "weekly", label: t("usage.heatmapWeekly") },
-    { key: "cumulative", label: t("usage.heatmapCumulative") },
+    { key: "daily", label: "Daily" },
+    { key: "weekly", label: "Weekly" },
+    { key: "cumulative", label: "Cumulative" },
   ];
 
   return (
@@ -192,7 +190,7 @@ export default function UsageHeatmap({ workspace }: { workspace: string }) {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h2 className="flex items-center gap-1.5 text-sm font-semibold">
           <CalendarDays size={15} className="text-[var(--brand)]" />
-          {t("usage.heatmapTitle")}
+          {"Yearly Usage Heatmap"}
         </h2>
         <div className="flex items-center gap-2">
           <div className="flex gap-1 p-0.5 bg-[var(--bg-tertiary)] rounded-lg">
@@ -214,7 +212,7 @@ export default function UsageHeatmap({ workspace }: { workspace: string }) {
           <button
             onClick={() => void fetchTrend()}
             disabled={loading}
-            title={t("usage.refresh")}
+            title={"Refresh"}
             className="p-1.5 rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] disabled:opacity-50"
           >
             <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
@@ -223,9 +221,9 @@ export default function UsageHeatmap({ workspace }: { workspace: string }) {
       </div>
 
       {loading ? (
-        <div className="py-16 text-center text-sm text-[var(--text-tertiary)]">{t("common.loading")}</div>
+        <div className="py-16 text-center text-sm text-[var(--text-tertiary)]">{"Loading…"}</div>
       ) : trend.length === 0 ? (
-        <div className="py-16 text-center text-sm text-[var(--text-tertiary)]">{t("usage.noData")}</div>
+        <div className="py-16 text-center text-sm text-[var(--text-tertiary)]">{"No usage data yet"}</div>
       ) : mode === "cumulative" ? (
         <MeasuredChartContainer height={220}>
           {({ width, height }) => (
@@ -246,7 +244,7 @@ export default function UsageHeatmap({ workspace }: { workspace: string }) {
                   fontSize: "12px",
                   color: "var(--text-primary)",
                 }}
-                formatter={(value: unknown) => [formatTokens(Number(value)), t("usage.total")]}
+                formatter={(value: unknown) => [formatTokens(Number(value)), "Total"]}
               />
               <Area type="monotone" dataKey="tokens" stroke="var(--brand)" strokeWidth={2.5} fill="url(#heatmap-cumulative)" />
             </AreaChart>
@@ -321,11 +319,11 @@ export default function UsageHeatmap({ workspace }: { workspace: string }) {
             </div>
             {/* Legend */}
             <div className="mt-2 flex items-center justify-end gap-1 text-[10px] text-[var(--text-tertiary)]">
-              <span>{t("usage.heatmapLess")}</span>
+              <span>{"Less"}</span>
               {[0, 1, 2, 3, 4].map((level) => (
                 <span key={level} className="rounded-[3px] inline-block" style={{ ...cellStyle(level === 0 ? 0 : maxTokens * (level / 4)), width: CELL, height: CELL }} />
               ))}
-              <span>{t("usage.heatmapMore")}</span>
+              <span>{"More"}</span>
             </div>
           </div>
         </div>

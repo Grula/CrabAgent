@@ -7,18 +7,58 @@ from crabagent.core.agent.tools.registry import registry
 logger = logging.getLogger(__name__)
 
 
-def _get_locale(context) -> str:
-    """Get locale from agent context."""
-    if context and context.metadata:
-        return context.metadata.get("locale", getattr(context, "locale", "en"))
-    return getattr(context, "locale", "en") if context else "en"
+# User-facing messages for the scheduled-task tools. CrabAgent is English-only,
+# so these live here as plain literals instead of a locale lookup table.
+_MESSAGES: dict[str, str] = {
+    "scheduled_task_created": (
+        "Scheduled task created: #{id} '{name}' — cron: `{cron}`{model}. "
+        "Task is enabled and will auto-execute at the scheduled time."
+    ),
+    "scheduled_task_create_error": "Failed to create scheduled task: {error}",
+    "scheduled_task_cron_error": (
+        "Error: cron expression must have 5 fields (min hour day month weekday), "
+        "separated by spaces. Current input: '{cron}'"
+    ),
+    "scheduled_task_no_tasks": "No scheduled tasks.",
+    "scheduled_task_list_title": "# Scheduled Task List",
+    "scheduled_task_last_run": " Last: {time} ({status})",
+    "scheduled_task_prompt_label": "   Prompt:",
+    "scheduled_task_last_error": "   Last error:",
+    "scheduled_task_not_found": "Task #{id} does not exist.",
+    "scheduled_task_no_changes": "Task #{id} was not modified.",
+    "scheduled_task_updated": "Task #{id} updated: {changes}",
+    "scheduled_task_update_error": "Failed to update task: {error}",
+    "scheduled_task_deleted": "Scheduled task #{id} deleted.",
+    "scheduled_task_delete_error": "Failed to delete task: {error}",
+    "scheduled_task_paused": "Task #{id} '{name}' paused.",
+    "scheduled_task_pause_error": "Failed to pause task: {error}",
+    "scheduled_task_resumed": "Task #{id} '{name}' resumed, cron: `{cron}`",
+    "scheduled_task_resume_error": "Failed to resume task: {error}",
+    "scheduled_task_list_error": "Failed to get task list: {error}",
+    "scheduled_task_get_title": "# Scheduled Task #{id}: {name}",
+    "scheduled_task_get_status": "**Status:**",
+    "scheduled_task_get_enabled": "enabled",
+    "scheduled_task_get_paused_state": "paused",
+    "scheduled_task_get_cron": "**Cron:**",
+    "scheduled_task_get_model": "**Model:**",
+    "scheduled_task_get_next_run": "**Next run:**",
+    "scheduled_task_get_last_run": "**Last run:**",
+    "scheduled_task_get_last_error": "**Last error:**",
+    "scheduled_task_get_created": "**Created:**",
+    "scheduled_task_get_prompt": "**Full prompt:**",
+    "scheduled_task_get_error": "Failed to get task details: {error}",
+    "scheduled_task_default_model": " (default model)",
+    "scheduled_task_model": " (model: {model})",
+}
 
 
 def _t(key: str, locale: str = "en", **kwargs) -> str:
-    """Get translated message."""
-    from crabagent.core.i18n import get_tool_message
+    """Return the English message for *key*.
 
-    msg = get_tool_message(key, locale)
+    ``locale`` is part of the historical signature and is deliberately ignored:
+    the locale pipeline has been removed and output is always English.
+    """
+    msg = _MESSAGES.get(key, key)
     return msg.format(**kwargs) if kwargs else msg
 
 
@@ -28,10 +68,10 @@ async def _get_db():
     return async_session_factory()
 
 
-async def _tasks_to_str(tasks: list, locale: str = "en", show_all: bool = False) -> str:
+async def _tasks_to_str(tasks: list, show_all: bool = False) -> str:
     if not tasks:
-        return _t("scheduled_task_no_tasks", locale)
-    lines = [_t("scheduled_task_list_title", locale)]
+        return _t("scheduled_task_no_tasks")
+    lines = [_t("scheduled_task_list_title")]
     for t in tasks:
         icon = "\u2705" if t.enabled else "\u23f8\ufe0f"
         last = ""
@@ -41,13 +81,13 @@ async def _tasks_to_str(tasks: list, locale: str = "en", show_all: bool = False)
                 if hasattr(t.last_run_at, "strftime")
                 else str(t.last_run_at)[:16]
             )
-            last = _t("scheduled_task_last_run", locale, time=ts, status=t.last_status or "ok")
+            last = _t("scheduled_task_last_run", time=ts, status=t.last_status or "ok")
         model_info = f" [{t.model}]" if t.model else ""
         lines.append(f"{icon} #{t.id} {t.name} \u2014 `{t.cron_expression}`{model_info}{last}")
         if show_all:
-            lines.append(f"{_t('scheduled_task_prompt_label', locale)} {t.prompt[:200]}")
+            lines.append(f"{_t('scheduled_task_prompt_label')} {t.prompt[:200]}")
             if t.last_error:
-                lines.append(f"{_t('scheduled_task_last_error', locale)} {t.last_error[:200]}")
+                lines.append(f"{_t('scheduled_task_last_error')} {t.last_error[:200]}")
     return "\n".join(lines)
 
 
@@ -94,7 +134,6 @@ async def scheduled_task_create(
 
     from crabagent.core.database import ScheduledTask, User
 
-    locale = _get_locale(context)
     db = await _get_db()
     try:
         user_id = 1
@@ -132,7 +171,7 @@ async def scheduled_task_create(
 
         parts = cron_expression.strip().split()
         if len(parts) != 5:
-            return _t("scheduled_task_cron_error", locale, cron=cron_expression)
+            return _t("scheduled_task_cron_error", cron=cron_expression)
 
         task = ScheduledTask(
             user_id=user_id,
@@ -151,13 +190,12 @@ async def scheduled_task_create(
         await get_scheduler().add_task(task)
 
         model_str = (
-            _t("scheduled_task_model", locale, model=resolved_model)
+            _t("scheduled_task_model", model=resolved_model)
             if resolved_model
-            else _t("scheduled_task_default_model", locale)
+            else _t("scheduled_task_default_model")
         )
         return _t(
             "scheduled_task_created",
-            locale,
             id=task.id,
             name=name,
             cron=cron_expression,
@@ -165,7 +203,7 @@ async def scheduled_task_create(
         )
     except Exception as e:
         await db.rollback()
-        return _t("scheduled_task_create_error", locale, error=str(e))
+        return _t("scheduled_task_create_error", error=str(e))
     finally:
         await db.close()
 
@@ -185,14 +223,13 @@ async def scheduled_task_list(context=None) -> str:
 
     from crabagent.core.database import ScheduledTask
 
-    locale = _get_locale(context)
     db = await _get_db()
     try:
         result = await db.execute(select(ScheduledTask).order_by(ScheduledTask.created_at.desc()))
         tasks = result.scalars().all()
-        return await _tasks_to_str(list(tasks), locale=locale, show_all=True)
+        return await _tasks_to_str(list(tasks), show_all=True)
     except Exception as e:
-        return _t("scheduled_task_list_error", locale, error=str(e))
+        return _t("scheduled_task_list_error", error=str(e))
     finally:
         await db.close()
 
@@ -222,17 +259,16 @@ async def scheduled_task_get(task_id: int, context=None) -> str:
 
     from crabagent.core.database import ScheduledTask
 
-    locale = _get_locale(context)
     db = await _get_db()
     try:
         result = await db.execute(select(ScheduledTask).where(ScheduledTask.id == task_id))
         task = result.scalar_one_or_none()
         if not task:
-            return _t("scheduled_task_not_found", locale, id=task_id)
+            return _t("scheduled_task_not_found", id=task_id)
 
         icon = "\u2705" if task.enabled else "\u23f8\ufe0f"
         state = (
-            _t("scheduled_task_get_enabled", locale) if task.enabled else _t("scheduled_task_get_paused_state", locale)
+            _t("scheduled_task_get_enabled") if task.enabled else _t("scheduled_task_get_paused_state")
         )
         next_run = (
             task.next_run_at.strftime("%Y-%m-%d %H:%M")
@@ -240,33 +276,33 @@ async def scheduled_task_get(task_id: int, context=None) -> str:
             else str(task.next_run_at)[:16]
         )
         lines = [
-            _t("scheduled_task_get_title", locale, id=task.id, name=task.name),
-            f"{_t('scheduled_task_get_status', locale)} {icon} {state}",
-            f"{_t('scheduled_task_get_cron', locale)} `{task.cron_expression}`",
+            _t("scheduled_task_get_title", id=task.id, name=task.name),
+            f"{_t('scheduled_task_get_status')} {icon} {state}",
+            f"{_t('scheduled_task_get_cron')} `{task.cron_expression}`",
         ]
         if task.model:
-            lines.append(f"{_t('scheduled_task_get_model', locale)} {task.model}")
+            lines.append(f"{_t('scheduled_task_get_model')} {task.model}")
         if task.next_run_at:
-            lines.append(f"{_t('scheduled_task_get_next_run', locale)} {next_run}")
+            lines.append(f"{_t('scheduled_task_get_next_run')} {next_run}")
         if task.last_run_at:
             ts = (
                 task.last_run_at.strftime("%Y-%m-%d %H:%M:%S")
                 if hasattr(task.last_run_at, "strftime")
                 else str(task.last_run_at)[:19]
             )
-            lines.append(f"{_t('scheduled_task_get_last_run', locale)} {ts} ({task.last_status or 'ok'})")
+            lines.append(f"{_t('scheduled_task_get_last_run')} {ts} ({task.last_status or 'ok'})")
         if task.last_error:
-            lines.append(f"{_t('scheduled_task_get_last_error', locale)} {task.last_error}")
+            lines.append(f"{_t('scheduled_task_get_last_error')} {task.last_error}")
         created = (
             task.created_at.strftime("%Y-%m-%d %H:%M")
             if hasattr(task.created_at, "strftime")
             else str(task.created_at)[:16]
         )
-        lines.append(f"{_t('scheduled_task_get_created', locale)} {created}")
-        lines.append(f"{_t('scheduled_task_get_prompt', locale)}\n{task.prompt}")
+        lines.append(f"{_t('scheduled_task_get_created')} {created}")
+        lines.append(f"{_t('scheduled_task_get_prompt')}\n{task.prompt}")
         return "\n".join(lines)
     except Exception as e:
-        return _t("scheduled_task_get_error", locale, error=str(e))
+        return _t("scheduled_task_get_error", error=str(e))
     finally:
         await db.close()
 
@@ -312,13 +348,12 @@ async def scheduled_task_update(
 
     from crabagent.core.database import ScheduledTask
 
-    locale = _get_locale(context)
     db = await _get_db()
     try:
         result = await db.execute(select(ScheduledTask).where(ScheduledTask.id == task_id))
         task = result.scalar_one_or_none()
         if not task:
-            return _t("scheduled_task_not_found", locale, id=task_id)
+            return _t("scheduled_task_not_found", id=task_id)
 
         changes = []
         if name is not None:
@@ -330,12 +365,12 @@ async def scheduled_task_update(
         if cron_expression is not None:
             parts = cron_expression.strip().split()
             if len(parts) != 5:
-                return _t("scheduled_task_cron_error", locale, cron=cron_expression)
+                return _t("scheduled_task_cron_error", cron=cron_expression)
             task.cron_expression = cron_expression.strip()
             changes.append(f"cron\u2192{cron_expression}")
 
         if not changes:
-            return _t("scheduled_task_no_changes", locale, id=task_id)
+            return _t("scheduled_task_no_changes", id=task_id)
 
         # Commit DB first, then sync the in-memory scheduler so the two
         # never diverge on commit failure.
@@ -348,10 +383,10 @@ async def scheduled_task_update(
             sched.remove_task(task_id)  # sync method — do NOT await
             await sched.add_task(task)
 
-        return _t("scheduled_task_updated", locale, id=task_id, changes=", ".join(changes))
+        return _t("scheduled_task_updated", id=task_id, changes=", ".join(changes))
     except Exception as e:
         await db.rollback()
-        return _t("scheduled_task_update_error", locale, error=str(e))
+        return _t("scheduled_task_update_error", error=str(e))
     finally:
         await db.close()
 
@@ -377,23 +412,22 @@ async def scheduled_task_delete(task_id: int, context=None) -> str:
     from crabagent.core.database import ScheduledTask
     from crabagent.serve.scheduler import get_scheduler
 
-    locale = _get_locale(context)
     db = await _get_db()
     try:
         # Verify existence first so we can report "not found" accurately.
         result = await db.execute(select(ScheduledTask).where(ScheduledTask.id == task_id))
         task = result.scalar_one_or_none()
         if not task:
-            return _t("scheduled_task_not_found", locale, id=task_id)
+            return _t("scheduled_task_not_found", id=task_id)
 
         await db.delete(task)
         await db.commit()
 
         get_scheduler().remove_task(task_id)  # sync method — do NOT await
-        return _t("scheduled_task_deleted", locale, id=task_id)
+        return _t("scheduled_task_deleted", id=task_id)
     except Exception as e:
         await db.rollback()
-        return _t("scheduled_task_delete_error", locale, error=str(e))
+        return _t("scheduled_task_delete_error", error=str(e))
     finally:
         await db.close()
 
@@ -419,20 +453,19 @@ async def scheduled_task_pause(task_id: int, context=None) -> str:
     from crabagent.core.database import ScheduledTask
     from crabagent.serve.scheduler import get_scheduler
 
-    locale = _get_locale(context)
     db = await _get_db()
     try:
         result = await db.execute(select(ScheduledTask).where(ScheduledTask.id == task_id))
         task = result.scalar_one_or_none()
         if not task:
-            return _t("scheduled_task_not_found", locale, id=task_id)
+            return _t("scheduled_task_not_found", id=task_id)
         task.enabled = False
         await db.commit()
         get_scheduler().remove_task(task_id)  # sync method — do NOT await
-        return _t("scheduled_task_paused", locale, id=task_id, name=task.name)
+        return _t("scheduled_task_paused", id=task_id, name=task.name)
     except Exception as e:
         await db.rollback()
-        return _t("scheduled_task_pause_error", locale, error=str(e))
+        return _t("scheduled_task_pause_error", error=str(e))
     finally:
         await db.close()
 
@@ -458,19 +491,18 @@ async def scheduled_task_resume(task_id: int, context=None) -> str:
     from crabagent.core.database import ScheduledTask
     from crabagent.serve.scheduler import get_scheduler
 
-    locale = _get_locale(context)
     db = await _get_db()
     try:
         result = await db.execute(select(ScheduledTask).where(ScheduledTask.id == task_id))
         task = result.scalar_one_or_none()
         if not task:
-            return _t("scheduled_task_not_found", locale, id=task_id)
+            return _t("scheduled_task_not_found", id=task_id)
         task.enabled = True
         await db.commit()
         await get_scheduler().add_task(task)
-        return _t("scheduled_task_resumed", locale, id=task_id, name=task.name, cron=task.cron_expression)
+        return _t("scheduled_task_resumed", id=task_id, name=task.name, cron=task.cron_expression)
     except Exception as e:
         await db.rollback()
-        return _t("scheduled_task_resume_error", locale, error=str(e))
+        return _t("scheduled_task_resume_error", error=str(e))
     finally:
         await db.close()

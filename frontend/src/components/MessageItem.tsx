@@ -13,7 +13,6 @@ import { getToolSummary } from "../lib/toolSummary";
  * (and thus scrollToBottom) from running smoothly.
  */
 import { memo, useState, useEffect, useRef, type ReactNode } from "react";
-import { useTranslation } from "react-i18next";
 import {
   Terminal,
   FileText,
@@ -268,7 +267,6 @@ const ThinkingItem = memo(function ThinkingItem({
   msg: ChatMessage;
   onToggle?: () => void;
 }) {
-  const { t } = useTranslation();
   return (
     <details
       className="mb-3 ml-3 rounded-lg overflow-hidden"
@@ -276,7 +274,7 @@ const ThinkingItem = memo(function ThinkingItem({
     >
       <summary className="cursor-pointer py-1.5 px-3 text-xs rounded-lg select-none list-none bg-[var(--bg-secondary)] border border-[var(--border)] hover:border-[var(--border-strong)] transition-colors text-[var(--text-secondary)] flex items-center gap-2">
         <span className="text-[var(--accent-2)]">💭</span>
-        <span>{t("chatPanel.thinking")}</span>
+        <span>{"Thinking…"}</span>
       </summary>
       <div className="mt-1.5 p-3 rounded-lg text-xs leading-relaxed bg-[var(--bg-secondary)] border border-[var(--border)] border-l-[3px] border-l-[var(--accent-2)]">
         <pre className="whitespace-pre-wrap font-mono text-[12px] text-[var(--text-secondary)] m-0 bg-transparent! p-0! border-0!">
@@ -289,7 +287,6 @@ const ThinkingItem = memo(function ThinkingItem({
 
 /** Context compression card */
 const CompressItem = memo(function CompressItem({ msg }: { msg: ChatMessage }) {
-  const { t } = useTranslation();
   return (
     <div className="mb-3 flex justify-center">
       <div className="w-full max-w-2xl rounded-lg border border-[var(--border)] bg-[var(--bg-tertiary)] overflow-hidden text-xs">
@@ -299,7 +296,7 @@ const CompressItem = memo(function CompressItem({ msg }: { msg: ChatMessage }) {
           ) : (
             <CheckCircle2 size={11} />
           )}
-          <span>{t("chat.contextCompression", "上下文压缩")}</span>
+          <span>{"Context Compression"}</span>
         </div>
         {msg.content && (
           <div className="px-3 pb-2 pt-1 text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed opacity-80">
@@ -331,7 +328,6 @@ const ToolConfirmItem = memo(function ToolConfirmItem({
   msg: ChatMessage;
   onToolConfirm?: (confirmId: string, approved: boolean) => void;
 }) {
-  const { t } = useTranslation();
   if (!msg.confirm_id) return null;
   const resolved = msg.confirmed !== undefined;
   return (
@@ -349,7 +345,7 @@ const ToolConfirmItem = memo(function ToolConfirmItem({
         <div className="flex items-center gap-2 mb-1.5">
           <AlertTriangle size={14} className="text-[var(--warning)]" />
           <span className="font-medium text-[var(--text-primary)]">
-            {t("chatPanel.toolRequiresPermission", { tool: msg.tool_name || t("toolResult.tool") })}
+            {`${msg.tool_name || "Tool"} requires permission`}
           </span>
           {resolved && (
             <span
@@ -400,7 +396,6 @@ const UserInputItem = memo(function UserInputItem({
   msg: ChatMessage;
   onUserInput?: (inputId: string, answer: string) => void;
 }) {
-  const { t } = useTranslation();
   if (!msg.confirm_id) return null;
   const resolved = msg.confirmed !== undefined;
   const options = msg.options;
@@ -427,7 +422,7 @@ const UserInputItem = memo(function UserInputItem({
           </span>
           {multiple && (
             <span className="shrink-0 mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--brand-bg)] text-[var(--brand)] border border-[var(--brand-border)]">
-              {t("chatPanel.multiSelectHint")}
+              {"multi-select"}
             </span>
           )}
         </div>
@@ -436,7 +431,7 @@ const UserInputItem = memo(function UserInputItem({
             <div className="flex items-start gap-1.5 text-xs">
               <Check size={13} className="text-[var(--success)] shrink-0 mt-0.5" />
               <span className="text-[var(--text-secondary)] shrink-0">
-                {t("chatPanel.answeredLabel")}
+                {"Answered: "}
               </span>
               <span className="font-medium text-[var(--text-primary)] break-all">
                 {answer ?? msg.content}
@@ -492,7 +487,7 @@ const ErrorItem = memo(function ErrorItem({ msg }: { msg: ChatMessage }) {
       <div className="flex items-start gap-3 px-4 py-3 rounded-xl text-sm bg-[var(--danger-bg)] border border-[var(--danger-border)] text-[var(--danger)]">
         <AlertTriangle size={16} className="mt-0.5 shrink-0" />
         <div className="min-w-0">
-          <div className="font-semibold">{info?.title || "请求失败"}</div>
+          <div className="font-semibold">{info?.title || "Request failed"}</div>
           <div className="mt-1 whitespace-pre-wrap break-words text-[var(--text-primary)]">
             {info?.message || msg.content}
           </div>
@@ -514,11 +509,11 @@ const TaskCardItem = memo(function TaskCardItem({ msg }: { msg: ChatMessage }) {
       <div className="flex items-start gap-3 px-4 py-3 rounded-xl text-sm bg-[var(--accent-2-bg,rgba(59,130,246,0.08))] border border-[var(--accent-2-border,rgba(59,130,246,0.2))]">
         <ClipboardCheck size={16} className="mt-0.5 shrink-0 text-[var(--accent-2,#3b82f6)]" />
         <div className="min-w-0 flex-1">
-          <div className="font-semibold text-[var(--text-primary)]">已接手：{card.title}</div>
+          <div className="font-semibold text-[var(--text-primary)]">Picked up: {card.title}</div>
           <div className="mt-0.5 text-xs text-[var(--text-secondary)] flex items-center gap-2 flex-wrap">
             {card.project ? <span>📁 {card.project}</span> : null}
             {card.deadline ? <span>📅 {card.deadline}</span> : null}
-            <span>状态与成果可在任务面板查看</span>
+            <span>Status and results are in the task panel</span>
           </div>
         </div>
       </div>
@@ -544,28 +539,28 @@ const TaskResultItem = memo(function TaskResultItem({ msg }: { msg: ChatMessage 
         shell: "border-[var(--danger-border)] bg-[var(--danger-bg)]",
         icon: "bg-red-500/10 text-red-500 ring-red-500/15",
         eyebrow: "text-red-600 dark:text-red-400",
-        label: cancelled ? "任务已取消" : "任务未完成",
+        label: cancelled ? "Task cancelled" : "Task incomplete",
       }
     : partial
       ? {
           shell: "border-amber-500/25 bg-amber-500/[0.06]",
           icon: "bg-amber-500/10 text-amber-500 ring-amber-500/15",
           eyebrow: "text-amber-700 dark:text-amber-400",
-          label: "阶段性成果",
+          label: "Interim results",
         }
       : {
           shell: "border-emerald-500/25 bg-emerald-500/[0.06]",
           icon: "bg-emerald-500/10 text-emerald-600 ring-emerald-500/15",
           eyebrow: "text-emerald-700 dark:text-emerald-400",
-          label: "成果已交付",
+          label: "Deliverable submitted",
         };
   const verificationLabel = r.verification_status === "passed"
     ? r.checks
-      ? `${r.checks.passed}/${r.checks.total} 项验证通过`
-      : "已通过验证"
+      ? `${r.checks.passed}/${r.checks.total} checks passed`
+      : "Verified"
     : r.verification_status && r.verification_status !== "unverified"
-      ? `验证状态：${r.verification_status}`
-      : "尚未验证";
+      ? `Verification status: ${r.verification_status}`
+      : "Not verified";
 
   return (
     <section className={cn("relative mb-5 mt-4 overflow-hidden rounded-2xl border shadow-[0_14px_38px_rgba(15,23,42,0.07)]", tone.shell)}>
@@ -580,7 +575,7 @@ const TaskResultItem = memo(function TaskResultItem({ msg }: { msg: ChatMessage 
               {tone.label}
             </div>
             <h3 className="mt-1 text-[15px] font-semibold leading-6 text-[var(--text-primary)] sm:text-base">
-              {r.title || (failed ? "任务执行失败" : "任务执行完成")}
+              {r.title || (failed ? "Task failed" : "Task completed")}
             </h3>
             {r.result_summary ? (
               <p className="mt-2 max-w-3xl whitespace-pre-wrap break-words text-xs leading-5 text-[var(--text-secondary)] line-clamp-6">
@@ -597,7 +592,7 @@ const TaskResultItem = memo(function TaskResultItem({ msg }: { msg: ChatMessage 
                       e.stopPropagation();
                       void openTaskArtifact(r.task_id, f).catch(() => {});
                     }}
-                    title={`在系统中打开：${f}`}
+                    title={`Open in system: ${f}`}
                     className="group flex min-w-0 items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg-primary)]/75 px-3 py-2.5 text-left transition-colors hover:border-[var(--brand)]"
                   >
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--brand-bg)] text-[var(--brand)]">
@@ -605,7 +600,7 @@ const TaskResultItem = memo(function TaskResultItem({ msg }: { msg: ChatMessage 
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-xs font-medium text-[var(--text-primary)]">{f}</span>
-                      <span className="mt-0.5 block text-[10px] text-[var(--text-tertiary)] group-hover:text-[var(--brand)]">点击打开成果</span>
+                      <span className="mt-0.5 block text-[10px] text-[var(--text-tertiary)] group-hover:text-[var(--brand)]">Click to open the result</span>
                     </span>
                   </button>
                 ))}
@@ -623,8 +618,8 @@ const TaskResultItem = memo(function TaskResultItem({ msg }: { msg: ChatMessage 
                 <BadgeCheck size={12} className={r.verification_status === "passed" ? "text-emerald-500" : ""} />
                 {verificationLabel}
               </span>
-              <span>任务 #{r.task_id}</span>
-              <span>完整记录可在任务面板查看</span>
+              <span>Task #{r.task_id}</span>
+              <span>The full record is in the task panel</span>
             </div>
           </div>
         </div>
@@ -651,12 +646,12 @@ const RetryItem = memo(function RetryItem({ msg }: { msg: ChatMessage }) {
             <span className="font-medium">{ri.message}</span>
             {!isCountdown && ri.delay_seconds ? (
               <span className="text-xs opacity-80">
-                {ri.delay_seconds.toFixed(0)}秒后重试（第{ri.attempt}/{ri.max_attempts}次）
+                {ri.delay_seconds.toFixed(0)}s retry (attempt {ri.attempt}/{ri.max_attempts})
               </span>
             ) : null}
             {isCountdown ? (
               <span className="text-xs opacity-80">
-                {remaining}秒后重试（第{ri.attempt}/{ri.max_attempts}次）
+                {remaining}s retry (attempt {ri.attempt}/{ri.max_attempts})
               </span>
             ) : null}
           </div>
@@ -720,9 +715,8 @@ const UserMessageItem = memo(function UserMessageItem({
   onBranch?: (messageId: string) => void;
   replaying?: boolean;
 }) {
-  const { t } = useTranslation();
   return (
-    <div className="mb-4 group/msg relative flex justify-end">
+    <div className="mb-5 mt-2 group/msg relative flex justify-end">
       <div className="chat-bubble-user relative">
         {msg.lazy_images && (
           <div className="w-[200px] h-[200px] rounded-lg border border-[var(--border)] flex items-center justify-center text-xs text-[var(--text-secondary)] animate-pulse mb-2">
@@ -746,13 +740,13 @@ const UserMessageItem = memo(function UserMessageItem({
             ))}
           </div>
         )}
-        <p className="whitespace-pre-wrap leading-relaxed text-[14px]">
+        <p className="whitespace-pre-wrap leading-relaxed text-[15px]">
           {msg.content}
         </p>
         {onBranch && !replaying && !msg.isStreaming && msg.id.startsWith("db-") && (
           <button
             onClick={() => onBranch(msg.id)}
-            title={t("chatPanel.branchFromHere")}
+            title={"Branch from here"}
             className={cn(
               "absolute top-0 right-full mr-1.5",
               "opacity-0 group-hover/msg:opacity-100 transition-opacity",
@@ -780,9 +774,9 @@ const AssistantMessageItem = memo(function AssistantMessageItem({
   msg: ChatMessage;
 }) {
   return (
-    <div className="mb-4 group/msg relative flex justify-start">
-      <div className="max-w-[min(720px,85%)] flex-1">
-        <div className="markdown-body">
+    <div className="mb-5 group/msg relative flex justify-start">
+      <div className="min-w-0 flex-1">
+        <div className="markdown-body chat-prose">
           <RichMarkdown isStreaming={msg.isStreaming}>{msg.content || ""}</RichMarkdown>
         </div>
       </div>
@@ -802,7 +796,6 @@ function UserInputField({
   /** false when embedded below option buttons — don't steal focus */
   autoFocusInput?: boolean;
 }) {
-  const { t } = useTranslation();
   const [value, setValue] = useState("");
   const isComposingRef = useRef(false);
   const submit = (answer?: string) => {
@@ -825,7 +818,7 @@ function UserInputField({
           e.preventDefault();
           submit();
         }}
-        placeholder={t("chatPanel.typeAnswer")}
+        placeholder={"Type your answer…"}
         autoFocus={autoFocusInput}
         className="flex-1 h-8 px-3 text-xs rounded-md bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/30"
       />
@@ -852,7 +845,6 @@ function UserInputOptions({
   /** true → checkbox rows with a confirm button; false → radio rows, click to submit */
   multiple?: boolean;
 }) {
-  const { t } = useTranslation();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const toggle = (i: number) => {
     setSelected((prev) => {
@@ -903,12 +895,12 @@ function UserInputOptions({
           disabled={selected.size === 0}
           className="w-full h-8 rounded-lg text-xs font-medium bg-[var(--brand)] text-white disabled:opacity-40 hover:bg-[var(--brand-hover)] transition-colors"
         >
-          {t("chatPanel.confirmMulti")} ({selected.size})
+          {"Confirm selection"} ({selected.size})
         </button>
       )}
       <div className="pt-2.5 mt-2.5 border-t border-[var(--border)]">
         <div className="text-[11px] text-[var(--text-tertiary)] mb-1.5">
-          {t("chatPanel.orCustomAnswer")}
+          {"None of these fit? Type your own answer"}
         </div>
         <UserInputField inputId={inputId} onSubmit={onSubmit} autoFocusInput={false} />
       </div>

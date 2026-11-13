@@ -36,6 +36,9 @@ _MAX_FILE_SCAN = 10_000
 # ── Skip files larger than this (avoid reading huge binaries/logs) ──────
 _MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 
+# ── Stop after this many matching lines ────────────────────────────────
+_MAX_MATCHES = 200
+
 
 def _expand_braces(pattern: str) -> list[str]:
     """Expand shell-style brace patterns like ``*.{ts,js}`` into a list
@@ -63,6 +66,35 @@ def _match_include(fname: str, patterns: list[str]) -> bool:
     return False
 
 
+def _matches_with_context(
+    fpath: str, regex: re.Pattern[str], context_lines: int, budget: int
+) -> tuple[list[str], int]:
+    """Search one file and return ``(output_lines, match_count)`` with surrounding context.
+
+    Matching lines are formatted ``path:line: text`` and context lines
+    ``path-line- text``; non-adjacent groups are separated by ``--`` (like
+    ``grep -C``). At most *budget* matches are reported.
+    """
+    with open(fpath, encoding="utf-8", errors="replace") as fh:
+        lines = fh.read().splitlines()
+    hits = [i for i, line in enumerate(lines) if regex.search(line)][: max(0, budget)]
+    if not hits:
+        return [], 0
+    hit_set = set(hits)
+    output: list[str] = []
+    last_shown = -1
+    for hit in hits:
+        start = max(0, hit - context_lines)
+        end = min(len(lines) - 1, hit + context_lines)
+        if output and start > last_shown + 1:
+            output.append("--")
+        for index in range(max(start, last_shown + 1), end + 1):
+            sep = ":" if index in hit_set else "-"
+            output.append(f"{fpath}{sep}{index + 1}{sep} {lines[index].rstrip()}")
+        last_shown = max(last_shown, end)
+    return output, len(hits)
+
+
 def _is_binary(filepath: str) -> bool:
     """Quick heuristic: read first 4KB and check for NUL bytes."""
     try:
@@ -77,7 +109,8 @@ def _is_binary(filepath: str) -> bool:
     name="grep",
     description=(
         "Search file contents using regular expressions. "
-        "Returns matching file paths and line numbers. "
+        "Returns matching lines as path:line: text. "
+        "Set ignore_case for case-insensitive search and context_lines to see the lines around each match. "
         "Supports skipping common build/dependency directories and a "
         "configurable maximum search depth to avoid runaway traversals."
     ),
@@ -115,6 +148,19 @@ def _is_binary(filepath: str) -> bool:
                 "type": "integer",
                 "description": ("Maximum directory recursion depth. Default: 15. Use -1 for unlimited."),
             },
+            "ignore_case": {
+                "type": "boolean",
+                "description": "Match letters regardless of case. Default: false.",
+                "default": False,
+            },
+            "context_lines": {
+                "type": "integer",
+                "description": (
+                    "Lines of context to show before and after each match (0-10). Context lines are "
+                    "printed as path-line- text, and groups are separated by --. Default: 0."
+                ),
+                "default": 0,
+            },
         },
         "required": ["pattern"],
     },
@@ -125,23 +171,36 @@ def grep_files(
     include: str | None = None,
     ignore_dirs: list[str] | None = None,
     max_depth: int = 15,
+    ignore_case: bool = False,
+    context_lines: int = 0,
     context: Any = None,
 ) -> str:
     resolved_path, error = resolve_tool_path(path, context)
     if error:
         return error
     assert resolved_path is not None
+    flags = re.IGNORECASE if ignore_case else 0
+    try:
+        context_lines = max(0, min(int(context_lines or 0), 10))
+    except (TypeError, ValueError):
+        context_lines = 0
 
     # ── Single-file mode: if *path* is a file, grep it directly ────────
     resolved = os.path.abspath(str(resolved_path))
     if os.path.isfile(resolved):
         try:
-            regex_inner = re.compile(pattern)
+            regex_inner = re.compile(pattern, flags)
         except re.error as e:
             return f"Error: invalid regex: {e}"
         single_results: list[str] = []
         try:
-            if os.path.getsize(resolved) <= _MAX_FILE_SIZE and not _is_binary(resolved):
+            if os.path.getsize(resolved) > _MAX_FILE_SIZE or _is_binary(resolved):
+                pass
+            elif context_lines > 0:
+                single_results, found = _matches_with_context(resolved, regex_inner, context_lines, _MAX_MATCHES)
+                if found >= _MAX_MATCHES:
+                    single_results.append("[Truncated: showing first 200 matches.]")
+            else:
                 with open(resolved, encoding="utf-8", errors="replace") as fh:
                     for lineno, line in enumerate(fh, 1):
                         if regex_inner.search(line):
@@ -162,7 +221,7 @@ def grep_files(
 
     # ── Compile pattern ─────────────────────────────────────────────────
     try:
-        regex = re.compile(pattern)
+        regex = re.compile(pattern, flags)
     except re.error as e:
         return f"Error: invalid regex: {e}"
 
@@ -173,6 +232,7 @@ def grep_files(
     include_patterns = _expand_braces(include) if include else []
 
     results: list[str] = []
+    match_count = 0
     scanned = 0
 
     # ── os.walk with pruning, depth tracking & size limit ───────────────
@@ -221,24 +281,35 @@ def grep_files(
                     continue
                 if _is_binary(fpath):
                     continue
-                with open(fpath, encoding="utf-8", errors="replace") as fh:
-                    for lineno, line in enumerate(fh, 1):
-                        if regex.search(line):
-                            results.append(f"{fpath}:{lineno}: {line.rstrip()}")
-                            if len(results) >= 200:
-                                break
-                    if len(results) >= 200:
-                        break
+                if context_lines > 0:
+                    block, found = _matches_with_context(
+                        fpath, regex, context_lines, _MAX_MATCHES - match_count
+                    )
+                    if found:
+                        if results:
+                            results.append("--")
+                        results.extend(block)
+                        match_count += found
+                else:
+                    with open(fpath, encoding="utf-8", errors="replace") as fh:
+                        for lineno, line in enumerate(fh, 1):
+                            if regex.search(line):
+                                results.append(f"{fpath}:{lineno}: {line.rstrip()}")
+                                match_count += 1
+                                if match_count >= _MAX_MATCHES:
+                                    break
+                if match_count >= _MAX_MATCHES:
+                    break
             except Exception:
                 continue
 
-        if len(results) >= 200:
+        if match_count >= _MAX_MATCHES:
             break
 
     if not results:
         return "No matches found."
 
-    output = "\n".join(results[:200])
-    if len(results) == 200:
+    output = "\n".join(results if context_lines > 0 else results[:_MAX_MATCHES])
+    if match_count >= _MAX_MATCHES:
         output += "\n[Truncated: showing first 200 matches. Refine your pattern or path for more precise results.]"
     return output

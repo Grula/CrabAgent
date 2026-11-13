@@ -24,17 +24,17 @@ async function svgPngBlob(svg: SVGSVGElement) {
   const image = new Image();
   const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml;charset=utf-8" }));
   try {
-    await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = () => reject(new Error("图片转换失败")); image.src = url; });
+    await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = () => reject(new Error("Image conversion failed")); image.src = url; });
     const scale = 2;
     const canvas = document.createElement("canvas");
     canvas.width = width * scale;
     canvas.height = height * scale;
     const context = canvas.getContext("2d");
-    if (!context) throw new Error("无法创建图片画布");
+    if (!context) throw new Error("Cannot create image canvas");
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    return await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("图片转换失败")), "image/png"));
+    return await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Image conversion failed")), "image/png"));
   } finally { URL.revokeObjectURL(url); }
 }
 
@@ -50,7 +50,7 @@ async function pngBlob(container: HTMLElement) {
     cacheBust: true,
     filter: (node) => !(node instanceof HTMLElement && node.classList.contains("visualization-frame__actions")),
   });
-  if (!blob) throw new Error("图片转换失败");
+  if (!blob) throw new Error("Image conversion failed");
   return blob;
 }
 
@@ -71,12 +71,12 @@ export function VisualizationFrame({ title, source, children }: { title: string;
   };
   return <section className={`visualization-frame${expanded ? " visualization-frame--expanded" : ""}`} aria-label={title}>
     <header className="visualization-frame__header">
-      <span>{title}{exportError && <em className="visualization-frame__export-error">图片导出失败</em>}</span>
+      <span>{title}{exportError && <em className="visualization-frame__export-error">Image export failed</em>}</span>
       <span className="visualization-frame__actions">
-        <button onClick={copyImage} title="复制图片" aria-label="复制图片">{copied ? <Check size={13} /> : <Copy size={13} />}</button>
-        <button onClick={downloadPng} title="下载 PNG 图片" aria-label="下载 PNG 图片"><ImageDown size={14} /></button>
-        <button onClick={() => setExpanded((value) => !value)} title={expanded ? "退出大图模式" : "放大查看"} aria-label={expanded ? "退出大图模式" : "放大查看"}>{expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
-        <button onClick={() => setShowSource((value) => !value)} title={showSource ? "隐藏源数据" : "查看源数据"} aria-label={showSource ? "隐藏源数据" : "查看源数据"}>{showSource ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
+        <button onClick={copyImage} title="Copy image" aria-label="Copy image">{copied ? <Check size={13} /> : <Copy size={13} />}</button>
+        <button onClick={downloadPng} title="Download PNG" aria-label="Download PNG"><ImageDown size={14} /></button>
+        <button onClick={() => setExpanded((value) => !value)} title={expanded ? "Exit fullscreen" : "Zoom in"} aria-label={expanded ? "Exit fullscreen" : "Zoom in"}>{expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
+        <button onClick={() => setShowSource((value) => !value)} title={showSource ? "Hide source data" : "Show source data"} aria-label={showSource ? "Hide source data" : "Show source data"}>{showSource ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
       </span>
     </header>
     <div ref={contentRef} className="visualization-frame__content">{children}</div>

@@ -24,7 +24,7 @@ from crabagent.core.task.status import TaskStatus
 
 logger = logging.getLogger(__name__)
 
-AUTO_CHECK_TITLE_PREFIX = "成果文件可用:"
+AUTO_CHECK_TITLE_PREFIX = "Artifact available:"
 
 
 def _now() -> datetime.datetime:
@@ -38,35 +38,35 @@ def verify_file(path: str, workspace: str = "") -> dict:
 
     p = Path(path)
     if not p.exists():
-        return {"status": "failed", "evidence": f"文件不存在: {path}", "data": {"path": path}}
+        return {"status": "failed", "evidence": f"File does not exist: {path}", "data": {"path": path}}
     if not p.is_file():
-        return {"status": "failed", "evidence": f"不是普通文件: {path}", "data": {"path": path}}
+        return {"status": "failed", "evidence": f"Not a regular file: {path}", "data": {"path": path}}
 
     size = p.stat().st_size
     if size == 0:
-        problems.append("文件为空")
+        problems.append("File is empty")
     else:
-        evidence.append(f"大小 {size} 字节")
+        evidence.append(f"size {size} bytes")
 
     try:
         with open(p, "rb") as fh:
             fh.read(1)
-        evidence.append("可读取")
+        evidence.append("readable")
     except OSError as e:
-        problems.append(f"不可读取: {e}")
+        problems.append(f"not readable: {e}")
 
     if workspace:
         ws = Path(workspace).resolve()
         try:
             p.resolve().relative_to(ws)
-            evidence.append("位于工作区内")
+            evidence.append("inside the workspace")
         except ValueError:
-            problems.append("位于工作区边界之外")
+            problems.append("outside the workspace boundary")
 
     if problems:
-        status = "failed" if any("不存在" in x or "不可读取" in x for x in problems) else "warning"
+        status = "failed" if any("does not exist" in x or "not readable" in x for x in problems) else "warning"
         return {"status": status, "evidence": "; ".join(problems), "data": {"path": path, "size": size}}
-    return {"status": "passed", "evidence": "；".join(evidence), "data": {"path": path, "size": size}}
+    return {"status": "passed", "evidence": "; ".join(evidence), "data": {"path": path, "size": size}}
 
 
 async def refresh_auto_checks(
@@ -104,7 +104,7 @@ async def refresh_auto_checks(
                 user_id=user_id,
                 task_id=task_id,
                 run_id=run_id,
-                title=f"成果文件可用: {artifact.name or artifact.path}",
+                title=f"Artifact available: {artifact.name or artifact.path}",
                 required=True,
                 status=outcome["status"],
                 evidence=outcome["evidence"],
@@ -193,7 +193,7 @@ async def judge_task(db: AsyncSession, task_id: int, user_id: int) -> dict:
     if final_status in (TaskStatus.DONE.value, TaskStatus.PARTIAL.value, TaskStatus.FAILED.value):
         task.completed_at = task.completed_at or now
     if final_status in (TaskStatus.DONE.value, TaskStatus.PARTIAL.value):
-        # Fresh verdict = fresh unread result: re-arm the "新成果" notification
+        # A fresh verdict means a fresh unread result: re-arm the "new result" notification
         # on re-completion (harmless no-op on first completion).
         task.result_viewed_at = None
     await db.commit()

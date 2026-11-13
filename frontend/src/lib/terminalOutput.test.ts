@@ -27,6 +27,6 @@ describe("terminal output", () => {
       .toBe("label<b>");
   });
   it("preserves Unicode and normal bracketed output", () => {
-    expect(terminalOutput("[stderr]\n中文🙂 [91m literal")).toBe("[stderr]\n中文🙂 [91m literal");
+    expect(terminalOutput("[stderr]\ncafé🙂 [91m literal")).toBe("[stderr]\ncafé🙂 [91m literal");
   });
 });

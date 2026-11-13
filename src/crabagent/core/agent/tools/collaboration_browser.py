@@ -17,7 +17,7 @@ _MAX_RESULT_CHARS = 12_000
 
 
 def _bridge_request(command: str, payload: dict[str, Any] | None = None, *, context: Any = None) -> dict[str, Any]:
-    """Send one authenticated command to the local Electron browser bridge."""
+    """Send one authenticated command to the local collaboration browser bridge."""
     port = os.environ.get("CRAB_COLLAB_BROWSER_PORT", "")
     token = os.environ.get("CRAB_COLLAB_BROWSER_TOKEN", "")
     if not port or not token:
@@ -41,7 +41,7 @@ def _bridge_request(command: str, payload: dict[str, Any] | None = None, *, cont
     if command in mutating_commands:
         action_payload.setdefault("action_id", str(uuid.uuid4()))
     metadata = context.metadata if context is not None else {}
-    if context is not None and not command.startswith("macos_") and command not in {"status", "release"}:
+    if context is not None and command not in {"status", "release"}:
         metadata["_collab_browser_used"] = True
     # The binding is derived from trusted Agent context, never a model argument.
     task_id = str(metadata.get("_run_id") or metadata.setdefault("_computer_task_id", str(uuid.uuid4())))
@@ -160,7 +160,14 @@ def _versioned_payload(payload: dict[str, Any], page_version: int | None, contex
     metadata={"source": "builtin", "category": "collaboration_browser"},
 )
 async def collab_browser_authorize_local_preview(url: str, context=None) -> str:
-    # The Electron main process owns the confirmation; no model-supplied approved flag.
+    status = await asyncio.to_thread(_bridge_request, "status", context=context)
+    if status.get("headless"):
+        if context is None or getattr(context, "confirm_callback", None) is None:
+            raise RuntimeError("local preview authorization denied")
+        approved = await context.confirm_callback("collab_browser_authorize_local_preview", {"url": url})
+        if not approved:
+            raise RuntimeError("local preview authorization denied")
+    # The bridge owns the confirmation; no model-supplied approved flag.
     value = await asyncio.to_thread(_bridge_request, "authorize_local_preview", {"url": url}, context=context)
     await record_browser_event(
         context,
@@ -443,9 +450,9 @@ async def collab_browser_wait_for(text: str = "", url_includes: str = "", timeou
 async def collab_browser_wait_for_user(reason: str, context=None) -> str:
     if context is None or context.ask_callback is None:
         return "Waiting for the user is unavailable in this context. Ask the user to continue manually."
-    question = f"请在协作浏览器中完成以下操作，然后回复继续：{reason}"
-    answer = await context.ask_callback(question, ["我已完成，继续", "取消此浏览器任务"])
-    if "取消" in answer:
+    question = f"Please complete the following action in the collaboration browser, then reply to continue: {reason}"
+    answer = await context.ask_callback(question, ["I'm done, continue", "Cancel this browser task"])
+    if "Cancel" in answer:
         return "The user cancelled the browser task. Stop browser actions and explain the cancellation."
     status = await asyncio.to_thread(lambda: _bridge_request("status", context=context))
     return "The user completed the human-only step. Re-observe the page before continuing.\n" + _result(status)

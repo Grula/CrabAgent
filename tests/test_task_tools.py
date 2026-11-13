@@ -37,7 +37,7 @@ async def test_task_add_parses_datetime_deadline(monkeypatch: pytest.MonkeyPatch
 
     context = SimpleNamespace(metadata={"user_id": 7, "session_id": "sess-abc"})
     result = await handler(
-        title="写报告",
+        title="Write report",
         deadline="2026-07-02 10:30",
         assignee="xcl",
         project="Crab",
@@ -72,7 +72,7 @@ async def test_task_add_records_source_session_and_agent_source(monkeypatch: pyt
     monkeypatch.setattr("crabagent.core.database.async_session_factory", lambda: FakeSession())
 
     context = SimpleNamespace(metadata={"user_id": 3, "session_id": "sess-xyz"})
-    await handler(title="跟进客户", context=context)
+    await handler(title="Follow up with customer", context=context)
 
     assert captured["source"] == "agent"
     assert captured["source_session"] == "sess-xyz"
@@ -102,7 +102,7 @@ async def test_task_add_defaults_source_session_without_context(monkeypatch: pyt
     monkeypatch.setattr("crabagent.core.task.store.add_task", fake_add)
     monkeypatch.setattr("crabagent.core.database.async_session_factory", lambda: FakeSession())
 
-    await handler(title="无上下文任务")
+    await handler(title="Task without context")
 
     assert captured["source"] == "agent"
     assert captured["source_session"] == ""
@@ -137,7 +137,7 @@ async def test_task_list_formats_empty_and_populated_results(monkeypatch: pytest
                     "id": 1,
                     "status": "pending",
                     "priority": "high",
-                    "title": "修 bug",
+                    "title": "Fix bug",
                     "deadline": "2026-07-02T00:00:00",
                     "project": "Crab",
                     "assignee": "xcl",
@@ -147,7 +147,7 @@ async def test_task_list_formats_empty_and_populated_results(monkeypatch: pytest
         ),
     )
     filled = await handler(status="pending")
-    assert "修 bug" in filled
+    assert "Fix bug" in filled
     assert "👤 xcl" in filled
     assert "…" in filled
 
@@ -183,7 +183,7 @@ async def test_task_update_reports_changed_fields(monkeypatch: pytest.MonkeyPatc
 
     async def fake_update(db, task_id, user_id, **kwargs):
         captured.update(kwargs)
-        return {"title": "修 bug"}
+        return {"title": "Fix bug"}
 
     class FakeSession:
         async def __aenter__(self):
@@ -238,7 +238,7 @@ async def test_task_done_mid_run_defers_card(monkeypatch: pytest.MonkeyPatch):
             return False
 
     async def fake_update(db, task_id, user_id, **kwargs):
-        return {"id": 1, "title": "写报告", "active_run_id": 42, "source_session": "s1"}
+        return {"id": 1, "title": "Write report", "active_run_id": 42, "source_session": "s1"}
 
     import crabagent.core.task.events as task_events
 
@@ -267,7 +267,7 @@ async def test_task_done_without_active_run_broadcasts(monkeypatch: pytest.Monke
             return False
 
     async def fake_update(db, task_id, user_id, **kwargs):
-        return {"id": 1, "title": "写报告", "active_run_id": None, "source_session": "s1"}
+        return {"id": 1, "title": "Write report", "active_run_id": None, "source_session": "s1"}
 
     import crabagent.core.task.events as task_events
 

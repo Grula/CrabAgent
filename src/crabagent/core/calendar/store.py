@@ -269,8 +269,8 @@ async def get_today_overview(db: AsyncSession, user_id: int) -> dict:
         "due_tasks": due_tasks,
         "free_slots": free_slots,
         "summary": (
-            f"今天 {len(timed_events)} 个日程、{len(due_tasks)} 个任务到期、"
-            f"{len(free_slots)} 段空闲时间"
+            f"{len(timed_events)} event(s) today, {len(due_tasks)} task(s) due, "
+            f"{len(free_slots)} free slot(s)"
         ),
     }
 
@@ -319,7 +319,7 @@ def _calculate_free_time(
 _DEFAULT_SETTINGS = {
     "morning_brief_enabled": False,
     "morning_brief_time": "08:00",
-    "morning_brief_channel": "wechat",
+    "morning_brief_channel": "email",
     "event_reminder_enabled": True,
     "default_reminder_minutes": 15,  # used for iCal-synced events
 }

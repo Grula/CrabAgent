@@ -102,8 +102,8 @@ export function sseEventToMessages(event: SSEEvent, messages: ChatMessage[]): Ch
 
   if (event.type === "goal_continuation_scheduled" || event.type === "goal_continuation_started") {
     const content = event.type === "goal_continuation_started"
-      ? "目标模式正在继续下一轮执行。"
-      : "目标模式将在几秒后自动继续。";
+      ? "Goal mode is starting the next round."
+      : "Goal mode will continue automatically in a few seconds.";
     updated.push({ id: `goal-continue-${Date.now()}`, role: "notice", content });
     return updated;
   }
@@ -111,10 +111,10 @@ export function sseEventToMessages(event: SSEEvent, messages: ChatMessage[]): Ch
   if (event.type === "goal_created" || event.type === "goal_status_changed" || event.type === "goal_checkpoint") {
     const goal = event.data.goal as { objective?: string; status?: string; latest_checkpoint?: string } | undefined;
     const content = event.type === "goal_created"
-      ? `目标已创建：${goal?.objective || ""}`
+      ? `Goal created: ${goal?.objective || ""}`
       : event.type === "goal_checkpoint"
-        ? `目标检查点：${(event.data.checkpoint as { summary?: string } | undefined)?.summary || goal?.latest_checkpoint || ""}`
-        : `目标状态已更新：${goal?.status || ""}`;
+        ? `Goal checkpoint: ${(event.data.checkpoint as { summary?: string } | undefined)?.summary || goal?.latest_checkpoint || ""}`
+        : `Goal status updated: ${goal?.status || ""}`;
     updated.push({ id: `goal-${Date.now()}`, role: "notice", content });
     return updated;
   }
@@ -482,9 +482,9 @@ export function dbMessagesToChat(msgs: Message[]): ChatMessage[] {
     }
 
     // Skip agent_switch messages that were re-persisted as user role
-    // after context compression. Match both EN "[Agent Switch]" and
-    // ZH "[Agent 切换]" prefixes for multi-locale safety.
-    if (m.content && (m.content.startsWith("[Agent Switch]") || m.content.startsWith("[Agent 切换]"))) {
+    // after context compression. Match the "[Agent Switch]" prefix (any locale)
+    // for multi-locale safety.
+    if (m.content && (m.content.startsWith("[Agent Switch]") || m.content.startsWith("[Agent Switch]"))) {
       continue;
     }
 

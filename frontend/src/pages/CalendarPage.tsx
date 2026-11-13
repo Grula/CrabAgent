@@ -37,14 +37,14 @@ const TYPE_COLORS: Record<string, { dot: string; bg: string; border: string; tex
 };
 
 const TYPE_LABELS: Record<string, string> = {
-  task: "任务截止",
-  manual: "手动事件",
-  agent: "Agent创建",
-  external: "外部同步",
+  task: "Task deadline",
+  manual: "Manual event",
+  agent: "Agent-created",
+  external: "External sync",
 };
 
-const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
-const MONTHS = ["一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"];
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 type ViewMode = "month" | "week" | "day";
 
@@ -100,9 +100,9 @@ function formatTime(s: string): string {
 function formatDuration(min: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
-  if (h && m) return `${h}小时${m}分`;
-  if (h) return `${h}小时`;
-  return `${m}分钟`;
+  if (h && m) return `${h}h${m}m`;
+  if (h) return `${h}h`;
+  return `${m}min`;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +178,7 @@ export default function CalendarPage() {
   const goToday = () => setCursor(new Date());
 
   const titleStr = useMemo(() => {
-    if (view === "month") return `${cursor.getFullYear()}年 ${MONTHS[cursor.getMonth()]}`;
+    if (view === "month") return `${cursor.getFullYear()} ${MONTHS[cursor.getMonth()]}`;
     if (view === "week") {
       const days = getWeekDays(cursor);
       return `${toDateStr(days[0]).slice(5)} ~ ${toDateStr(days[6]).slice(5)}`;
@@ -194,14 +194,14 @@ export default function CalendarPage() {
         <div className="flex flex-wrap items-center gap-2 sm:gap-3 px-3 sm:px-6 py-3 border-b border-[var(--border)] shrink-0">
           <div className="flex items-center gap-1">
             <button
-              aria-label="上一时段"
+              aria-label="Previous period"
               onClick={() => navigate(-1)}
               className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] transition-colors"
             >
               <ChevronLeft size={18} />
             </button>
             <button
-              aria-label="下一时段"
+              aria-label="Next period"
               onClick={() => navigate(1)}
               className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] transition-colors"
             >
@@ -210,7 +210,7 @@ export default function CalendarPage() {
           </div>
           <h2 className="text-base font-semibold text-[var(--text-primary)] sm:min-w-[140px]">{titleStr}</h2>
           <Button size="sm" variant="ghost" onClick={goToday}>
-            今天
+            Today
           </Button>
           <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2">
             {/* View switcher */}
@@ -226,16 +226,16 @@ export default function CalendarPage() {
                       : "text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]",
                   )}
                 >
-                  {v === "month" ? "月" : v === "week" ? "周" : "日"}
+                  {v === "month" ? "Month" : v === "week" ? "Week" : "Sun"}
                 </button>
               ))}
             </div>
             <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus size={14} className="mr-1" /> 新建事件
+              <Plus size={14} className="mr-1" /> New event
             </Button>
-            <button type="button" onClick={() => setShowMobileOverview(true)} className="md:hidden px-2 py-1 text-xs rounded-lg border border-[var(--border)] text-[var(--text-secondary)]">今日概览</button>
+            <button type="button" onClick={() => setShowMobileOverview(true)} className="md:hidden px-2 py-1 text-xs rounded-lg border border-[var(--border)] text-[var(--text-secondary)]">Today's overview</button>
             <button
-              aria-label="日历设置"
+              aria-label="Calendar settings"
               onClick={() => setShowSettings(true)}
               className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] transition-colors"
             >
@@ -261,16 +261,16 @@ export default function CalendarPage() {
 
       {/* Right sidebar — today overview */}
       <div className={cn("w-full md:w-80 shrink-0 border-l border-[var(--border)] flex-col overflow-hidden bg-[var(--bg-secondary)]", showMobileOverview ? "flex" : "hidden md:flex")}>
-        <button type="button" onClick={() => setShowMobileOverview(false)} className="md:hidden text-left px-4 pt-3 text-sm text-[var(--text-secondary)]">← 返回日历</button>
+        <button type="button" onClick={() => setShowMobileOverview(false)} className="md:hidden text-left px-4 pt-3 text-sm text-[var(--text-secondary)]">← Back to calendar</button>
         <div className="px-4 py-3 border-b border-[var(--border)] shrink-0">
           <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
             <Sun size={15} className="text-amber-400" />
-            今日概览
+            Today's overview
           </div>
           {overview && <p className="text-xs text-[var(--text-tertiary)] mt-1">{overview.summary}</p>}
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {overview?.events.length === 0 && <p className="text-xs text-[var(--text-tertiary)] text-center py-8">今天没有事件</p>}
+          {overview?.events.length === 0 && <p className="text-xs text-[var(--text-tertiary)] text-center py-8">No events today</p>}
           {overview?.events.map((e) => {
             const colors = TYPE_COLORS[e.type] || TYPE_COLORS.manual;
             return (
@@ -304,7 +304,7 @@ export default function CalendarPage() {
           {/* Free slots */}
           {overview && overview.free_slots.length > 0 && (
             <div className="pt-2 border-t border-[var(--border)]">
-              <p className="text-xs font-medium text-[var(--text-secondary)] mb-2">🟢 空闲时段</p>
+              <p className="text-xs font-medium text-[var(--text-secondary)] mb-2">🟢 Free time</p>
               {overview.free_slots.map((slot, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs text-[var(--text-tertiary)] mb-1">
                   <div className="w-1.5 h-1.5 rounded-full bg-green-500/50" />
@@ -320,7 +320,7 @@ export default function CalendarPage() {
           <div className="px-4 py-2 border-t border-[var(--border)] shrink-0">
             <div className="flex items-center gap-1.5 text-xs text-[var(--text-tertiary)]">
               <Link2 size={12} />
-              {icalSources.length} 个外部日历
+              {icalSources.length} external calendars
             </div>
           </div>
         )}
@@ -363,14 +363,14 @@ export function MobileAgenda({ events, rangeStart, rangeEnd, loading, onEventCli
     return date && date >= rangeStart && date <= rangeEnd;
   }).slice().sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
   return (
-    <section aria-label="日程列表" className="space-y-2">
-      {loading && <p className="py-4 text-sm text-[var(--text-tertiary)]">加载中...</p>}
-      {!loading && visibleEvents.length === 0 && <p className="py-8 text-center text-sm text-[var(--text-tertiary)]">此时段没有事件</p>}
+    <section aria-label="Schedule list" className="space-y-2">
+      {loading && <p className="py-4 text-sm text-[var(--text-tertiary)]">Loading...</p>}
+      {!loading && visibleEvents.length === 0 && <p className="py-8 text-center text-sm text-[var(--text-tertiary)]">No events in this period</p>}
       {visibleEvents.map((event) => {
         const colors = TYPE_COLORS[event.type] || TYPE_COLORS.manual;
         return (
           <button key={event.id} type="button" onClick={() => onEventClick(event)} className={cn("w-full rounded-lg border p-3 text-left", colors.bg, colors.border)}>
-            <span className="block text-xs text-[var(--text-tertiary)]">{event.start_time?.slice(0, 10)} {event.all_day ? "全天" : event.start_time ? formatTime(event.start_time) : ""}</span>
+            <span className="block text-xs text-[var(--text-tertiary)]">{event.start_time?.slice(0, 10)} {event.all_day ? "All day" : event.start_time ? formatTime(event.start_time) : ""}</span>
             <span className="mt-1 block break-words text-sm font-medium text-[var(--text-primary)]">{event.title}</span>
           </button>
         );
@@ -436,7 +436,7 @@ function MonthView({ matrix, eventsByDay, onEventClick, cursor }: {
                   );
                 })}
                 {dayEvents.length > 3 && (
-                  <div className="text-[10px] text-[var(--text-tertiary)] px-1.5">+{dayEvents.length - 3} 更多</div>
+                  <div className="text-[10px] text-[var(--text-tertiary)] px-1.5">+{dayEvents.length - 3} more</div>
                 )}
               </div>
             </div>
@@ -642,7 +642,7 @@ function CreateEventModal({ defaultDate, onClose, onCreated }: {
 
   const handleSave = async () => {
     if (!title.trim()) {
-      toast.error("请输入事件标题");
+      toast.error("Enter an event title");
       return;
     }
     setSaving(true);
@@ -656,27 +656,27 @@ function CreateEventModal({ defaultDate, onClose, onCreated }: {
         description: description.trim(),
         reminder_minutes: parseInt(reminder) || 0,
       });
-      toast.success("事件已创建");
+      toast.success("Event created");
       onCreated();
     } catch (_e: unknown) {
-      toast.error("创建失败");
+      toast.error("Create failed");
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal open onOpenChange={() => onClose()} title="新建事件" size="md">
+    <Modal open onOpenChange={() => onClose()} title="New event" size="md">
       <div className="space-y-4">
         <Input
-          placeholder="事件标题"
+          placeholder="Event title"
           value={title}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)}
           autoFocus
         />
         <div className="flex items-center gap-2">
           <input type="checkbox" id="all-day" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} className="rounded" />
-          <label htmlFor="all-day" className="text-sm text-[var(--text-secondary)] cursor-pointer">全天事件</label>
+          <label htmlFor="all-day" className="text-sm text-[var(--text-secondary)] cursor-pointer">All-day event</label>
         </div>
         <div className="flex items-center gap-2">
           <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="flex-1" />
@@ -684,12 +684,12 @@ function CreateEventModal({ defaultDate, onClose, onCreated }: {
             <>
               <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-28" />
               <span className="text-[var(--text-tertiary)]">-</span>
-              <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="w-28" placeholder="结束" />
+              <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="w-28" placeholder="End" />
             </>
           )}
         </div>
-        <Input placeholder="地点（可选）" value={location} onChange={(e) => setLocation(e.target.value)} />
-        <Textarea placeholder="描述（可选）" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
+        <Input placeholder="Location (optional)" value={location} onChange={(e) => setLocation(e.target.value)} />
+        <Textarea placeholder="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
         <div className="flex items-center gap-2">
           <Bell size={14} className="text-[var(--text-tertiary)]" />
           <select
@@ -697,18 +697,18 @@ function CreateEventModal({ defaultDate, onClose, onCreated }: {
             onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setReminder(e.target.value)}
             className="w-32 px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] text-sm text-[var(--text-primary)]"
           >
-            <option value="0">不提醒</option>
-            <option value="5">提前5分钟</option>
-            <option value="15">提前15分钟</option>
-            <option value="30">提前30分钟</option>
-            <option value="60">提前1小时</option>
-            <option value="1440">提前1天</option>
+            <option value="0">No reminder</option>
+            <option value="5">5 minutes before</option>
+            <option value="15">15 minutes before</option>
+            <option value="30">30 minutes before</option>
+            <option value="60">1 hour before</option>
+            <option value="1440">1 day before</option>
           </select>
         </div>
       </div>
       <div className="flex justify-end gap-2 mt-6">
-        <Button variant="ghost" onClick={onClose}>取消</Button>
-        <Button onClick={handleSave} disabled={saving}>{saving ? "保存中..." : "创建"}</Button>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Create"}</Button>
       </div>
     </Modal>
   );
@@ -728,20 +728,20 @@ function EventDetailModal({ event, onClose, onChanged }: {
 
   const handleDelete = async () => {
     if (isTask || typeof event.id === "string") {
-      toast.info("任务截止事件由任务系统管理，无法在日历中删除");
+      toast.info("Deadline events are managed by the task system and cannot be deleted from the calendar");
       return;
     }
     try {
       await calendarApi.deleteEvent(event.id as number);
-      toast.success("事件已删除");
+      toast.success("Event deleted");
       onChanged();
     } catch {
-      toast.error("删除失败");
+      toast.error("Delete failed");
     }
   };
 
   return (
-    <Modal open onOpenChange={() => onClose()} title="事件详情" size="md">
+    <Modal open onOpenChange={() => onClose()} title="Event details" size="md">
       <div className="space-y-3">
         <div className={cn("rounded-lg border p-3", colors.bg, colors.border)}>
           <div className="flex items-center gap-2 mb-1">
@@ -753,7 +753,7 @@ function EventDetailModal({ event, onClose, onChanged }: {
         {event.start_time && (
           <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
             <Clock size={14} className="text-[var(--text-tertiary)]" />
-            {event.all_day ? "全天" : formatTime(event.start_time)}
+            {event.all_day ? "All day" : formatTime(event.start_time)}
             {event.end_time && !event.all_day && ` - ${formatTime(event.end_time)}`}
           </div>
         )}
@@ -773,10 +773,10 @@ function EventDetailModal({ event, onClose, onChanged }: {
       <div className="flex justify-between mt-6">
         {!isTask && typeof event.id === "number" ? (
           <Button variant="danger" size="sm" onClick={handleDelete}>
-            <Trash2 size={13} className="mr-1" /> 删除
+            <Trash2 size={13} className="mr-1" /> Delete
           </Button>
         ) : <div />}
-        <Button variant="ghost" onClick={onClose}>关闭</Button>
+        <Button variant="ghost" onClick={onClose}>Close</Button>
       </div>
     </Modal>
   );
@@ -812,15 +812,15 @@ function CalendarSettingsModal({ onClose, onChanged }: { onClose: () => void; on
 
   const addSource = async () => {
     if (!newName.trim()) {
-      toast.error("请填写名称");
+      toast.error("Please enter a name");
       return;
     }
     if (newSourceType === "ical" && !newUrl.trim()) {
-      toast.error("请填写 iCal 订阅链接");
+      toast.error("Please enter the iCal subscription URL");
       return;
     }
     if (newSourceType === "caldav" && (!newUrl.trim() || !newCalUser.trim() || !newCalPass.trim())) {
-      toast.error("请填写 CalDAV 服务器、用户名和密码");
+      toast.error("Please fill in the CalDAV server, username and password");
       return;
     }
     try {
@@ -839,9 +839,9 @@ function CalendarSettingsModal({ onClose, onChanged }: { onClose: () => void; on
       setNewCalPass("");
       const updated = await calendarApi.listIcalSources();
       setSources(updated);
-      toast.success("订阅源已添加");
+      toast.success("Subscription added");
     } catch {
-      toast.error("添加失败");
+      toast.error("Failed to add");
     }
   };
 
@@ -849,10 +849,10 @@ function CalendarSettingsModal({ onClose, onChanged }: { onClose: () => void; on
     try {
       await calendarApi.deleteIcalSource(id);
       setSources(sources.filter((s) => s.id !== id));
-      toast.success("已删除");
+      toast.success("Deleted");
       onChanged();
     } catch {
-      toast.error("删除失败");
+      toast.error("Delete failed");
     }
   };
 
@@ -860,26 +860,26 @@ function CalendarSettingsModal({ onClose, onChanged }: { onClose: () => void; on
     setSyncing(id);
     try {
       const result = await calendarApi.syncIcalSource(id);
-      toast.success(`同步了 ${result.synced} 个事件`);
+      toast.success(`Synced ${result.synced} events`);
       const updated = await calendarApi.listIcalSources();
       setSources(updated);
       onChanged();
     } catch (_e: unknown) {
-      toast.error("同步失败");
+      toast.error("Sync failed");
     } finally {
       setSyncing(null);
     }
   };
 
   return (
-    <Modal open onOpenChange={() => onClose()} title="日历设置" size="md">
+    <Modal open onOpenChange={() => onClose()} title="Calendar settings" size="md">
       <div className="space-y-5">
         {/* Notification settings */}
         <div className="space-y-3">
-          <h4 className="text-sm font-semibold text-[var(--text-primary)]">通知设置</h4>
+          <h4 className="text-sm font-semibold text-[var(--text-primary)]">Notification settings</h4>
           <div className="flex items-center justify-between">
             <label className="text-sm text-[var(--text-secondary)] flex items-center gap-1.5">
-              <Sun size={13} /> 晨报推送
+              <Sun size={13} /> Morning digest push
             </label>
             <input
               type="checkbox"
@@ -890,7 +890,7 @@ function CalendarSettingsModal({ onClose, onChanged }: { onClose: () => void; on
           </div>
           {settings?.morning_brief_enabled && (
             <div className="flex items-center justify-between pl-5">
-              <label className="text-xs text-[var(--text-tertiary)]">推送时间</label>
+              <label className="text-xs text-[var(--text-tertiary)]">Push time</label>
               <Input
                 type="time"
                 value={settings?.morning_brief_time || "08:00"}
@@ -901,7 +901,7 @@ function CalendarSettingsModal({ onClose, onChanged }: { onClose: () => void; on
           )}
           <div className="flex items-center justify-between">
             <label className="text-sm text-[var(--text-secondary)] flex items-center gap-1.5">
-              <Bell size={13} /> 事件提醒
+              <Bell size={13} /> Event reminders
             </label>
             <input
               type="checkbox"
@@ -915,11 +915,11 @@ function CalendarSettingsModal({ onClose, onChanged }: { onClose: () => void; on
         {/* iCal sources */}
         <div className="space-y-3 pt-3 border-t border-[var(--border)]">
           <h4 className="text-sm font-semibold text-[var(--text-primary)] flex items-center gap-1.5">
-            <Link2 size={14} /> 外部日历订阅
+            <Link2 size={14} /> External calendar subscriptions
           </h4>
           {sources.length === 0 && (
             <p className="text-xs text-[var(--text-tertiary)] py-2">
-              添加钉钉/飞书/企业微信的 iCal 订阅链接，自动同步外部日程
+              Add DingTalk / Feishu / WeCom iCal subscription links to sync external schedules automatically
             </p>
           )}
           {sources.map((s) => (
@@ -932,8 +932,8 @@ function CalendarSettingsModal({ onClose, onChanged }: { onClose: () => void; on
                   )}
                 </div>
                 <p className="text-xs text-[var(--text-tertiary)] truncate">
-                  {(s.sync_event_count ?? 0) > 0 ? `${s.sync_event_count} 个事件` : "未同步"}
-                  {s.last_sync_status === "error" && " · ❌ 错误"}
+                  {(s.sync_event_count ?? 0) > 0 ? `${s.sync_event_count} events` : "Not synced"}
+                  {s.last_sync_status === "error" && " · ❌ Error"}
                 </p>
               </div>
               <button
@@ -964,7 +964,7 @@ function CalendarSettingsModal({ onClose, onChanged }: { onClose: () => void; on
                     : "bg-[var(--bg-tertiary)] text-[var(--text-secondary)] border border-[var(--border)]",
                 )}
               >
-                📋 iCal 链接
+                📋 iCal link
               </button>
               <button
                 onClick={() => setNewSourceType("caldav")}
@@ -975,29 +975,29 @@ function CalendarSettingsModal({ onClose, onChanged }: { onClose: () => void; on
                     : "bg-[var(--bg-tertiary)] text-[var(--text-secondary)] border border-[var(--border)]",
                 )}
               >
-                💼 企业微信 CalDAV
+                💼 WeCom CalDAV
               </button>
             </div>
             {/* Common field */}
-            <Input placeholder="名称（如：企业微信日历）" value={newName} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewName(e.target.value)} />
+            <Input placeholder="Name (e.g. WeCom calendar)" value={newName} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewName(e.target.value)} />
             {newSourceType === "ical" ? (
-              <Input placeholder="iCal 订阅链接（如：webcal://... 改为 https://...）" value={newUrl} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewUrl(e.target.value)} />
+              <Input placeholder="iCal subscription URL (e.g. change webcal://... to https://...)" value={newUrl} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewUrl(e.target.value)} />
             ) : (
               <>
-                <Input placeholder="服务器地址（默认 https://caldav.wecom.work）" value={newUrl} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewUrl(e.target.value)} />
-                <Input placeholder="CalDAV 用户名" value={newCalUser} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewCalUser(e.target.value)} />
-                <Input placeholder="CalDAV 密码" value={newCalPass} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewCalPass(e.target.value)} />
+                <Input placeholder="Server address (default https://caldav.wecom.work)" value={newUrl} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewUrl(e.target.value)} />
+                <Input placeholder="CalDAV username" value={newCalUser} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewCalUser(e.target.value)} />
+                <Input placeholder="CalDAV password" value={newCalPass} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewCalPass(e.target.value)} />
                 <p className="text-[11px] text-[var(--text-tertiary)] leading-relaxed">
-                  💡 获取方式：企业微信 PC 端 → 头像 → 设置 → 日程 → 同步至其他日历 → 复制用户名和密码
+                  💡 How to get it: WeCom desktop app → avatar → Settings → Calendar → Sync to other calendars → copy the username and password
                 </p>
               </>
             )}
-            <Button size="sm" onClick={addSource}>添加</Button>
+            <Button size="sm" onClick={addSource}>Add</Button>
           </div>
         </div>
       </div>
       <div className="flex justify-end mt-6">
-        <Button onClick={onClose}>完成</Button>
+        <Button onClick={onClose}>Done</Button>
       </div>
     </Modal>
   );

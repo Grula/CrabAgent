@@ -4,7 +4,6 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import WorkspaceSwitcher from "./WorkspaceSwitcher";
 
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("../api/sessions", () => ({
   getCurrentWorkspace: vi.fn().mockResolvedValue({ workspace: "/home/default" }),
   listWorkspaces: vi.fn().mockResolvedValue([{ workspace: "/projects/alpha", session_count: 1, hidden: false }]),

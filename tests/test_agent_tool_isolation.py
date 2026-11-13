@@ -37,6 +37,8 @@ ALL_TOOLS = [
     "shared_list",
     "delegate_task",
     "delegate_parallel",
+    "run_pipeline",
+    "plan_task",
     "list_agents",
     "handoff_to",
     "ask_question",
@@ -165,3 +167,118 @@ class TestSubAgentInheritsUnprunedPool:
         await agents_module.spawn_sub_agent("coder", "do it", parent)
 
         assert captured["tools"] == {"bash", "read"}
+
+
+# ── "confirm" permissions and the "browser" family key ────────────────
+
+
+def _patch_spawn(monkeypatch: pytest.MonkeyPatch, profile: dict, run_agent):
+    monkeypatch.setattr(agents_module, "get_agent", _async_return(profile))
+    monkeypatch.setattr(agents_module, "_classify_task", lambda task: "code")
+    monkeypatch.setattr(agents_module, "inject_agent_lessons", _async_return("prompt"))
+    monkeypatch.setattr(agents_module, "_load_shared_context", _async_return(""))
+    monkeypatch.setattr("crabagent.core.agent.loop.run_agent", run_agent)
+
+
+def _profile(name: str, permissions: dict[str, str]) -> dict:
+    return {
+        "name": name,
+        "display_name": name.title(),
+        "role": "Engineer",
+        "goal": "Do the task",
+        "backstory": "",
+        "model": "",
+        "allow_delegation": False,
+        "tool_permissions": permissions,
+    }
+
+
+class TestSubAgentConfirmation:
+    @pytest.mark.asyncio
+    async def test_confirm_tool_asks_through_the_parent_and_approval_is_shared(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        asked: list[tuple[str, dict]] = []
+
+        async def parent_confirm(tool_name: str, args: dict) -> bool:
+            asked.append((tool_name, args))
+            return True
+
+        results: list[object] = []
+
+        async def fake_run_agent(context, query):
+            results.append(await context.tool_registry.execute("bash", {"command": "ls"}, context=context))
+            results.append(await context.tool_registry.execute("bash", {"command": "pwd"}, context=context))
+            context.messages.append({"role": "assistant", "content": "done"})
+            return context.messages
+
+        _patch_spawn(monkeypatch, _profile("implementer", {"bash": "confirm"}), fake_run_agent)
+        parent = AgentContext(workspace=Path.cwd(), tool_registry=_registry(), confirm_callback=parent_confirm)
+
+        await agents_module.spawn_sub_agent("implementer", "run it", parent)
+
+        # Asked once, with the asking agent named; the second call reuses the approval.
+        assert asked == [("bash", {"agent": "implementer", "command": "ls"})]
+        assert "bash" in parent.approved_tools
+        assert all("denied" not in str(result) for result in results)
+
+    @pytest.mark.asyncio
+    async def test_denied_confirmation_stops_the_tool(self, monkeypatch: pytest.MonkeyPatch):
+        async def parent_confirm(tool_name: str, args: dict) -> bool:
+            return False
+
+        results: list[object] = []
+
+        async def fake_run_agent(context, query):
+            results.append(await context.tool_registry.execute("bash", {"command": "ls"}, context=context))
+            context.messages.append({"role": "assistant", "content": "done"})
+            return context.messages
+
+        _patch_spawn(monkeypatch, _profile("implementer", {"bash": "confirm"}), fake_run_agent)
+        parent = AgentContext(workspace=Path.cwd(), tool_registry=_registry(), confirm_callback=parent_confirm)
+
+        await agents_module.spawn_sub_agent("implementer", "run it", parent)
+
+        assert results == ["Tool 'bash' execution denied by user."]
+        assert "bash" not in parent.approved_tools
+
+    @pytest.mark.asyncio
+    async def test_unattended_parent_still_runs_confirm_tools_without_asking(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        captured: dict[str, object] = {}
+
+        async def fake_run_agent(context, query):
+            captured["callback"] = context.confirm_callback
+            captured["result"] = await context.tool_registry.execute("bash", {"command": "ls"}, context=context)
+            context.messages.append({"role": "assistant", "content": "done"})
+            return context.messages
+
+        _patch_spawn(monkeypatch, _profile("implementer", {"bash": "confirm"}), fake_run_agent)
+        parent = AgentContext(workspace=Path.cwd(), tool_registry=_registry())  # e.g. a scheduled task
+
+        await agents_module.spawn_sub_agent("implementer", "run it", parent)
+
+        assert captured["callback"] is None
+        assert "denied" not in str(captured["result"])
+
+
+class TestBrowserFamilyPermission:
+    def test_browser_key_covers_the_browser_tools_but_exact_entries_win(self):
+        from crabagent.core.agent.tools.registry import resolve_permission
+
+        permissions = {"browser": "deny", "browser_screenshot": "auto"}
+
+        assert resolve_permission(permissions, "browser_navigate") == "deny"
+        assert resolve_permission(permissions, "browser_screenshot") == "auto"
+        assert resolve_permission(permissions, "collab_browser_open") is None
+        assert resolve_permission(permissions, "bash") is None
+        assert resolve_permission({}, "browser_navigate") is None
+
+    def test_denying_browser_removes_the_browser_tools_from_an_agent(self):
+        full = _registry([*ALL_TOOLS, "browser_navigate", "browser_click", "collab_browser_open"])
+
+        filtered = filter_tool_registry(full, tool_permissions={"browser": "deny"}, allow_delegation=True)
+
+        assert "browser_navigate" not in filtered._tools and "browser_click" not in filtered._tools
+        assert "collab_browser_open" in filtered._tools and "bash" in filtered._tools

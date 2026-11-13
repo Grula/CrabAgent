@@ -55,10 +55,10 @@ async def request_confirmation(
                 user_id=user_id,
                 request_type="approval",
                 request_key=confirm_id,
-                title=f"确认执行 {tool_name}",
+                title=f"Confirm {tool_name}",
                 session_id=session_id,
                 operation=f"tool:{tool_name}",
-                question="是否允许执行该操作？",
+                question="Allow this operation?",
                 risk_level="high",
                 display_payload={"args_summary": args_summary},
                 resource_version=args_summary[:200],
@@ -80,7 +80,7 @@ async def request_confirmation(
             notify_request_created(
                 request_key=confirm_id,
                 request_type="approval",
-                title=f"确认执行 {tool_name}",
+                title=f"Confirm {tool_name}",
                 body=args_summary,
                 session_id=session_id,
             )

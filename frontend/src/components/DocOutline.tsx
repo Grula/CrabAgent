@@ -1,4 +1,3 @@
-import { useTranslation } from "react-i18next";
 import { List } from "lucide-react";
 import { cn } from "../lib/cn";
 
@@ -16,17 +15,15 @@ interface Props {
 }
 
 export function DocOutline({ items, activeIndex, onSelect, className }: Props) {
-  const { t } = useTranslation();
-
   if (items.length === 0) {
     return (
       <div className={cn("w-[200px] shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--bg-secondary)]", className)}>
         <div className="px-3 py-2 text-xs font-semibold text-[var(--text-tertiary)] flex items-center gap-1.5 border-b border-[var(--border)]">
           <List size={12} />
-          {t("document.outline")}
+          {"Outline"}
         </div>
         <div className="flex-1 flex items-center justify-center text-[11px] text-[var(--text-tertiary)] px-3 text-center">
-          {t("document.outlineEmpty")}
+          {"No headings detected"}
         </div>
       </div>
     );
@@ -36,7 +33,7 @@ export function DocOutline({ items, activeIndex, onSelect, className }: Props) {
     <div className={cn("w-[200px] shrink-0 border-r border-[var(--border)] flex flex-col bg-[var(--bg-secondary)] overflow-hidden", className)}>
       <div className="px-3 py-2 text-xs font-semibold text-[var(--text-tertiary)] flex items-center gap-1.5 border-b border-[var(--border)] shrink-0">
         <List size={12} />
-        {t("document.outline")}
+        {"Outline"}
       </div>
       <div className="flex-1 overflow-y-auto py-1">
         {items.map((item) => (

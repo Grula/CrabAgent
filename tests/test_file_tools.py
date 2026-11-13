@@ -224,3 +224,112 @@ def test_grep_files_nonexistent_path(tmp_path: Path):
     context = AgentContext(workspace=tmp_path)
     result = grep_files("x", path="./nonexistent", context=context)
     assert "does not exist" in result
+
+
+# ── edit: replace_all and input validation ────────────────────────────
+
+
+def test_edit_file_replace_all_replaces_every_occurrence(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "names.py"
+    target.write_text("old_name = 1\nprint(old_name)\nreturn old_name\n", encoding="utf-8")
+
+    result = edit_file(str(target), "old_name", "new_name", replace_all=True, context=context)
+
+    assert "replaced 3 occurrences" in result
+    assert "first @ L1" in result
+    assert target.read_text(encoding="utf-8") == "new_name = 1\nprint(new_name)\nreturn new_name\n"
+
+
+def test_edit_file_ambiguous_match_points_to_replace_all(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "dup.txt"
+    target.write_text("dup\ndup\n", encoding="utf-8")
+
+    result = edit_file(str(target), "dup", "ok", context=context)
+
+    assert "replace_all=true" in result
+    assert target.read_text(encoding="utf-8") == "dup\ndup\n"
+
+
+def test_edit_file_rejects_empty_or_identical_strings(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.txt"
+    target.write_text("hello", encoding="utf-8")
+
+    assert "must not be empty" in edit_file(str(target), "", "x", context=context)
+    assert "identical" in edit_file(str(target), "hello", "hello", context=context)
+    assert target.read_text(encoding="utf-8") == "hello"
+
+
+# ── grep: ignore_case and context_lines ───────────────────────────────
+
+
+def test_grep_files_ignore_case(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "a.txt"
+    target.write_text("Hello World\nhello again\nbye\n", encoding="utf-8")
+
+    assert grep_files("HELLO", path=str(target), context=context) == "No matches found."
+    result = grep_files("HELLO", path=str(target), ignore_case=True, context=context)
+
+    assert ":1: Hello World" in result
+    assert ":2: hello again" in result
+    assert "bye" not in result
+
+
+def test_grep_files_context_lines_single_file(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "a.txt"
+    target.write_text("\n".join(f"line{i}" for i in range(1, 21)) + "\n", encoding="utf-8")
+
+    result = grep_files("line(5|15)$", path=str(target), context_lines=1, context=context)
+    lines = result.splitlines()
+
+    assert lines == [
+        f"{target}-4- line4",
+        f"{target}:5: line5",
+        f"{target}-6- line6",
+        "--",
+        f"{target}-14- line14",
+        f"{target}:15: line15",
+        f"{target}-16- line16",
+    ]
+
+
+def test_grep_files_context_lines_merges_overlapping_groups(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "a.txt"
+    target.write_text("a\nhit one\nb\nhit two\nc\n", encoding="utf-8")
+
+    result = grep_files("hit", path=str(target), context_lines=1, context=context)
+
+    assert "--" not in result
+    assert result.splitlines() == [
+        f"{target}-1- a",
+        f"{target}:2: hit one",
+        f"{target}-3- b",
+        f"{target}:4: hit two",
+        f"{target}-5- c",
+    ]
+
+
+def test_grep_files_context_lines_directory_mode(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    (tmp_path / "one.py").write_text("x = 1\nneedle = 2\ny = 3\n", encoding="utf-8")
+    (tmp_path / "two.py").write_text("needle = 9\n", encoding="utf-8")
+
+    result = grep_files("needle", path=str(tmp_path), include="*.py", context_lines=1, context=context)
+
+    assert f"{tmp_path / 'one.py'}:2: needle = 2" in result
+    assert f"{tmp_path / 'one.py'}-1- x = 1" in result
+    assert f"{tmp_path / 'two.py'}:1: needle = 9" in result
+    assert "--" in result.splitlines()
+
+
+def test_grep_files_default_output_is_unchanged(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "a.txt"
+    target.write_text("alpha\nbeta\n", encoding="utf-8")
+
+    assert grep_files("beta", path=str(target), context=context) == f"{target}:2: beta"

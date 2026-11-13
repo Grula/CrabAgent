@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { useTranslation } from "react-i18next";
 import {
   Plus,
   X as XIcon,
@@ -43,32 +42,32 @@ const PRIORITY_LABELS: Record<string, string> = {
 const STATUS_ORDER = ["pending", "in_progress", "done"];
 
 const STATUS_META: Record<string, { label: string; className: string }> = {
-  pending: { label: "待开始", className: "bg-[var(--bg-tertiary)] text-[var(--text-secondary)]" },
-  in_progress: { label: "进行中", className: "bg-blue-500/10 text-blue-500" },
-  waiting_user: { label: "等待你", className: "bg-orange-500/10 text-orange-500" },
-  done: { label: "已完成", className: "bg-green-500/10 text-green-500" },
-  partial: { label: "部分完成", className: "bg-amber-500/10 text-amber-500" },
-  failed: { label: "失败", className: "bg-red-500/10 text-red-500" },
-  cancelled: { label: "已取消", className: "bg-[var(--bg-tertiary)] text-[var(--text-tertiary)]" },
+  pending: { label: "Not started", className: "bg-[var(--bg-tertiary)] text-[var(--text-secondary)]" },
+  in_progress: { label: "In progress", className: "bg-blue-500/10 text-blue-500" },
+  waiting_user: { label: "Waiting on you", className: "bg-orange-500/10 text-orange-500" },
+  done: { label: "Completed", className: "bg-green-500/10 text-green-500" },
+  partial: { label: "Partially done", className: "bg-amber-500/10 text-amber-500" },
+  failed: { label: "Failed", className: "bg-red-500/10 text-red-500" },
+  cancelled: { label: "Cancelled", className: "bg-[var(--bg-tertiary)] text-[var(--text-tertiary)]" },
 };
 
 type TaskGroup = { key: string; label: string; match: (t: Task) => boolean };
 
 const ACTION_GROUPS: TaskGroup[] = [
-  { key: "waiting", label: "等待你", match: (t) => t.status === "waiting_user" },
-  { key: "attention", label: "需要关注", match: (t) => t.status === "failed" || t.status === "partial" },
+  { key: "waiting", label: "Waiting on you", match: (t) => t.status === "waiting_user" },
+  { key: "attention", label: "Needs attention", match: (t) => t.status === "failed" || t.status === "partial" },
   {
     key: "agent",
-    label: "CrabAgent 正在处理",
+    label: "CrabAgent is working",
     match: (t) => t.status === "in_progress" && (t.owner_type ?? "human") === "agent",
   },
   {
     key: "mine",
-    label: "由我处理",
+    label: "Handled by me",
     match: (t) =>
       (t.status === "pending" || t.status === "in_progress") && (t.owner_type ?? "human") === "human",
   },
-  { key: "recent_done", label: "最近完成", match: (t) => t.status === "done" },
+  { key: "recent_done", label: "Recently completed", match: (t) => t.status === "done" },
 ];
 
 function groupTasks(tasks: Task[]): { group: TaskGroup; items: Task[] }[] {
@@ -79,7 +78,7 @@ function groupTasks(tasks: Task[]): { group: TaskGroup; items: Task[] }[] {
     for (const item of items) rest.splice(rest.indexOf(item), 1);
     if (items.length) result.push({ group, items });
   }
-  if (rest.length) result.push({ group: { key: "other", label: "其他", match: () => false }, items: rest });
+  if (rest.length) result.push({ group: { key: "other", label: "Other", match: () => false }, items: rest });
   return result;
 }
 
@@ -103,7 +102,6 @@ function formatDeadline(deadline: string): string {
 }
 
 export default function TaskPanel({ onClose, onSwitchSession }: Props) {
-  const { t } = useTranslation();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("pending");
@@ -157,7 +155,7 @@ export default function TaskPanel({ onClose, onSwitchSession }: Props) {
       setShowCreate(false);
       await loadTasks();
     } catch {
-      toast.error(t("task.operationFailed"));
+      toast.error("Operation failed");
     }
   };
 
@@ -167,7 +165,7 @@ export default function TaskPanel({ onClose, onSwitchSession }: Props) {
       await updateTask(task.id, { status: newStatus });
       await loadTasks();
     } catch {
-      toast.error(t("task.operationFailed"));
+      toast.error("Operation failed");
     }
   };
 
@@ -177,7 +175,7 @@ export default function TaskPanel({ onClose, onSwitchSession }: Props) {
       setConfirmDelete(null);
       await loadTasks();
     } catch {
-      toast.error(t("task.operationFailed"));
+      toast.error("Operation failed");
     }
   };
 
@@ -191,7 +189,7 @@ export default function TaskPanel({ onClose, onSwitchSession }: Props) {
           <div className="flex items-center gap-2">
             <ListTodo size={16} className="text-[var(--accent)]" />
             <span className="text-sm font-semibold text-[var(--text-primary)]">
-              {t("task.title")}
+              {"Tasks"}
             </span>
             <span className="text-xs text-[var(--text-tertiary)]">
               {tasks.length}
@@ -202,7 +200,7 @@ export default function TaskPanel({ onClose, onSwitchSession }: Props) {
               size="icon"
               variant="ghost"
               onClick={() => setShowCreate(true)}
-              title={t("task.newTask")}
+              title={"New Task"}
             >
               <Plus size={14} />
             </Button>
@@ -228,7 +226,7 @@ export default function TaskPanel({ onClose, onSwitchSession }: Props) {
                   : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]",
               )}
             >
-              {f === "pending" ? t("task.active") : f === "done" ? t("task.done") : t("task.all")}
+              {f === "pending" ? "Active" : f === "done" ? "Done" : "All"}
             </button>
           ))}
         </div>
@@ -237,16 +235,16 @@ export default function TaskPanel({ onClose, onSwitchSession }: Props) {
         <div className="flex-1 overflow-y-auto p-2">
           {loading ? (
             <div className="flex items-center justify-center py-12 text-sm text-[var(--text-tertiary)]">
-              {t("common.loading")}
+              {"Loading…"}
             </div>
           ) : tasks.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-sm text-[var(--text-tertiary)]">
               <ListTodo size={32} className="mb-2 opacity-40" />
               {statusFilter === "pending"
-                ? t("task.noTasks")
+                ? "No tasks yet"
                 : statusFilter === "done"
-                  ? t("task.noTasks")
-                  : t("task.noTasks")}
+                  ? "No tasks yet"
+                  : "No tasks yet"}
             </div>
           ) : (
             <div className="space-y-3">
@@ -325,7 +323,7 @@ export default function TaskPanel({ onClose, onSwitchSession }: Props) {
                       {isOverdue(task) && (
                         <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-500/10 text-red-500">
                           <AlertCircle size={10} />
-                          {t("task.overdue")}
+                          {"Overdue"}
                         </span>
                       )}
                     </div>
@@ -372,7 +370,7 @@ export default function TaskPanel({ onClose, onSwitchSession }: Props) {
                           className="text-[10px] flex items-center gap-0.5 text-[var(--brand)] hover:underline ml-auto"
                         >
                           <ExternalLink size={10} />
-                          查看详情
+                          View details
                         </button>
                       )}
                     </div>
@@ -407,37 +405,37 @@ export default function TaskPanel({ onClose, onSwitchSession }: Props) {
       <Modal
         open={showCreate}
         onOpenChange={setShowCreate}
-        title={t("task.newTask")}
+        title={"New Task"}
       >
         <div className="space-y-3">
           <Input
-            placeholder={t("task.titlePlaceholder") + " *"}
+            placeholder={"Task title" + " *"}
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             autoFocus
           />
           <Textarea
-            placeholder={t("task.descriptionPlaceholder")}
+            placeholder={"Task description"}
             value={newDesc}
             onChange={(e) => setNewDesc(e.target.value)}
             rows={2}
           />
           <div className="grid grid-cols-2 gap-2">
             <Input
-              placeholder={t("task.assigneePlaceholder")}
+              placeholder={"Assignee"}
               value={newAssignee}
               onChange={(e) => setNewAssignee(e.target.value)}
             />
             <Input
               type="datetime-local"
-              placeholder={t("task.deadlinePlaceholder")}
+              placeholder={"Deadline"}
               value={newDeadline}
               onChange={(e) => setNewDeadline(e.target.value)}
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
             <Input
-              placeholder={t("task.projectPlaceholder")}
+              placeholder={"Project"}
               value={newProject}
               onChange={(e) => setNewProject(e.target.value)}
             />
@@ -446,21 +444,21 @@ export default function TaskPanel({ onClose, onSwitchSession }: Props) {
               onChange={(e) => setNewPriority(e.target.value)}
               className="px-2 py-1.5 rounded-lg text-xs bg-[var(--bg-tertiary)] text-[var(--text-primary)] border border-[var(--border)] outline-none focus:border-[var(--accent)]"
             >
-              <option value="low">{t("task.low")}</option>
-              <option value="medium">{t("task.medium")}</option>
-              <option value="high">{t("task.high")}</option>
+              <option value="low">{"Low"}</option>
+              <option value="medium">{"Medium"}</option>
+              <option value="high">{"High"}</option>
             </select>
           </div>
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="ghost" onClick={() => setShowCreate(false)}>
-              {t("common.cancel")}
+              {"Cancel"}
             </Button>
             <Button
               variant="brand"
               onClick={handleCreate}
               disabled={!newTitle.trim()}
             >
-              {t("common.create")}
+              {"Create"}
             </Button>
           </div>
         </div>
@@ -470,7 +468,7 @@ export default function TaskPanel({ onClose, onSwitchSession }: Props) {
       <ConfirmDialog
         open={confirmDelete !== null}
         onOpenChange={() => setConfirmDelete(null)}
-        title={t("task.deleteConfirm")}
+        title={"Delete task?"}
         onConfirm={() => { if (confirmDelete !== null) handleDelete(confirmDelete); }}
       />
     </div>

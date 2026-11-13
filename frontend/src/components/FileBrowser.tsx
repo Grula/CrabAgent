@@ -1,7 +1,5 @@
 import { useState, useEffect } from "react";
 import { PanelRightClose, X, RefreshCw, ChevronDown, ChevronRight, Search, Folder, FileText, ImageIcon, Copy, Check } from "lucide-react";
-import { useTranslation } from "react-i18next";
-import i18n from "../i18n";
 import { FileEntry, FileContent } from "../api/files";
 import { getTree, readFile, searchFiles, isImageFile, getImageUrl } from "../api/files";
 import FileTree from "./FileTree";
@@ -63,7 +61,7 @@ function useFileTree(workspace?: string) {
       }
     } catch (e: unknown) {
       setFileError(
-        i18n.t("fileBrowser.readFailed"),
+        "Failed to read file",
       );
     }
   };
@@ -121,7 +119,6 @@ function FilePreview({
   fileError: string | null;
   absolute: boolean;
 }) {
-  const { t } = useTranslation();
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const copyContent = async () => {
@@ -137,7 +134,7 @@ function FilePreview({
       <div className="border-t border-[var(--border)] flex flex-col" style={{ maxHeight: "30%" }}>
         <div className="flex items-center gap-1 border-b border-[var(--border)] p-2 text-xs font-medium text-[var(--accent)]">
           <span className="min-w-0 flex-1 truncate">{selectedPath}</span>
-          {fileContent !== null && <button type="button" onClick={copyContent} className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]" title="复制全部内容">{copied ? <Check size={13} className="text-[var(--success)]" /> : <Copy size={13} />}{copied ? "已复制" : "复制全部"}</button>}
+          {fileContent !== null && <button type="button" onClick={copyContent} className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]" title="Copy all content">{copied ? <Check size={13} className="text-[var(--success)]" /> : <Copy size={13} />}{copied ? "Copied" : "Copy all"}</button>}
         </div>
         <div className="overflow-y-auto p-2 flex-1">
           {fileError ? (
@@ -154,7 +151,7 @@ function FilePreview({
               {fileContent}
             </pre>
           ) : (
-            <div className="text-xs text-[var(--text-secondary)]">{t("common.loading")}</div>
+            <div className="text-xs text-[var(--text-secondary)]">{"Loading…"}</div>
           )}
         </div>
       </div>
@@ -205,7 +202,7 @@ function SearchResults({
     return (
       <div className="text-xs p-3 text-[var(--text-secondary)] flex items-center gap-1.5">
         <RefreshCw size={11} className="animate-spin" />
-        搜索中…
+        Searching…
       </div>
     );
   }
@@ -213,7 +210,7 @@ function SearchResults({
   if (results.length === 0) {
     return (
       <div className="text-xs p-3 text-center text-[var(--text-tertiary)] italic">
-        未找到匹配 "{query}" 的文件
+        No files match "{query}"
       </div>
     );
   }
@@ -221,7 +218,7 @@ function SearchResults({
   return (
     <div>
       <div className="text-[10px] px-2 py-1 text-[var(--text-tertiary)] uppercase tracking-wider">
-        {results.length} 个结果
+        {results.length} results
       </div>
       {results.map((entry) => {
         const isDir = entry.type === "directory";
@@ -281,7 +278,7 @@ function FileSearchBar({ value, onChange }: { value: string; onChange: (v: strin
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder="搜索文件… (至少2字)"
+          placeholder="Search files… (2+ characters)"
           className="w-full text-xs pl-7 pr-7 py-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none focus:border-[var(--brand)] focus:ring-1 focus:ring-[var(--brand)]/30 transition-all"
         />
         {value && (
@@ -305,7 +302,6 @@ export default function FileBrowser({
   onOpenDoc,
   refreshTrigger,
 }: Props) {
-  const { t } = useTranslation();
   const tree = useFileTree(workspace);
 
   // ── File search ──
@@ -365,19 +361,19 @@ export default function FileBrowser({
       <div className="hidden md:flex flex-col border-l border-[var(--border)] bg-[var(--bg-secondary)] w-80 shrink-0 overflow-y-auto">
         {/* Header */}
         <div className="p-2 flex items-center justify-between border-b border-[var(--border)]">
-          <span className="text-xs font-semibold text-[var(--text-primary)]">{t("fileBrowser.files")}</span>
+          <span className="text-xs font-semibold text-[var(--text-primary)]">{"Files"}</span>
           <div className="flex items-center gap-0.5">
             <button
               onClick={tree.refresh}
               className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
-              title={i18n.t("fileBrowser.refresh")}
+              title={"Refresh"}
             >
               <RefreshCw size={14} />
             </button>
             <button
               onClick={onToggle}
               className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
-              title={i18n.t("fileBrowser.close")}
+              title={"Close"}
             >
               <PanelRightClose size={14} />
             </button>
@@ -399,7 +395,7 @@ export default function FileBrowser({
               onOpenDoc={onOpenDoc}
             />
           ) : tree.loading ? (
-            <div className="text-xs p-3 text-[var(--text-secondary)]">{t("common.loading")}</div>
+            <div className="text-xs p-3 text-[var(--text-secondary)]">{"Loading…"}</div>
           ) : (
             <FileTree
               entries={tree.entries}
@@ -441,12 +437,12 @@ export default function FileBrowser({
         />
         <div className="fixed bottom-0 left-0 right-0 z-50 bg-[var(--bg-secondary)] border-t border-[var(--border)] rounded-t-2xl shadow-[var(--shadow-lg)] animate-slide-up max-h-[75vh] flex flex-col">
           <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)]">
-            <span className="text-sm font-semibold text-[var(--text-primary)]">{t("fileBrowser.files")}</span>
+            <span className="text-sm font-semibold text-[var(--text-primary)]">{"Files"}</span>
             <div className="flex items-center gap-1">
               <button
                 onClick={tree.refresh}
                 className="p-1.5 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
-                title={i18n.t("fileBrowser.refresh")}
+                title={"Refresh"}
               >
                 <RefreshCw size={15} />
               </button>
@@ -471,7 +467,7 @@ export default function FileBrowser({
                 onOpenDoc={onOpenDoc}
               />
             ) : tree.loading ? (
-              <div className="text-xs p-3 text-[var(--text-secondary)]">{t("common.loading")}</div>
+              <div className="text-xs p-3 text-[var(--text-secondary)]">{"Loading…"}</div>
             ) : (
               <FileTree
                 entries={tree.entries}

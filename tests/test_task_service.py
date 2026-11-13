@@ -39,10 +39,10 @@ async def test_add_task_classifies_owner(db):
 
 @pytest.mark.asyncio
 async def test_start_agent_run_links_run_and_task(db):
-    task = await task_store.add_task(db, user_id=1, title="生成报告")
+    task = await task_store.add_task(db, user_id=1, title="Generate report")
 
     updated, run_id = await task_service.start_agent_run(
-        db, task["id"], 1, agent_name="main", session_id="sess-1", phase="读取数据"
+        db, task["id"], 1, agent_name="main", session_id="sess-1", phase="reading data"
     )
 
     assert updated["status"] == "in_progress"
@@ -54,7 +54,7 @@ async def test_start_agent_run_links_run_and_task(db):
     assert len(runs) == 1
     assert runs[0]["task_id"] == task["id"]
     assert runs[0]["status"] == "running"
-    assert runs[0]["phase"] == "读取数据"
+    assert runs[0]["phase"] == "reading data"
 
 
 @pytest.mark.asyncio
@@ -65,36 +65,36 @@ async def test_start_agent_run_missing_task_raises(db):
 
 @pytest.mark.asyncio
 async def test_finish_run_completed_marks_task_done(db):
-    task = await task_store.add_task(db, user_id=1, title="生成报告")
+    task = await task_store.add_task(db, user_id=1, title="Generate report")
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
 
     updated = await task_service.finish_agent_run(
-        db, run_id, 1, "completed", result_summary="报告已生成", tokens_used=120
+        db, run_id, 1, "completed", result_summary="Report generated", tokens_used=120
     )
 
     assert updated["status"] == "done"
     assert updated["active_run_id"] is None
     assert updated["completed_at"] is not None
-    assert updated["result_summary"] == "报告已生成"
+    assert updated["result_summary"] == "Report generated"
 
 
 @pytest.mark.asyncio
 async def test_finish_run_failed_marks_task_failed(db):
-    task = await task_store.add_task(db, user_id=1, title="生成报告")
+    task = await task_store.add_task(db, user_id=1, title="Generate report")
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
 
-    updated = await task_service.finish_agent_run(db, run_id, 1, "failed", error="API 超时")
+    updated = await task_service.finish_agent_run(db, run_id, 1, "failed", error="API timeout")
 
     assert updated["status"] == "failed"
-    assert "API 超时" in updated["warning_summary"]
+    assert "API timeout" in updated["warning_summary"]
 
 
 @pytest.mark.asyncio
 async def test_finish_run_cancelled_after_done_keeps_done(db):
-    task = await task_store.add_task(db, user_id=1, title="生成报告")
+    task = await task_store.add_task(db, user_id=1, title="Generate report")
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
     # A summary-only task completes as done under trusted judgment.
-    await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="报告完成")
+    await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="Report completed")
 
     # A late cancellation arriving after done must not downgrade the task.
     updated = await task_service.finish_agent_run(db, run_id, 1, "cancelled")
@@ -105,10 +105,10 @@ async def test_finish_run_cancelled_after_done_keeps_done(db):
 
 @pytest.mark.asyncio
 async def test_cancel_task_finalizes_active_run(db):
-    task = await task_store.add_task(db, user_id=1, title="生成报告")
+    task = await task_store.add_task(db, user_id=1, title="Generate report")
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
 
-    updated = await task_service.cancel_task(db, task["id"], 1, reason="用户停止")
+    updated = await task_service.cancel_task(db, task["id"], 1, reason="User stopped")
 
     assert updated["status"] == "cancelled"
     runs = await task_service.list_task_runs(db, task["id"], 1)
@@ -117,7 +117,7 @@ async def test_cancel_task_finalizes_active_run(db):
 
 @pytest.mark.asyncio
 async def test_mark_result_viewed(db):
-    task = await task_store.add_task(db, user_id=1, title="生成报告")
+    task = await task_store.add_task(db, user_id=1, title="Generate report")
 
     updated = await task_service.mark_result_viewed(db, task["id"], 1)
 
@@ -126,7 +126,7 @@ async def test_mark_result_viewed(db):
 
 @pytest.mark.asyncio
 async def test_recovery_interrupts_zombie_runs_and_tasks(db):
-    task = await task_store.add_task(db, user_id=1, title="生成报告")
+    task = await task_store.add_task(db, user_id=1, title="Generate report")
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
 
     summary = await recover_interrupted_state(db)
@@ -143,9 +143,9 @@ async def test_recovery_interrupts_zombie_runs_and_tasks(db):
 
 @pytest.mark.asyncio
 async def test_recovery_with_partial_result_marks_partial(db):
-    task = await task_store.add_task(db, user_id=1, title="生成报告")
+    task = await task_store.add_task(db, user_id=1, title="Generate report")
     await task_service.start_agent_run(db, task["id"], 1)
-    await task_store.update_task(db, task["id"], 1, result_summary="Excel 汇总已生成，Word 未完成")
+    await task_store.update_task(db, task["id"], 1, result_summary="Excel summary generated, Word incomplete")
 
     summary = await recover_interrupted_state(db)
 
@@ -164,13 +164,13 @@ async def test_finish_run_broadcasts_task_updated_with_session(db, monkeypatch):
         lambda t, d: events.append((t, d)),
     )
 
-    task = await task_store.add_task(db, user_id=1, title="生成报告")
+    task = await task_store.add_task(db, user_id=1, title="Generate report")
     _, run_id = await task_service.start_agent_run(db, task["id"], 1, session_id="sess-1")
 
     # start broadcast
     assert any(t == "task_updated" and d["status"] == "in_progress" for t, d in events)
 
-    await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="报告完成")
+    await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="Report completed")
 
     # terminal broadcast with card payload
     updates = [d for t, d in events if t == "task_updated"]
@@ -178,13 +178,13 @@ async def test_finish_run_broadcasts_task_updated_with_session(db, monkeypatch):
     assert final["task_id"] == task["id"]
     assert final["status"] == "done"
     assert final["session_id"] == "sess-1"
-    assert final["title"] == "生成报告"
-    assert final["result_summary"] == "报告完成"
+    assert final["title"] == "Generate report"
+    assert final["result_summary"] == "Report completed"
 
 
 @pytest.mark.asyncio
 async def test_recovery_is_idempotent(db):
-    task = await task_store.add_task(db, user_id=1, title="生成报告")
+    task = await task_store.add_task(db, user_id=1, title="Generate report")
     await task_service.start_agent_run(db, task["id"], 1)
 
     first = await recover_interrupted_state(db)
@@ -201,17 +201,17 @@ async def test_recovery_is_idempotent(db):
 
 @pytest.mark.asyncio
 async def test_recompletion_rearms_unread_result(db):
-    """第二次 done 必须重新产生"新成果"：result_viewed_at 被重置为未读。"""
+    """The second done must re-arm a "new result": result_viewed_at resets to unread."""
     import datetime
 
     from sqlalchemy import select
 
     from crabagent.core.database import Task
 
-    task = await task_store.add_task(db, user_id=1, title="生成报告")
+    task = await task_store.add_task(db, user_id=1, title="Generate report")
     tid = task["id"]
 
-    # 第一次完成 → 用户查看成果（已读）
+    # First completion → the user views the result (read)
     await task_store.update_task(db, tid, 1, status="done", result_summary="V1")
     row = (await db.execute(select(Task).where(Task.id == tid))).scalar_one()
     row.result_viewed_at = datetime.datetime.now()
@@ -219,21 +219,21 @@ async def test_recompletion_rearms_unread_result(db):
     viewed = await task_store.get_task(db, tid, 1)
     assert viewed["result_viewed_at"] is not None
 
-    # 非终态更新不应打扰已读状态
+    # Non-terminal updates must not disturb the read state
     await task_store.update_task(db, tid, 1, priority="high")
     still_viewed = await task_store.get_task(db, tid, 1)
     assert still_viewed["result_viewed_at"] is not None
 
-    # 第二次完成（重做）→ 成果重新变为未读
-    await task_store.update_task(db, tid, 1, status="done", result_summary="V2 深度版")
+    # Second completion (rework) → the result becomes unread again
+    await task_store.update_task(db, tid, 1, status="done", result_summary="V2 deep dive")
     refreshed = await task_store.get_task(db, tid, 1)
     assert refreshed["result_viewed_at"] is None
-    assert refreshed["result_summary"] == "V2 深度版"
+    assert refreshed["result_summary"] == "V2 deep dive"
 
 
 @pytest.mark.asyncio
 async def test_judge_task_recompletion_rearms_unread_result(db):
-    """completion.judge_task 对再次完成的任务同样重置已读状态。"""
+    """completion.judge_task also resets the read state for a task completed again."""
     import datetime
 
     from sqlalchemy import select
@@ -241,20 +241,20 @@ async def test_judge_task_recompletion_rearms_unread_result(db):
     from crabagent.core.database import Task
     from crabagent.core.task.completion import judge_task
 
-    task = await task_store.add_task(db, user_id=1, title="生成报告")
+    task = await task_store.add_task(db, user_id=1, title="Generate report")
     tid = task["id"]
 
-    # 首次判定为 done，用户已读
+    # First judgement is done; the user has read it
     verdict1 = await judge_task(db, tid, 1)
-    assert verdict1["status"] == "failed"  # 无产物无摘要 → failed，先铺垫状态
+    assert verdict1["status"] == "failed"  # No artifact, no summary → failed; seed the status first
     row = (await db.execute(select(Task).where(Task.id == tid))).scalar_one()
     row.status = "done"
     row.result_summary = "V1"
     row.result_viewed_at = datetime.datetime.now()
     await db.commit()
 
-    # 第二轮：写入了 result_summary（重做的深度版）后重新判定
-    row.result_summary = "V2 深度版"
+    # Second round: re-judge after result_summary is written (the reworked deep dive)
+    row.result_summary = "V2 deep dive"
     await db.commit()
     verdict2 = await judge_task(db, tid, 1)
     assert verdict2["status"] == "done"

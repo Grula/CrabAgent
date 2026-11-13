@@ -59,6 +59,7 @@ def _load_tool_file(path: Path, registry) -> None:
                 description=description or f"Custom tool from {path.name}",
                 parameters=parameters,
                 requires_permission=requires_permission,
+                metadata={"source": "custom"},
             )(wrapped)
 
             run_fn._is_registered = True
@@ -71,13 +72,15 @@ def _load_tool_file(path: Path, registry) -> None:
 def _make_tool_handler(run_fn):
     import inspect
 
-    inspect.signature(run_fn)
+    run_sig = inspect.signature(run_fn)
+    accepts_context = "context" in run_sig.parameters
     is_async = inspect.iscoroutinefunction(run_fn)
 
     if is_async:
 
         async def handler(**kwargs: Any) -> str:
-            kwargs.pop("context", None)
+            if not accepts_context:
+                kwargs.pop("context", None)
             try:
                 result = run_fn(**kwargs)
                 if inspect.isawaitable(result):
@@ -88,10 +91,15 @@ def _make_tool_handler(run_fn):
     else:
 
         def handler(**kwargs: Any) -> str:
-            kwargs.pop("context", None)
+            if not accepts_context:
+                kwargs.pop("context", None)
             try:
                 return str(run_fn(**kwargs))
             except Exception as e:
                 return f"Error: {e}"
+
+    if accepts_context:
+        # Expose run_fn's signature so ToolRegistry.execute injects `context`.
+        handler.__signature__ = run_sig
 
     return handler

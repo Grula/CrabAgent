@@ -1,4 +1,4 @@
-.PHONY: all install dev build frontend static clean distclean docker desktop
+.PHONY: all install dev build frontend static clean distclean docker
 
 all: build
 
@@ -7,7 +7,7 @@ frontend:
 
 static: frontend
 	@mkdir -p src/crabagent/static
-	cp -R frontend/dist/index.html frontend/dist/assets src/crabagent/static/
+	cp -R frontend/dist/index.html frontend/dist/collab-browser.html frontend/dist/assets src/crabagent/static/
 
 install: static
 	pip install -e '.[dev]'
@@ -17,9 +17,6 @@ dev: install
 build: static
 	pip install build
 	python -m build
-
-desktop: static
-	./scripts/build-desktop.sh
 
 clean:
 	rm -rf src/crabagent/static

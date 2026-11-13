@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from crabagent.core.agent.agents import get_delegation_tools, get_memory_tools
-from crabagent.core.agent.tools.registry import ToolRegistry
+from crabagent.core.agent.tools.registry import ToolRegistry, resolve_permission
 
 # Tools a *sub-agent* may never call: delegation plumbing (to avoid unbounded
 # recursion) plus tool self-modification. The main agent legitimately needs
@@ -44,7 +44,7 @@ def filter_tool_registry(
         if name in get_memory_tools():
             filtered._tools[name] = tool
             continue
-        if tool_permissions and tool_permissions.get(name) == "deny":
+        if resolve_permission(tool_permissions, name) == "deny":
             continue
         if use_whitelist and name not in allowed:
             continue

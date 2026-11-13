@@ -133,7 +133,7 @@ async def test_mcp_client_preserves_image_content():
                 SimpleNamespace(text="image ready"),
                 SimpleNamespace(data="aGVsbG8=", mimeType="image/png"),
             ],
-            isError=False,
+            is_error=False,
         )
     )
 

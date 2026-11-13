@@ -125,7 +125,7 @@ CHATGPT_IMAGE_MODELS = [
 PROVIDER_CATALOG: dict[str, dict] = {
     "chatgpt": {
         "base_url": "",
-        "display_name": "ChatGPT 订阅 (Plus/Pro)",
+        "display_name": "ChatGPT Subscription (Plus/Pro)",
         "auth_type": "oauth",
         "models": CHATGPT_MODELS,
     },
@@ -134,9 +134,9 @@ PROVIDER_CATALOG: dict[str, dict] = {
     "anthropic": {"base_url": "https://api.anthropic.com/v1", "display_name": "Anthropic"},
     "zhipu": {
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
-        "display_name": "智谱 GLM",
+        "display_name": "Zhipu GLM",
         "variants": [
-            {"id": "standard", "display_name": "标准版", "base_url": "https://open.bigmodel.cn/api/paas/v4"},
+            {"id": "standard", "display_name": "Standard", "base_url": "https://open.bigmodel.cn/api/paas/v4"},
             {"id": "coding", "display_name": "Coding Plan", "base_url": "https://open.bigmodel.cn/api/coding/paas/v4"},
         ],
     },
@@ -145,34 +145,34 @@ PROVIDER_CATALOG: dict[str, dict] = {
         "base_url": "https://api.minimax.chat/v1",
         "display_name": "MiniMax",
         "variants": [
-            {"id": "cn", "display_name": "国内版", "base_url": "https://api.minimax.chat/v1"},
-            {"id": "intl", "display_name": "国际版", "base_url": "https://api.minimaxi.com/v1"},
+            {"id": "cn", "display_name": "China", "base_url": "https://api.minimax.chat/v1"},
+            {"id": "intl", "display_name": "Global", "base_url": "https://api.minimaxi.com/v1"},
         ],
     },
-    "volcengine": {"base_url": "https://ark.cn-beijing.volces.com/api/v3", "display_name": "火山引擎"},
-    "bailian": {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "display_name": "阿里百炼"},
+    "volcengine": {"base_url": "https://ark.cn-beijing.volces.com/api/v3", "display_name": "Volcengine Ark"},
+    "bailian": {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "display_name": "Alibaba Bailian"},
     "kimi": {
         "base_url": "https://api.moonshot.cn/v1",
         "display_name": "Kimi (Moonshot AI)",
         "variants": [
-            {"id": "standard", "display_name": "Moonshot 开放平台", "base_url": "https://api.moonshot.cn/v1"},
+            {"id": "standard", "display_name": "Moonshot", "base_url": "https://api.moonshot.cn/v1"},
             {"id": "coding", "display_name": "Kimi Code Plan", "base_url": "https://api.kimi.com/coding/v1"},
         ],
     },
     "stepfun": {
         "base_url": "https://api.stepfun.com/v1",
-        "display_name": "阶跃星辰 StepFun",
+        "display_name": "StepFun",
         "variants": [
-            {"id": "cn", "display_name": "国内版", "base_url": "https://api.stepfun.com/v1"},
-            {"id": "global", "display_name": "国际版", "base_url": "https://api.stepfun.ai/v1"},
+            {"id": "cn", "display_name": "China", "base_url": "https://api.stepfun.com/v1"},
+            {"id": "global", "display_name": "Global", "base_url": "https://api.stepfun.ai/v1"},
             {
                 "id": "plan_cn",
-                "display_name": "Step Plan 订阅 (国内)",
+                "display_name": "Step Plan Subscription (China)",
                 "base_url": "https://api.stepfun.com/step_plan/v1",
             },
             {
                 "id": "plan_global",
-                "display_name": "Step Plan 订阅 (国际)",
+                "display_name": "Step Plan Subscription (Global)",
                 "base_url": "https://api.stepfun.ai/step_plan/v1",
             },
         ],

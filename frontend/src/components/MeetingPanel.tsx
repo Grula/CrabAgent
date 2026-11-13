@@ -1,5 +1,4 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { useTranslation } from "react-i18next";
 import { Clock, Users, CheckCircle2, AlertCircle, Sparkles, Send, FileText, X } from "lucide-react";
 import { cn } from "../lib/cn";
 import * as sessionsApi from "../api/sessions";
@@ -23,7 +22,6 @@ interface Props {
 }
 
 export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
-  const { t } = useTranslation();
   const [title, setTitle] = useState("");
   const [participants, setParticipants] = useState("");
   const [notes, setNotes] = useState<MeetingNote[]>([]);
@@ -53,7 +51,7 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
   const analyzeNotes = useCallback(async (allNotes: MeetingNote[]) => {
     const recent = allNotes.slice(-10);
     const text = recent.map((n) => `[${n.timestamp}] ${n.speaker}: ${n.content}`).join("\n");
-    const prompt = `以下是会议记录：\n\n${text}\n\n请分析：\n1. 有哪些 action items（需要人去做的事）？格式：{title, assignee, priority}\n2. 有哪些待确认的问题？\n3. 有哪些明确的决策？\n\n只返回 JSON。`;
+    const prompt = `Here are the meeting notes:\n\n${text}\n\nAnalyse:\n1. What action items are there (things a person must do)? Format: {title, assignee, priority}\n2. What questions are still open?\n3. What decisions are explicit?\n\nReturn JSON only.`;
 
     try {
       await sessionsApi.sendPrompt(sessionId, prompt);
@@ -63,7 +61,7 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
   const handleEnd = useCallback(() => {
     setStatus("ended");
     const summary = notes.map((n) => `[${n.timestamp}] ${n.speaker}: ${n.content}`).join("\n");
-    const prompt = `会议结束。请根据以下记录生成会议纪要，包含摘要、行动项、待确认问题和决策。\n\n${summary}`;
+    const prompt = `The meeting has ended. Write the minutes from the notes below: summary, action items, open questions, and decisions.\n\n${summary}`;
     onPrompt?.(prompt);
   }, [notes, onPrompt]);
 
@@ -80,12 +78,12 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder={t("meeting.titlePlaceholder")}
+            placeholder={"Meeting title…"}
             className="flex-1 bg-transparent text-sm font-medium text-[var(--text-primary)] border-0 outline-none placeholder:text-[var(--text-tertiary)]"
           />
           {status === "active" && (
             <button onClick={handleEnd} className="flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-[var(--danger-bg)] text-[var(--danger)] hover:bg-[var(--danger-border)] transition-colors">
-              <X size={12} /> {t("meeting.end")}
+              <X size={12} /> {"End Meeting"}
             </button>
           )}
         </div>
@@ -95,7 +93,7 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
           <input
             value={participants}
             onChange={(e) => setParticipants(e.target.value)}
-            placeholder={t("meeting.participantsPlaceholder")}
+            placeholder={"Participants…"}
             className="flex-1 bg-transparent border-0 outline-none text-[var(--text-tertiary)] placeholder:text-[var(--text-tertiary)]/50"
           />
         </div>
@@ -137,7 +135,7 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
             <input
               value={inputSpeaker}
               onChange={(e) => setInputSpeaker(e.target.value)}
-              placeholder={t("meeting.speakerPlaceholder")}
+              placeholder={"Speaker"}
               className="w-16 bg-transparent text-[11px] text-[var(--text-tertiary)] border-0 outline-none placeholder:text-[var(--text-tertiary)]/50"
             />
           </div>
@@ -146,7 +144,7 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={t("meeting.notePlaceholder")}
+              placeholder={"Type meeting notes…"}
               rows={2}
               className="flex-1 bg-[var(--bg-tertiary)] text-[12px] text-[var(--text-primary)] px-2 py-1.5 rounded border border-[var(--border)] resize-none outline-none placeholder:text-[var(--text-tertiary)]/50"
             />
@@ -160,7 +158,7 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
       {/* End summary */}
       {status === "ended" && (
         <div className="px-3 py-3 border-t border-[var(--border)] text-center text-[11px] text-[var(--text-tertiary)]">
-          {t("meeting.ended")}
+          {"Meeting ended. AI is generating summary…"}
         </div>
       )}
     </div>

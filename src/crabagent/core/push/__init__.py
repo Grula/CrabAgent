@@ -1,13 +1,13 @@
 """Push notification channel (Bark / ntfy).
 
 Provides:
-- PushNotification — facade for sending (mirrors WeChatNotification style)
+- PushNotification — facade for sending
 - notify_task_event — hook wired into the task event broadcaster so terminal
   and waiting_user task transitions push to the phone automatically
 - Config lives in the ``app_settings`` table under key ``push_config``.
 
-This channel is independent of WeChat: both can be enabled at the same time
-and are dispatched in parallel by the notification router.
+Fired from the task event broadcaster so terminal and waiting_user task
+transitions reach the phone without blocking the broadcast.
 """
 
 from __future__ import annotations
@@ -72,12 +72,12 @@ async def notify_request_created(
     if not cfg.enabled or not cfg.notify_task_waiting:
         return
     label = {
-        "approval": "批准请求",
-        "choice": "选择请求",
-        "input": "提问",
-        "human_step": "人工步骤",
-        "review": "结果确认",
-    }.get(request_type, "请求")
+        "approval": "Approval request",
+        "choice": "Choice request",
+        "input": "Question",
+        "human_step": "Manual step",
+        "review": "Result confirmation",
+    }.get(request_type, "Request")
     url = cfg.deep_link_base.rstrip("/") + "/#/m/approve/" + request_key if cfg.deep_link_base else ""
     _mark_pushed(request_key)
     await PushNotification.send(
@@ -140,9 +140,9 @@ class PushNotification:
         """Push a task terminal-state notification (done/partial/failed/cancelled)."""
         status = task.get("status", "")
         emoji = {"done": "✅", "partial": "🟡", "failed": "❌", "cancelled": "⚪️"}.get(status, "🔔")
-        label = {"done": "完成", "partial": "部分完成", "failed": "失败", "cancelled": "已取消"}.get(status, status)
-        title = f"{emoji} 任务{label}"
-        body = task.get("title", "未知任务")
+        label = {"done": "completed", "partial": "partially done", "failed": "failed", "cancelled": "cancelled"}.get(status, status)
+        title = f"{emoji} Task {label}"
+        body = task.get("title", "Unknown task")
         summary = task.get("result_summary") or task.get("warning_summary") or ""
         if summary:
             body += f"\n{summary[:300]}"
@@ -155,8 +155,8 @@ class PushNotification:
         ``deep_link`` — optional ``#/m/approve/<request_key>`` URL so tapping
         the notification lands directly on the approval/question card.
         """
-        title = "⏸ 任务在等你"
-        body = task.get("title", "未知任务")
+        title = "⏸ A task is waiting for you"
+        body = task.get("title", "Unknown task")
         return await PushNotification.send(title, body, url=deep_link, category="task_waiting")
 
 

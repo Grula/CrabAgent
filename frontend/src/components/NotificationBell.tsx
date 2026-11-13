@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef } from "react";
 import { Bell, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import {
   listNotifications,
   unreadCount,
@@ -46,7 +45,6 @@ function NotificationCard({
   onNotificationAction?: (n: Notification) => void;
   onMarkRead: (id: number) => void;
 }) {
-  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
   const isLong = n.body.length > MAX_PREVIEW_LEN;
@@ -120,9 +118,9 @@ function NotificationCard({
               className="mt-1 text-[10px] flex items-center gap-0.5 text-[var(--brand)] hover:underline"
             >
               {expanded ? (
-                <><ChevronUp size={11} /> 收起</>
+                <><ChevronUp size={11} /> Collapse</>
               ) : (
-                <><ChevronDown size={11} /> 展开全文</>
+                <><ChevronDown size={11} /> Show full text</>
               )}
             </button>
           )}
@@ -140,7 +138,7 @@ function NotificationCard({
             className="text-[10px] flex items-center gap-0.5 text-[var(--brand)] hover:underline"
           >
             <ExternalLink size={10} />
-            查看详情
+            View details
           </button>
         )}
       </div>
@@ -149,7 +147,6 @@ function NotificationCard({
 }
 
 export default function NotificationBell({ onSwitchSession, onNotificationAction }: Props) {
-  const { t } = useTranslation();
   const [count, setCount] = useState(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [open, setOpen] = useState(false);
@@ -194,7 +191,7 @@ export default function NotificationBell({ onSwitchSession, onNotificationAction
     if (open) fetchList();
     const handler = (e: MouseEvent) => {
       const target = e.target as Node;
-      // 面板经 portal 渲染到 body，必须同时排除锚点和面板，否则点击面板内容会被误判为外部点击。
+      // The panel renders into body via portal, so exclude both the anchor and the panel; otherwise clicks inside the panel register as outside clicks.
       if (ref.current?.contains(target) || panelRef.current?.contains(target)) return;
       setOpen(false);
     };
@@ -230,8 +227,8 @@ export default function NotificationBell({ onSwitchSession, onNotificationAction
           "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]",
         )}
-        title={t("notification.title")}
-        aria-label={`${t("notification.title")}${count > 0 ? ` (${count} ${t("notification.unread").toLowerCase()})` : ""}`}
+        title={"Notifications"}
+        aria-label={`${"Notifications"}${count > 0 ? ` (${count} ${"Unread".toLowerCase()})` : ""}`}
       >
         <Bell size={15} />
         {/* Trusted work system: persistent waiting marker (independent of
@@ -240,7 +237,7 @@ export default function NotificationBell({ onSwitchSession, onNotificationAction
         {waitingCount > 0 && (
           <span
             className="absolute -bottom-0.5 -left-0.5 w-2 h-2 rounded-full bg-orange-500 animate-pulse"
-            title={`${waitingCount} 项等待你的处理`}
+            title={`${waitingCount} items waiting for you`}
           />
         )}
         {count > 0 && (
@@ -267,8 +264,8 @@ export default function NotificationBell({ onSwitchSession, onNotificationAction
             {(["unread", "read"] as Tab[]).map((tabKey) => {
               const isActive = tab === tabKey;
               const label = tabKey === "unread"
-                  ? `${t("notification.unread")}${unreadItems.length > 0 ? ` (${unreadItems.length})` : ""}`
-                  : `${t("notification.read")}${readItems.length > 0 ? ` (${readItems.length})` : ""}`;
+                  ? `${"Unread"}${unreadItems.length > 0 ? ` (${unreadItems.length})` : ""}`
+                  : `${"Read"}${readItems.length > 0 ? ` (${readItems.length})` : ""}`;
               return (
                 <button
                   key={tabKey}
@@ -292,7 +289,7 @@ export default function NotificationBell({ onSwitchSession, onNotificationAction
                 onClick={handleMarkAll}
                 className="px-3 py-2 text-[10px] shrink-0 text-[var(--brand)] hover:underline"
               >
-                {t("notification.markAll")}
+                {"Mark all"}
               </button>
             )}
           </div>
@@ -300,8 +297,8 @@ export default function NotificationBell({ onSwitchSession, onNotificationAction
             {displayItems.length === 0 ? (
               <div className="px-4 py-8 text-center text-xs text-[var(--text-tertiary)]">
                 {tab === "unread"
-                  ? t("notification.noUnread")
-                  : t("notification.noRead")}
+                  ? "No unread notifications"
+                  : "No read notifications"}
               </div>
             ) : (
               displayItems.slice(0, 20).map((n) => (

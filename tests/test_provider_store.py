@@ -42,7 +42,7 @@ def test_build_litellm_params_for_openai_compatible_provider_includes_api_key_an
         "custom_llm_provider": "openai",
     }
     assert headers["x-opencode-session"]
-    assert headers["User-Agent"].startswith("crabagent/")
+    assert headers["User-Agent"].startswith("crabagent")
 
 
 def test_opencode_session_id_is_used_when_provided():
@@ -81,7 +81,7 @@ def test_non_opencode_providers_have_no_extra_headers():
 def test_same_type_providers_keep_separate_api_keys():
     first = ProviderInfo(
         name="zhipu-work",
-        display_name="智谱 GLM",
+        display_name="Zhipu GLM",
         provider_type="zhipu",
         api_key="work-key",
         base_url="https://open.bigmodel.cn/api/paas/v4",
@@ -91,7 +91,7 @@ def test_same_type_providers_keep_separate_api_keys():
     )
     second = ProviderInfo(
         name="zhipu-personal",
-        display_name="智谱 GLM",
+        display_name="Zhipu GLM",
         provider_type="zhipu",
         api_key="personal-key",
         base_url="https://open.bigmodel.cn/api/paas/v4",

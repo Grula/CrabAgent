@@ -210,17 +210,17 @@ async def finish_agent_run(
             required_checks = [c for c in all_checks if c.required]
 
             status_labels = {
-                "done": "完成",
-                "partial": "部分完成",
-                "failed": "失败",
-                "waiting_user": "等待用户",
+                "done": "Done",
+                "partial": "Partially done",
+                "failed": "Failed",
+                "waiting_user": "Waiting for user",
             }
             await record_task_event(
                 db,
                 user_id,
                 run.task_id,
                 verdict["status"],
-                f"任务{status_labels.get(verdict['status'], verdict['status'])}",
+                f"Task {status_labels.get(verdict['status'], verdict['status'])}",
                 detail=(final_task.get("result_summary") or final_task.get("warning_summary") or "")[:500],
                 run_id=run_id,
                 data={
@@ -263,7 +263,7 @@ async def finish_agent_run(
         task_values["status"] = (
             TaskStatus.PARTIAL.value if (task.get("result_summary") or result_summary) else TaskStatus.FAILED.value
         )
-        task_values["warning_summary"] = "执行被中断：" + (error or "进程退出")[:500]
+        task_values["warning_summary"] = "Interrupted: " + (error or "process exited")[:500]
 
     task_result = await db.execute(select(Task).where(Task.id == run.task_id))
     task_row = task_result.scalar_one_or_none()
@@ -471,7 +471,7 @@ async def cancel_task(
 
     updated = await _update_task(db, task_id, user_id, status=TaskStatus.CANCELLED.value)
     if updated:
-        await record_task_event(db, user_id, task_id, "cancelled", "任务已取消", detail=reason[:500])
+        await record_task_event(db, user_id, task_id, "cancelled", "Task cancelled", detail=reason[:500])
         broadcast_task_event(
             "task_updated",
             {

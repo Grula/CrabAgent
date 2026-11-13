@@ -7,7 +7,6 @@ import mimetypes
 import os
 import re
 import time
-from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -16,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.agent.context import AgentContext
 from crabagent.core.agent.loop import run_agent
+from crabagent.core.agent.system_prompt import build_system_prompt, is_current_prompt
 from crabagent.core.agent.tools.registry import registry
 from crabagent.core.config import settings
 from crabagent.core.database import User, async_session_factory, get_db
@@ -33,7 +33,6 @@ except Exception:
 try:
     import crabagent.core.agent.tools.collaboration_browser  # noqa: F401
     import crabagent.core.agent.tools.computer  # noqa: F401
-    import crabagent.core.agent.tools.macos_computer  # noqa: F401
 except Exception:
     pass
 
@@ -120,6 +119,7 @@ flowchart LR
   C -->|Yes| E["Show update notice"]
 ```
 """
+
 
 
 def _save_image_temp(data_url: str) -> dict:
@@ -223,9 +223,6 @@ async def prompt_async(
     history_msgs = await get_messages(db, conv.id, branch_id=active_branch)
     user_msg_seq = max((m.sequence for m in history_msgs), default=0) + 1
 
-    # Determine locale early for agent switch messages
-    locale = getattr(user, "locale", None) or settings.language or "en"
-
     # --- Determine effective agent and whether a switch message is needed ---
     effective_agent = req.agent or getattr(conv, "agent", None) or "default"
 
@@ -248,8 +245,7 @@ async def prompt_async(
         if agent_profile:
             switch_msg = build_agent_switch_msg(
                 agent_profile,
-                locale=locale,
-                extra_lines=capability_hint_lines(registry._tools.keys(), locale),
+                extra_lines=capability_hint_lines(registry._tools.keys()),
             )
             switch_seq = user_msg_seq
             await save_message(
@@ -270,8 +266,7 @@ async def prompt_async(
         if default_profile:
             switch_msg = build_agent_switch_msg(
                 default_profile,
-                locale=locale,
-                extra_lines=capability_hint_lines(registry._tools.keys(), locale),
+                extra_lines=capability_hint_lines(registry._tools.keys()),
             )
             switch_seq = user_msg_seq
             await save_message(
@@ -300,23 +295,24 @@ async def prompt_async(
     if _work_changed:
         file_name = req.file_context.split("/")[-1]
         _type_labels = {
-            "document": "Office 文档",
-            "code": "代码文件",
-            "prototype": "原型/HTML",
-            "markdown": "Markdown 文档",
+            "document": "Office document",
+            "code": "code file",
+            "prototype": "prototype/HTML",
+            "markdown": "Markdown document",
         }
-        _type_label = _type_labels.get(req.workspace_type, "文件")
+        _type_label = _type_labels.get(req.workspace_type, "file")
         _hints = {
             "document": (
-                "用户正在编辑此 Office 文档。使用 office_edit 工具修改时无需指定文件路径。\n"
-                "⚠️ 每次修改文档后，请在回复中用「📝 变更摘要：」开头总结你做了哪些更改。"
+                "The user is editing this Office document. Use the office_edit tool to modify it; "
+                "no file path is needed.\n"
+                "⚠️ After every document change, start the reply with \"📝 Change summary:\" and list what you changed."
             ),
-            "code": "用户正在编辑此代码文件。",
-            "prototype": "用户正在编辑此 HTML 原型，右侧有实时预览。",
-            "markdown": "用户正在编辑此 Markdown 文档。",
+            "code": "The user is editing this code file.",
+            "prototype": "The user is editing this HTML prototype; a live preview is shown on the right.",
+            "markdown": "The user is editing this Markdown document.",
         }
-        _hint = _hints.get(req.workspace_type, "用户正在编辑此文件。")
-        ws_content = f"📎 [工作区切换] {_type_label}: {file_name}\n路径: {req.file_context}\n{_hint}"
+        _hint = _hints.get(req.workspace_type, "The user is editing this file.")
+        ws_content = f"📎 [Workspace switch] {_type_label}: {file_name}\nPath: {req.file_context}\n{_hint}"
         ws_seq = user_msg_seq
         await save_message(
             db,
@@ -388,7 +384,6 @@ async def prompt_async(
     workspace = workspace.resolve()
 
     # Reuse cached system prompt if available — preserves LLM prefix cache
-    # Also check if prompt contains locale instruction (for migration from old cache)
     _use_cache = False
     if conv.system_prompt:
         _use_cache = True
@@ -408,127 +403,37 @@ async def prompt_async(
                 "[CACHE] Session %s: MISS (raw translation keys detected in cached prompt)",
                 session_id,
             )
-        if _use_cache and locale != "en":
-            from crabagent.core.i18n import get_locale_instruction
-
-            lang_inst = get_locale_instruction(locale)
-            if lang_inst and lang_inst not in conv.system_prompt:
-                _use_cache = False
-                logger.info(
-                    "[CACHE] Session %s: MISS (old cache without locale instruction, current locale='%s')",
-                    session_id,
-                    locale,
-                )
-        if _use_cache and "task_add" not in conv.system_prompt:
-            # Old cache without the proactive task-creation policy — refresh it.
+        if _use_cache and not is_current_prompt(conv.system_prompt):
+            # Cached under an older base-prompt revision — rebuild it.
             _use_cache = False
             logger.info(
-                "[CACHE] Session %s: MISS (old cache without task creation policy)",
+                "[CACHE] Session %s: MISS (cached prompt is from an older revision)",
                 session_id,
             )
         if _use_cache:
             base_prompt = conv.system_prompt
             logger.info(
-                "[CACHE] Session %s: HIT (prompt_len=%d, prompt_locale='%s', current locale='%s')",
+                "[CACHE] Session %s: HIT (prompt_len=%d)",
                 session_id,
                 len(conv.system_prompt),
-                getattr(conv, "prompt_locale", ""),
-                locale,
             )
 
     if not _use_cache:
-        logger.info(
-            "[CACHE] Session %s: MISS (prompt_locale='%s', current locale='%s')",
-            session_id,
-            getattr(conv, "prompt_locale", ""),
-            locale,
+        logger.info("[CACHE] Session %s: MISS (rebuilding system prompt)", session_id)
+        base_prompt = await build_system_prompt(
+            workspace,
+            user_id=user.id,
+            interface="web",
+            query=(req.message or "")[:500],
         )
-        from crabagent.core.i18n import get_system_prompt_template
-
-        template = get_system_prompt_template(locale)
-        if template:
-            now = datetime.now(UTC)
-            from crabagent.core.i18n import _WEEKDAY_NAMES
-
-            weekday = _WEEKDAY_NAMES.get(locale, {}).get(now.weekday(), now.strftime("%A"))
-            base_prompt = template.format(
-                date=now.strftime("%Y-%m-%d"),
-                weekday=weekday,
-                workspace=workspace,
-            )
-        else:
-            now = datetime.now(UTC)
-            base_prompt = (
-                f"You are CrabAgent, an AI assistant. "
-                f"Today is {now.strftime('%Y-%m-%d %A')}. "
-                f"Working directory: {workspace}"
-            )
-        try:
-            from crabagent.core.agent.agents import build_team_prompt
-
-            team_prompt = await build_team_prompt(locale=locale)
-            if team_prompt:
-                base_prompt += "\n\n" + team_prompt
-        except Exception:
-            pass
-
-        try:
-            from crabagent.core.agent.agents import build_memory_prompt
-
-            mem_prompt = await build_memory_prompt(
-                user.id,
-                query=(req.message or "")[:500],
-                locale=locale,
-                workspace_path=str(workspace),
-            )
-            if mem_prompt:
-                base_prompt += "\n\n" + mem_prompt
-        except Exception:
-            pass
-
-        # Inject project memory
-        try:
-            from crabagent.core.project_memory import load_project_memory
-
-            pm = await load_project_memory(user.id, workspace)
-            if pm:
-                pm_prompt = pm.to_prompt()
-                if pm_prompt:
-                    base_prompt += "\n\n" + pm_prompt
-        except Exception:
-            pass
-
-        # Inject AGENTS.md (workspace-level project rules)
-        try:
-            from crabagent.core.i18n import t
-            from crabagent.core.project_memory import load_agents_md
-
-            agents_md = load_agents_md(workspace, locale=locale)
-            if agents_md:
-                section_title = t("agents_md.section_title", locale)
-                base_prompt += f"\n\n{section_title}\n\n" + agents_md
-        except Exception:
-            pass
-
-        # Append locale instruction to the cached prompt (single system message)
-        try:
-            from crabagent.core.i18n import get_locale_instruction
-
-            lang_inst = get_locale_instruction(locale)
-            if lang_inst:
-                base_prompt += "\n\n" + lang_inst
-        except Exception:
-            pass
 
         # Persist for subsequent messages in the same session
         try:
             from crabagent.serve.services.conversation import update_conversation
 
             async with async_session_factory() as save_db:
-                await update_conversation(save_db, session_id, system_prompt=base_prompt, prompt_locale=locale)
-            logger.info(
-                "[CACHE] Session %s: SAVED (prompt_len=%d, prompt_locale='%s')", session_id, len(base_prompt), locale
-            )
+                await update_conversation(save_db, session_id, system_prompt=base_prompt)
+            logger.info("[CACHE] Session %s: SAVED (prompt_len=%d)", session_id, len(base_prompt))
         except Exception as e:
             logger.warning("[CACHE] Session %s: SAVE FAILED: %s", session_id, e)
 
@@ -540,9 +445,7 @@ async def prompt_async(
         # Preserve the conversation provider if a Goal request omits it.
         provider_name=req.provider or conv.provider or None,
         system_prompt=base_prompt,
-        locale=locale,
     )
-    context.metadata["locale"] = locale
     try:
         from crabagent.core.goals.service import get_current_goal, goal_prompt
         from crabagent.core.goals.tools import register_goal_tools
@@ -712,18 +615,18 @@ Use ordinary Markdown when a visualization is not helpful.
         from crabagent.core.agent.agents import capability_hint_lines
 
         # Capability hints must reflect the FILTERED registry (after deny rules).
-        _cap_lines = capability_hint_lines(context.tool_registry._tools.keys(), locale)
+        _cap_lines = capability_hint_lines(context.tool_registry._tools.keys())
         if effective_agent == "default":
             default_profile = await get_agent("__default__")
             if default_profile:
                 context.messages.append(
-                    build_agent_switch_msg(default_profile, locale=locale, extra_lines=_cap_lines)
+                    build_agent_switch_msg(default_profile, extra_lines=_cap_lines)
                 )
         else:
             agent_def = await get_agent(effective_agent)
             if agent_def:
                 context.messages.append(
-                    build_agent_switch_msg(agent_def, locale=locale, extra_lines=_cap_lines)
+                    build_agent_switch_msg(agent_def, extra_lines=_cap_lines)
                 )
 
         # Inject per-agent lessons (not cached in system prompt)
@@ -823,9 +726,6 @@ Use ordinary Markdown when a visualization is not helpful.
     _last_stale_cleanup = time.time()
 
     _CRITICAL_EVENT_TYPES = {EventType.TOOL_CONFIRM_REQUEST, EventType.USER_INPUT_REQUEST}
-    # Keep short tool calls visible long enough for the desktop pet to receive
-    # and render their specialized animation after SSE debounce.
-    _PET_TOOL_MINIMUM_SECONDS = 1.25
 
     async def _sse_forward(event: AgentEvent):
         nonlocal _fwd_count, _fwd_last_log, _last_stale_cleanup
@@ -836,29 +736,12 @@ Use ordinary Markdown when a visualization is not helpful.
         active_info = request.app.state.active_agents.get(session_id)
         if active_info:
             if event.type in (EventType.TOOL_CONFIRM_REQUEST, EventType.USER_INPUT_REQUEST):
-                active_info["pet_status"] = "waiting"
                 active_info["waiting_type"] = "confirm" if event.type == EventType.TOOL_CONFIRM_REQUEST else "input"
                 active_info["waiting_since"] = now
                 active_info["tool_name"] = event.data.get("tool_name", "")
             elif event.type in (EventType.TOOL_CALL, EventType.SUB_AGENT_TOOL_CALL):
-                active_info["pet_status"] = "working"
                 active_info["tool_name"] = event.data.get("name", "")
-                active_info["pet_tool_active"] = True
-                active_info["pet_tool_min_until"] = now + _PET_TOOL_MINIMUM_SECONDS
                 active_info["updated_at"] = now
-            elif event.type in (EventType.TOOL_RESULT, EventType.SUB_AGENT_TOOL_RESULT):
-                active_info["pet_tool_active"] = False
-                # A fast result must not immediately replace the tool state.
-                if now >= active_info.get("pet_tool_min_until", 0):
-                    active_info["pet_status"] = "thinking"
-                    active_info["updated_at"] = now
-            elif event.type in (EventType.AGENT_START, EventType.ITERATION_START, EventType.THINKING_DELTA):
-                tool_visible = active_info.get("pet_status") == "working" and now < active_info.get(
-                    "pet_tool_min_until", 0
-                )
-                if active_info.get("pet_status") != "waiting" and not tool_visible:
-                    active_info["pet_status"] = "thinking"
-                    active_info["updated_at"] = now
             elif event.type == EventType.AGENT_ERROR:
                 context.metadata["_agent_error"] = True
                 active_info["has_error"] = True
@@ -1063,9 +946,9 @@ Use ordinary Markdown when a visualization is not helpful.
 
     # Always install the confirm callback for interactive (desktop) prompts.
     # The global settings.auto_approve_tools is a process-wide singleton that
-    # can be temporarily set to True by concurrent scheduled tasks or WeChat
-    # message handlers.  Those automated paths build their own AgentContext
-    # without a confirm_callback, so they do not need the global flag at all.
+    # can be temporarily set to True by concurrent scheduled tasks.  Those
+    # automated paths build their own AgentContext without a confirm_callback,
+    # so they do not need the global flag at all.
     # Checking it here caused a race condition where the desktop UI lost its
     # authorization cards whenever a background task was running.
     from crabagent.serve.api.confirm import request_confirmation
@@ -1377,9 +1260,6 @@ Use ordinary Markdown when a visualization is not helpful.
         "user_id": user.id,
         "model": req.model or conv.model or "",
         "status": "running",
-        # The summary endpoint reads pet_status. Set it immediately so the pet
-        # never remains idle while the first model/tool event is pending.
-        "pet_status": "working",
         "updated_at": time.time(),
         "started_at": time.time(),
     }

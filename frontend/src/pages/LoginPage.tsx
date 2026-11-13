@@ -1,18 +1,15 @@
 import { useState } from "react";
 import { Loader2, AlertCircle } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import * as authApi from "../api/auth";
 import { Input, PasswordInput, Button } from "../components/ui";
 import { cn } from "../lib/cn";
-import { SUPPORTED_LANGUAGES } from "../i18n";
 
 interface Props {
   onLogin: () => void;
 }
 
 export default function LoginPage({ onLogin }: Props) {
-  const { t, i18n } = useTranslation();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -27,12 +24,6 @@ export default function LoginPage({ onLogin }: Props) {
       if (mode === "register") await authApi.register(username, password);
       const res = await authApi.login(username, password);
       api.setToken(res.access_token);
-      try {
-        await api.patch("/auth/user", { locale: i18n.language });
-      } catch {
-        api.clearToken();
-        throw new Error(t("language.syncFailed"));
-      }
       onLogin();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed");
@@ -72,10 +63,10 @@ export default function LoginPage({ onLogin }: Props) {
             🦀
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-primary)]">
-            {t("login.title")}
+            {"CrabAgent"}
           </h1>
           <p className="text-xs text-[var(--text-tertiary)] mt-1">
-            {t("login.subtitle")}
+            {"Your AI coding companion"}
           </p>
         </div>
 
@@ -102,26 +93,26 @@ export default function LoginPage({ onLogin }: Props) {
                     : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]",
                 )}
               >
-                {m === "login" ? t("login.signIn") : t("login.signUp")}
+                {m === "login" ? "Sign In" : "Sign Up"}
               </button>
             ))}
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <Input
-              label={t("login.username")}
+              label={"Username"}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder={t("login.usernamePlaceholder")}
+              placeholder={"Choose a username"}
               required
               minLength={2}
               autoComplete="username"
             />
             <PasswordInput
-              label={t("login.password")}
+              label={"Password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder={t("login.passwordPlaceholder")}
+              placeholder={"At least 6 characters"}
               required
               minLength={6}
               autoComplete={
@@ -146,39 +137,19 @@ export default function LoginPage({ onLogin }: Props) {
               fullWidth
               loading={loading}
             >
-              {mode === "login" ? t("login.signIn") : t("login.createAccount")}
+              {mode === "login" ? "Sign In" : "Create Account"}
             </Button>
           </form>
 
           <p className="text-[11px] text-[var(--text-tertiary)] text-center mt-4">
-            {mode === "login" ? t("login.defaultHint") : ""}
+            {mode === "login" ? "Default: admin / xcl1989" : ""}
           </p>
         </div>
 
         <div className="flex items-center justify-between mt-6">
           <p className="text-[11px] text-[var(--text-tertiary)]">
-            {t("login.version")}
+            {"v0.9.8 · Local-first AI agent platform"}
           </p>
-          {/* Language switch on login page */}
-          <div className="flex gap-1">
-            {SUPPORTED_LANGUAGES.map((lang) => (
-              <button
-                key={lang.code}
-                onClick={() => {
-                  i18n.changeLanguage(lang.code);
-                  localStorage.setItem("crabagent-language", lang.code);
-                }}
-                className={cn(
-                  "text-[11px] px-2 py-0.5 rounded transition-colors",
-                  i18n.language === lang.code
-                    ? "text-[var(--brand)] bg-[var(--brand-bg)]"
-                    : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]",
-                )}
-              >
-                {lang.label}
-              </button>
-            ))}
-          </div>
         </div>
       </div>
     </div>

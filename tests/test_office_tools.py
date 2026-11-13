@@ -109,7 +109,7 @@ class TestResolvePathOrCurrent:
         ctx = AgentContext(workspace=Path.cwd())
         path, err = _resolve_path_or_current("", ctx)
         assert path is None
-        assert "请指定" in err
+        assert "Please specify" in err
 
     def test_uses_current_doc_from_metadata(self, tmp_path: Path):
         ctx = AgentContext(workspace=tmp_path)
@@ -164,7 +164,7 @@ class TestValidateBatchCommands:
     def test_invalid_command_type(self):
         cmds, err = _validate_batch_commands([{"command": "explode"}])
         assert err is not None
-        assert "不支持" in err
+        assert "not supported" in err
 
     def test_set_requires_path(self):
         cmds, err = _validate_batch_commands([{"command": "set", "props": {"text": "x"}}])
@@ -205,7 +205,7 @@ class TestValidateBatchCommands:
     def test_non_dict_item_returns_error(self):
         cmds, err = _validate_batch_commands(["bad"])
         assert err is not None
-        assert "必须是对象" in err
+        assert "must be an object" in err
 
     def test_props_not_dict_returns_error(self):
         cmds, err = _validate_batch_commands([{"command": "set", "path": "/", "props": "bad"}])
@@ -228,7 +228,7 @@ class TestOfficeRead:
     async def test_read_text_mode(self, fake_mgr, docx_file: Path):
         ctx = AgentContext(workspace=docx_file.parent)
         result = await office_tools.office_read(str(docx_file), context=ctx)
-        assert "已读取" in result
+        assert "Read " in result
         assert "text content" in result
 
     @pytest.mark.asyncio
@@ -264,7 +264,7 @@ class TestOfficeCreate:
     async def test_create_new_file(self, fake_mgr, tmp_path: Path):
         ctx = AgentContext(workspace=tmp_path)
         result = await office_tools.office_create("new.docx", context=ctx)
-        assert "文档已创建" in result
+        assert "Document created" in result
 
     @pytest.mark.asyncio
     async def test_create_existing_file_returns_message(self, fake_mgr, docx_file: Path):
@@ -322,7 +322,7 @@ class TestOfficeEdit:
         result = await office_tools.office_edit(
             str(docx_file.name), command="explode", element_path="/", context=ctx,
         )
-        assert "不支持" in result
+        assert "Unsupported command" in result
 
 
 # ── office_query ──────────────────────────────────────────────────────
@@ -385,7 +385,7 @@ class TestOfficeBatchEdit:
             commands=[],
             context=ctx,
         )
-        assert "非空数组" in result
+        assert "non-empty array" in result
 
 
 # ── office_help ───────────────────────────────────────────────────────
@@ -395,13 +395,13 @@ class TestOfficeHelp:
     @pytest.mark.asyncio
     async def test_help_returns_content(self, fake_mgr):
         result = await office_tools.office_help("docx")
-        assert "帮助" in result
+        assert "help" in result
         assert "docx" in result
 
     @pytest.mark.asyncio
     async def test_help_invalid_format(self, fake_mgr):
         result = await office_tools.office_help("pdf")
-        assert "请指定" in result
+        assert "Please specify" in result
 
 
 # ── _collect_formulas ─────────────────────────────────────────────────

@@ -1,6 +1,5 @@
 import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { useTranslation } from "react-i18next";
 import {
   Loader2,
   ArrowDown,
@@ -87,7 +86,6 @@ const ChatPanel = forwardRef<HTMLDivElement, Props>(
     },
     _ref,
   ) => {
-    const { t } = useTranslation();
     const [previewImage, setPreviewImage] = useState<string | null>(null);
     const [activeSubAgentId, setActiveSubAgentId] = useState<string | null>(
       null,
@@ -342,11 +340,11 @@ const ChatPanel = forwardRef<HTMLDivElement, Props>(
         onTouchMove={onTouchMoveIntent}
         className="chat-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-3 sm:px-6 py-3 sm:py-4 relative"
       >
-        <div ref={contentRef}>
+        <div ref={contentRef} className="mx-auto w-full max-w-3xl">
         {!connected && messages.length > 0 && (
           <div className="flex items-center justify-center gap-2 mb-3 text-xs text-[var(--warning)] bg-[var(--warning-bg)] border border-[var(--warning-border)] rounded-lg px-3 py-1.5">
             <Loader2 size={12} className="animate-spin" />
-            <span>{t("chatPanel.reconnecting")}</span>
+            <span>{"Reconnecting…"}</span>
           </div>
         )}
 
@@ -377,8 +375,8 @@ const ChatPanel = forwardRef<HTMLDivElement, Props>(
         })}
 
         {sending && !replaying && (
-          <div className="flex items-center px-1 py-1">
-            <span className="text-[var(--brand)] animate-pulse select-none">🦀</span>
+          <div className="flex items-center px-1 py-2" role="status" aria-label="Working">
+            <span className="text-lg animate-pulse select-none">🦀</span>
           </div>
         )}
 
@@ -391,11 +389,12 @@ const ChatPanel = forwardRef<HTMLDivElement, Props>(
           <div className="sticky bottom-4 flex justify-center z-30 pointer-events-none">
             <button
               onClick={jumpToBottom}
-              className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-[var(--brand)] text-white shadow-lg hover:bg-[var(--brand-hover)] transition-all"
+              aria-label="Jump to latest"
+              className="pointer-events-auto flex items-center gap-1.5 h-8 min-w-8 justify-center px-2 rounded-full text-xs font-medium border border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-secondary)] shadow-[var(--shadow-md)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors"
             >
               <ArrowDown size={13} />
               {newMsgHint > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[10px]">
+                <span className="px-1.5 py-0.5 rounded-full bg-[var(--brand)] text-[var(--text-on-brand)] text-[10px]">
                   {newMsgHint > 9 ? "9+" : newMsgHint}
                 </span>
               )}

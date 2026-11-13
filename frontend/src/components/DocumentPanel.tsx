@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { X, Download, RefreshCw, Eye, Clock, FileText, Maximize2, Minimize2, FileSpreadsheet, Presentation, Gauge } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import { cn } from "../lib/cn";
 import { DocumentTimeline, DocOpEvent } from "./DocumentTimeline";
 import { DocumentPreview } from "./DocumentPreview";
@@ -60,7 +59,6 @@ export function DocumentPanel({
   pendingHighlight,
   onAIEdit,
 }: Props) {
-  const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("preview");
   const [editing, setEditing] = useState(false);
   // Local preview override from quick-edit, cleared on next refresh
@@ -112,8 +110,8 @@ export function DocumentPanel({
       if (result.preview_html) {
         setLocalPreviewHtml(result.preview_html);
       }
-      // 不调 onRefreshPreview——API 已返回最新预览，
-      // 再调服务器刷新会让 useEffect 清掉 localPreviewHtml 导致闪回
+      // Don't call onRefreshPreview — the API already returned the latest preview;
+      // refreshing from the server would make the useEffect clear localPreviewHtml and flash back
     } catch (e: any) {
       console.error("Style edit failed:", e);
     }
@@ -262,7 +260,7 @@ export function DocumentPanel({
       const perf = await getOfficeCliPerf();
       const stats = Object.entries(perf.stats || {});
       if (stats.length === 0) {
-        setPerfSummary("暂无 OfficeCLI 性能数据");
+        setPerfSummary("No OfficeCLI performance data yet");
         return;
       }
       const text = stats
@@ -271,7 +269,7 @@ export function DocumentPanel({
       setPerfSummary(text);
     } catch (e) {
       console.error("Load perf failed:", e);
-      setPerfSummary("读取 OfficeCLI 性能数据失败");
+      setPerfSummary("Failed to read OfficeCLI performance data");
     }
   }, []);
 
@@ -281,7 +279,7 @@ export function DocumentPanel({
         <Header fileName="" onClose={onClose} maximized={maximized} onToggleMaximize={onToggleMaximize} />
         <div className="flex-1 flex items-center justify-center text-[var(--text-tertiary)] text-xs gap-2">
           <FileText size={24} opacity={0.3} />
-          <span>{t("document.noDocument")}</span>
+          <span>{"No document open"}</span>
         </div>
       </div>
     );
@@ -314,7 +312,7 @@ export function DocumentPanel({
             )}
           >
             {tabId === "preview" ? <Eye size={12} /> : <Clock size={12} />}
-            {tabId === "preview" ? t("document.tabPreview") : t("document.tabTimeline")}
+            {tabId === "preview" ? "Preview" : "Timeline"}
             {tabId === "timeline" && doc.events.length > 0 && (
               <span className="ml-1 w-4 h-4 flex items-center justify-center rounded-full bg-[var(--accent-bg)] text-[10px] text-[var(--accent)]">
                 {doc.events.length}
@@ -425,10 +423,10 @@ export function DocumentPanel({
         <button
           onClick={handleDownload}
           className="flex items-center gap-1 px-2 py-1 rounded text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)] transition-colors"
-          title={t("document.download")}
+          title={"Download"}
         >
           <Download size={12} />
-          {t("document.download")}
+          {"Download"}
         </button>
         <button
           onClick={() => {
@@ -436,18 +434,18 @@ export function DocumentPanel({
             onRefreshPreview?.();
           }}
           className="flex items-center gap-1 px-2 py-1 rounded text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)] transition-colors"
-          title={t("document.refresh")}
+          title={"Refresh Preview"}
         >
           <RefreshCw size={12} />
-          {t("document.refresh")}
+          {"Refresh Preview"}
         </button>
         <button
           onClick={handleLoadPerf}
           className="flex items-center gap-1 px-2 py-1 rounded text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)] transition-colors"
-          title="OfficeCLI 性能"
+          title="OfficeCLI performance"
         >
           <Gauge size={12} />
-          性能
+          Performance
         </button>
       </div>
     </div>
@@ -460,13 +458,12 @@ function Header({ fileName, onClose, maximized, onToggleMaximize }: {
   maximized?: boolean;
   onToggleMaximize?: () => void;
 }) {
-  const { t } = useTranslation();
   return (
     <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
       <div className="flex items-center gap-2 min-w-0">
         <FileIcon fileName={fileName} />
         <span className="text-sm font-medium truncate">
-          {fileName || t("document.title")}
+          {fileName || "Document"}
         </span>
       </div>
       <div className="flex items-center gap-0.5 shrink-0">
@@ -474,7 +471,7 @@ function Header({ fileName, onClose, maximized, onToggleMaximize }: {
           <button
             onClick={onToggleMaximize}
             className="p-1 rounded hover:bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
-            title={maximized ? t("document.restore") : t("document.maximize")}
+            title={maximized ? "Restore" : "Maximize"}
           >
             {maximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>

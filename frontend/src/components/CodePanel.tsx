@@ -1,5 +1,4 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { useTranslation } from "react-i18next";
 import { Save, Code, AlertTriangle } from "lucide-react";
 import { cn } from "../lib/cn";
 import { CodeTabs } from "./CodeTabs";
@@ -36,7 +35,6 @@ function detectLanguage(name: string): string {
 }
 
 export function CodePanel({ initialPath, initialContent, className, workMode }: Props) {
-  const { t } = useTranslation();
   const [tabs, setTabs] = useState<CodeTabState[]>(() => initialPath && initialContent !== undefined
     ? [{ path: initialPath, name: initialPath.split("/").pop() || initialPath, content: initialContent, originalContent: initialContent, modified: false, language: detectLanguage(initialPath) }]
     : [],
@@ -153,7 +151,7 @@ export function CodePanel({ initialPath, initialContent, className, workMode }: 
         <div className="flex-1 flex items-center justify-center text-[var(--text-tertiary)]">
           <div className="text-center">
             <Code size={28} className="mx-auto mb-2 opacity-30" />
-            <p className="text-sm">{t("codePanel.selectFile")}</p>
+            <p className="text-sm">{"Select a file from the file browser"}</p>
           </div>
         </div>
       )}
@@ -181,7 +179,7 @@ export function CodePanel({ initialPath, initialContent, className, workMode }: 
               className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] text-[var(--accent)] hover:bg-[var(--accent-bg)] transition-colors disabled:opacity-50"
             >
               <Save size={10} />
-              {saving ? "Saving..." : t("common.save")}
+              {saving ? "Saving..." : "Save"}
             </button>
           )}
         </div>

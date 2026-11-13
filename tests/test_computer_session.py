@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from crabagent.core.agent.tools import computer, macos_computer
+from crabagent.core.agent.tools import computer
 from crabagent.core.computer import session as module
 
 
@@ -80,28 +80,6 @@ async def test_browser_confirmation_wait_is_excluded(clock, monkeypatch):
     monkeypatch.setattr(computer, "_bridge_request", bridge)
     await computer.computer_act("obs", [{"type": "click_point", "x": 1, "y": 1}], ctx)
     assert ctx.metadata["_computer_session"].active == 4
-
-
-@pytest.mark.asyncio
-async def test_macos_confirmation_wait_is_excluded(clock, monkeypatch):
-    ctx = SimpleNamespace(metadata={})
-    calls = []
-
-    async def approve(*args):
-        clock.now += 1200
-        return True
-
-    def bridge(command, *args, **kwargs):
-        calls.append(command)
-        clock.now += 2
-        if len(calls) == 1:
-            return {"error": "APP_NOT_ALLOWLISTED: com.example.app"}
-        return {"ok": True}
-
-    ctx.confirm_callback = approve
-    monkeypatch.setattr(macos_computer, "_bridge_request", bridge)
-    await macos_computer._input_with_allow_flow("macos_activate", {}, ctx, "macos_activate", 0)
-    assert ctx.metadata["_computer_session"].active == 6
 
 
 @pytest.mark.asyncio

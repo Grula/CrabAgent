@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TITLE_PROMPT = (
-    "Generate a concise 4-8 word title for the following conversation exchange. "
+    "Write a concise 4-8 word title naming the main topic or task of the conversation below. "
     "Use the same language as the user message. "
     "Output ONLY the title text — no quotes, no prefix, no punctuation at the end.\n\n"
     "User: {user}\n\n"
@@ -193,7 +193,7 @@ def _first_assistant_text(messages: list[dict]) -> str:
 
 def _is_default_title(title: str) -> bool:
     """A 'default' title is one that the system auto-assigned at creation,
-    e.g. 'Conversation 1', 'New Chat', '会话 1'."""
+    e.g. 'Conversation 1', 'New Chat', 'Untitled'."""
     if not title:
         return True
     t = title.strip().lower()
@@ -202,15 +202,13 @@ def _is_default_title(title: str) -> bool:
         "new chat",
         "untitled",
         "conversation",
-        "新对话",
-        "未命名",
     }
     if t in defaults:
         return True
-    # 'conversation N' / '会话 N' patterns
+    # 'conversation N' / 'chat N' patterns
     import re
 
-    if re.match(r"^(conversation|会话|对话|chat)\s*#?\d+$", t):
+    if re.match(r"^(conversation|chat)\s*#?\d+$", t):
         return True
     return False
 
@@ -219,8 +217,8 @@ def _clean_title(title: str) -> str:
     import re
 
     t = title.strip().strip("\"'`")
-    # Strip leading "Title:" / "标题:" if the model echoed it
-    t = re.sub(r"^(title|标题)\s*[:：]\s*", "", t, flags=re.IGNORECASE)
+    # Strip leading "Title:" if the model echoed it
+    t = re.sub(r"^title\s*[:：]\s*", "", t, flags=re.IGNORECASE)
     # Strip trailing punctuation that's just visual noise
     t = re.sub(r"[.。!!?？]+$", "", t)
     # Collapse whitespace

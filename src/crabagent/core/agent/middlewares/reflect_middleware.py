@@ -259,7 +259,6 @@ _READ_TOOLS = frozenset({
 })
 
 _KEY_WORDS = frozenset({
-    "重构", "分析", "设计", "实现", "调试",
     "refactor", "analyze", "design", "implement", "debug",
 })
 

@@ -51,9 +51,9 @@ async def delegate_task(agent_name: str, task: str, context=None) -> str:
     metadata={"source": "builtin", "category": "agent"},
 )
 async def list_agents() -> str:
-    from crabagent.core.agent.agents import load_agent_registry
+    from crabagent.core.agent.agents import is_internal_profile, load_agent_registry
 
-    agents = await load_agent_registry()
+    agents = [a for a in await load_agent_registry() if not is_internal_profile(a["name"])]
     if not agents:
         return "No agents available."
 
@@ -392,9 +392,9 @@ async def plan_task(task: str, context=None) -> str:
 
     import json as _json
 
-    from crabagent.core.agent.agents import load_agent_registry
+    from crabagent.core.agent.agents import is_internal_profile, load_agent_registry, summarize_denied_tools
 
-    agents = await load_agent_registry()
+    agents = [a for a in await load_agent_registry() if not is_internal_profile(a["name"])]
     if not agents:
         return "Error: no agents available. Use list_agents."
 
@@ -404,19 +404,23 @@ async def plan_task(task: str, context=None) -> str:
         denied = [k for k, v in perms.items() if v == "deny"]
         perm_info = ""
         if denied:
-            perm_info = f" (restricted: {', '.join(denied)})"
+            perm_info = f" (restricted: {summarize_denied_tools(denied)})"
         agent_lines.append(f"- **{a['display_name']}** (`{a['name']}`): {a['role']}. {a['goal']}{perm_info}")
     agent_text = "\n".join(agent_lines)
 
     plan_prompt = (
-        "You are a task planner. Break this task into steps for specialized agents.\n\n"
+        "You are planning work for a team of specialized agents. Split the task below into the "
+        "fewest steps that get it done well.\n\n"
         f"## Available Agents\n{agent_text}\n\n"
         f"## Task\n{task}\n\n"
         "Rules:\n"
-        "1. Each step uses one available agent\n"
-        "2. Independent steps run in parallel; use depends_on for ordering\n"
-        "3. Be specific in each step's task description\n"
-        "4. Use 1-5 steps\n\n"
+        "1. Each step is done by exactly one available agent; never give a step to an agent whose "
+        "restricted tools it would need\n"
+        "2. Steps without depends_on run in parallel; add depends_on only when a step needs another "
+        "step's result\n"
+        "3. Write each step's task so it stands on its own: the goal, the inputs it needs (paths, "
+        "URLs, names) and what to return\n"
+        "4. Use 1-5 steps; one step covers one file or one concern\n\n"
         "Output ONLY a JSON array:\n"
         '[{"id":"s1","agent_name":"researcher","task":"search X","depends_on":[]}]\n'
         "No other text before or after."

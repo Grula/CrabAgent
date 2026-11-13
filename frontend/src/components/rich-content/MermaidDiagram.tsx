@@ -50,11 +50,11 @@ export function MermaidDiagram({ source, isStreaming = false }: { source: string
         if (/Syntax error in text/i.test(svg)) throw new Error("Mermaid syntax error");
         if (active) setState({ svg });
       })
-      .catch(() => active && setState({ error: "无法解析 Mermaid 图，请检查语法。" }));
+      .catch(() => active && setState({ error: "Could not parse the Mermaid diagram. Check the syntax." }));
     return () => { active = false; };
   }, [id, isStreaming, source]);
 
-  return <VisualizationFrame title="流程图" source={source}>
-    {state.svg ? <div className="mermaid-diagram" dangerouslySetInnerHTML={{ __html: state.svg }} /> : state.error ? <div className="visualization-error"><AlertTriangle size={17} /><span>{state.error}</span></div> : <div className="visualization-loading"><Loader2 size={16} className="animate-spin" />{isStreaming ? "等待图表内容完成…" : "正在生成图表…"}</div>}
+  return <VisualizationFrame title="Flowchart" source={source}>
+    {state.svg ? <div className="mermaid-diagram" dangerouslySetInnerHTML={{ __html: state.svg }} /> : state.error ? <div className="visualization-error"><AlertTriangle size={17} /><span>{state.error}</span></div> : <div className="visualization-loading"><Loader2 size={16} className="animate-spin" />{isStreaming ? "Waiting for chart content…" : "Generating chart…"}</div>}
   </VisualizationFrame>;
 }

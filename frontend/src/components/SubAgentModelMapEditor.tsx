@@ -7,7 +7,6 @@
  * a different provider.
  */
 
-import { useTranslation } from "react-i18next";
 import { Plus, X } from "lucide-react";
 import ModelSelector from "./ModelSelector";
 import type { ProviderModels } from "../hooks/useModelSelector";
@@ -60,8 +59,6 @@ interface Props {
 }
 
 export function SubAgentModelMapEditor({ rows, onChange, providerModels }: Props) {
-  const { t } = useTranslation();
-
   const updateRow = (idx: number, patch: Partial<ModelMapRow>) => {
     onChange(rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
   };
@@ -81,7 +78,7 @@ export function SubAgentModelMapEditor({ rows, onChange, providerModels }: Props
     <div className="flex flex-col gap-2">
       {rows.length === 0 && (
         <p className="text-xs text-[var(--text-tertiary)] italic">
-          {t("settingsPage.subAgentMapEmpty")}
+          {"No mappings. Sub-agents will use their own default models."}
         </p>
       )}
       {rows.map((row, idx) => (
@@ -113,7 +110,7 @@ export function SubAgentModelMapEditor({ rows, onChange, providerModels }: Props
             type="button"
             onClick={() => removeRow(idx)}
             className="shrink-0 p-1.5 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--danger)] hover:bg-[var(--danger)]/10 transition-colors"
-            title={t("common.delete")}
+            title={"Delete"}
           >
             <X size={14} />
           </button>
@@ -121,7 +118,7 @@ export function SubAgentModelMapEditor({ rows, onChange, providerModels }: Props
       ))}
       <Button variant="secondary" size="sm" onClick={addRow} className="self-start mt-1">
         <Plus size={14} />
-        {t("settingsPage.subAgentMapAdd")}
+        {"Add mapping"}
       </Button>
     </div>
   );

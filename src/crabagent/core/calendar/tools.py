@@ -20,7 +20,7 @@ def register_calendar_tools(registry):
         description=(
             "Add a calendar event. Use when the user mentions a meeting, "
             "appointment, or scheduled activity. "
-            "Examples: '明天下午3点开会', '下周二有个培训'."
+            "Examples: 'meeting tomorrow at 3pm', 'training next Tuesday'."
         ),
         parameters={
             "type": "object",
@@ -65,7 +65,7 @@ def register_calendar_tools(registry):
 
         start_dt = _parse_datetime(start_time)
         if not start_dt:
-            return f"❌ 无法解析时间: {start_time}"
+            return f"❌ Could not parse the time: {start_time}"
 
         end_dt = _parse_datetime(end_time) if end_time else None
 
@@ -89,19 +89,19 @@ def register_calendar_tools(registry):
                 source="agent",
                 reminder_minutes=reminder_minutes,
             )
-        parts = [f"📅 事件已创建: **{title}**"]
+        parts = [f"📅 Event created: **{title}**"]
         parts.append(f"⏰ {start_dt.strftime('%m-%d %H:%M') if not all_day else start_dt.strftime('%m-%d')}")
         if location:
             parts.append(f"📍 {location}")
         if reminder_minutes > 0:
-            parts.append(f"🔔 提前{reminder_minutes}分钟提醒")
+            parts.append(f"🔔 Reminder {reminder_minutes} min before")
         return " | ".join(parts)
 
     @registry.register(
         name="calendar_list",
         description=(
             "List calendar events in a date range (includes task deadlines). "
-            "Use when the user asks '这周有什么安排', '明天有什么会议', etc."
+            "Use when the user asks 'what is on my schedule this week', 'any meetings tomorrow', etc."
         ),
         parameters={
             "type": "object",
@@ -134,9 +134,9 @@ def register_calendar_tools(registry):
             events = await list_events(db, user_id, start_dt, end_dt + datetime.timedelta(days=1))
 
         if not events:
-            return f"📅 {start_dt.strftime('%m-%d')} 到 {end_dt.strftime('%m-%d')} 没有事件。"
+            return f"📅 No events between {start_dt.strftime('%m-%d')} and {end_dt.strftime('%m-%d')}."
 
-        lines = [f"📅 {start_dt.strftime('%m-%d')} ~ {end_dt.strftime('%m-%d')} 事件列表:"]
+        lines = [f"📅 Events between {start_dt.strftime('%m-%d')} and {end_dt.strftime('%m-%d')}:"]
         current_day = ""
         for e in events:
             day = e["start_time"][:10] if e["start_time"] else "?"
@@ -162,7 +162,7 @@ def register_calendar_tools(registry):
         name="calendar_today",
         description=(
             "Get today's overview: events, due tasks, and free time slots. "
-            "Use when the user asks '今天有什么安排'."
+            "Use when the user asks 'what is on my schedule today'."
         ),
         parameters={"type": "object", "properties": {}},
     )
@@ -174,7 +174,7 @@ def register_calendar_tools(registry):
         async with async_session_factory() as db:
             overview = await get_today_overview(db, user_id)
 
-        lines = [f"📅 {overview['date']} 今日概览\n"]
+        lines = [f"📅 Today's overview — {overview['date']}\n"]
         lines.append(f"📊 {overview['summary']}\n")
 
         # Events
@@ -182,7 +182,7 @@ def register_calendar_tools(registry):
         all_day = [e for e in overview["events"] if e.get("all_day")]
 
         if timed:
-            lines.append("🕐 日程:")
+            lines.append("🕐 Schedule:")
             for e in timed:
                 time_str = ""
                 if e["start_time"]:
@@ -200,14 +200,14 @@ def register_calendar_tools(registry):
             lines.append("")
 
         if all_day:
-            lines.append("📌 全天/截止:")
+            lines.append("📌 All-day / due:")
             for e in all_day:
                 lines.append(f"  {e['title']}")
             lines.append("")
 
         # Free slots
         if overview["free_slots"]:
-            lines.append("🟢 空闲时段:")
+            lines.append("🟢 Free slots:")
             for slot in overview["free_slots"]:
                 try:
                     s = datetime.datetime.fromisoformat(slot["start"])
@@ -273,14 +273,14 @@ def register_calendar_tools(registry):
             kwargs["reminder_minutes"] = reminder_minutes
 
         if not kwargs:
-            return "⚠️ 没有需要更新的字段。"
+            return "⚠️ No fields to update."
 
         user_id = _get_user_id(context)
         async with async_session_factory() as db:
             e = await update_event(db, id, user_id, **kwargs)
         if e:
-            return f"✅ 事件已更新: **{e['title']}**"
-        return f"❌ 事件 {id} 不存在。"
+            return f"✅ Event updated: **{e['title']}**"
+        return f"❌ Event {id} not found."
 
     @registry.register(
         name="calendar_delete",
@@ -300,7 +300,7 @@ def register_calendar_tools(registry):
         user_id = _get_user_id(context)
         async with async_session_factory() as db:
             ok = await delete_event(db, id, user_id)
-        return f"🗑️ 事件 {id} 已删除。" if ok else f"❌ 事件 {id} 不存在。"
+        return f"🗑️ Event {id} deleted." if ok else f"❌ Event {id} not found."
 
 
 # ---------------------------------------------------------------------------

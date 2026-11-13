@@ -72,5 +72,4 @@ def update_agents_md(content: str, context=None) -> str:
 
     from crabagent.core.project_memory import save_agents_md
 
-    locale = context.metadata.get("locale", context.locale or "en")
-    return save_agents_md(context.workspace, content, locale=locale)
+    return save_agents_md(context.workspace, content)

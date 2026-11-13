@@ -250,7 +250,7 @@ async def test_run_agent_reports_failure_and_resets_auto_approve(monkeypatch: py
 
     assert session_id == "sess-err"
     assert captured["commit"][2] == "bad agent"
-    assert captured["notification"][2].startswith("执行失败")
+    assert captured["notification"][2].startswith("Execution failed")
     assert settings_obj.auto_approve_tools is False
 
 
@@ -433,18 +433,18 @@ async def test_create_notification_persists_and_pushes(monkeypatch: pytest.Monke
         async def commit(self):
             committed["count"] += 1
 
-    async def fake_push(category, title, body, conversation_id):
-        pushed.append((category, title, body, conversation_id))
+    async def fake_send(title, body="", url="", category=""):
+        pushed.append((title, body, category))
 
     monkeypatch.setattr("crabagent.serve.scheduler.async_session_factory", lambda: FakeSession())
     monkeypatch.setattr("crabagent.core.database.Notification", FakeNotification)
-    monkeypatch.setattr(service, "_push_to_wechat", fake_push)
+    monkeypatch.setattr("crabagent.core.push.PushNotification.send", fake_send)
 
     await service._create_notification(1, "Title", "Body", "conv-1", category="scheduled_task")
 
     assert added[0].title == "Title"
     assert committed["count"] == 1
-    assert pushed == [("scheduled_task", "Title", "Body", "conv-1")]
+    assert pushed == [("🔔 Title", "Body", "scheduled_task")]
 
 
 @pytest.mark.asyncio
@@ -468,12 +468,12 @@ async def test_create_notification_skips_push_without_category(monkeypatch: pyte
         async def commit(self):
             return None
 
-    async def bad_push(*args, **kwargs):
+    async def bad_send(*args, **kwargs):
         raise AssertionError("should not push")
 
     monkeypatch.setattr("crabagent.serve.scheduler.async_session_factory", lambda: FakeSession())
     monkeypatch.setattr("crabagent.core.database.Notification", FakeNotification)
-    monkeypatch.setattr(service, "_push_to_wechat", bad_push)
+    monkeypatch.setattr("crabagent.core.push.PushNotification.send", bad_send)
 
     await service._create_notification(1, "Title", "Body", "conv-1", category="")
 

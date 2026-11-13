@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { useTranslation } from "react-i18next";
 import { X as XIcon, Mail, Check, Loader2 } from "lucide-react";
 import * as emailApi from "../api/email";
 import { Button, Input } from "./ui";
@@ -10,7 +9,6 @@ interface Props {
 }
 
 export default function EmailPanel({ onClose }: Props) {
-  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -40,9 +38,9 @@ export default function EmailPanel({ onClose }: Props) {
     try {
       const result = await emailApi.saveEmailConfig(config);
       setConfig((prev) => ({ ...prev, ...result }));
-      toast.success(t("email.saved"));
+      toast.success("Email configuration saved");
     } catch {
-      toast.error(t("email.failedToSave"));
+      toast.error("Failed to save");
     } finally {
       setSaving(false);
     }
@@ -54,7 +52,7 @@ export default function EmailPanel({ onClose }: Props) {
       const result = await emailApi.testEmailConnection();
       toast.success(result.result);
     } catch {
-      toast.error(t("email.connectionFailed"));
+      toast.error("Connection test failed");
     } finally {
       setTesting(false);
     }
@@ -68,7 +66,7 @@ export default function EmailPanel({ onClose }: Props) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
         <div className="p-8 rounded-xl bg-[var(--bg-primary)] text-sm text-[var(--text-tertiary)]">
-          {t("common.loading")}
+          {"Loading…"}
         </div>
       </div>
     );
@@ -82,7 +80,7 @@ export default function EmailPanel({ onClose }: Props) {
           <div className="flex items-center gap-2">
             <Mail size={16} className="text-[var(--accent)]" />
             <span className="text-sm font-semibold text-[var(--text-primary)]">
-              {t("email.title")}
+              {"Email Configuration"}
             </span>
           </div>
           <button
@@ -98,13 +96,13 @@ export default function EmailPanel({ onClose }: Props) {
           {/* IMAP Section */}
           <div>
             <h3 className="text-xs font-semibold text-[var(--text-primary)] uppercase tracking-wide mb-2">
-              {t("email.incoming")}
+              {"INCOMING (IMAP)"}
             </h3>
             <div className="space-y-2">
               <div className="grid grid-cols-3 gap-2">
                 <div className="col-span-2">
                   <Input
-                    placeholder={t("email.phImapHost")}
+                    placeholder={"imap.example.com"}
                     value={config.imap_host}
                     onChange={(e) => update("imap_host", e.target.value)}
                   />
@@ -117,13 +115,13 @@ export default function EmailPanel({ onClose }: Props) {
                 />
               </div>
               <Input
-                placeholder={t("email.phEmail")}
+                placeholder={"Email address"}
                 value={config.imap_user}
                 onChange={(e) => update("imap_user", e.target.value)}
               />
               <Input
                 type="password"
-                placeholder={t("email.phPassword")}
+                placeholder={"Password / App Password"}
                 value={config.imap_pass}
                 onChange={(e) => update("imap_pass", e.target.value)}
               />
@@ -133,13 +131,13 @@ export default function EmailPanel({ onClose }: Props) {
           {/* SMTP Section */}
           <div>
             <h3 className="text-xs font-semibold text-[var(--text-primary)] uppercase tracking-wide mb-2">
-              {t("email.outgoing")}
+              {"OUTGOING (SMTP)"}
             </h3>
             <div className="space-y-2">
               <div className="grid grid-cols-3 gap-2">
                 <div className="col-span-2">
                   <Input
-                    placeholder={t("email.phSmtpHost")}
+                    placeholder={"smtp.example.com"}
                     value={config.smtp_host}
                     onChange={(e) => update("smtp_host", e.target.value)}
                   />
@@ -152,13 +150,13 @@ export default function EmailPanel({ onClose }: Props) {
                 />
               </div>
               <Input
-                placeholder={t("email.phEmail")}
+                placeholder={"Email address"}
                 value={config.smtp_user}
                 onChange={(e) => update("smtp_user", e.target.value)}
               />
               <Input
                 type="password"
-                placeholder={t("email.phPassword")}
+                placeholder={"Password / App Password"}
                 value={config.smtp_pass}
                 onChange={(e) => update("smtp_pass", e.target.value)}
               />
@@ -168,7 +166,7 @@ export default function EmailPanel({ onClose }: Props) {
           {/* Options */}
           <div>
             <h3 className="text-xs font-semibold text-[var(--text-primary)] uppercase tracking-wide mb-2">
-              {t("email.options")}
+              {"OPTIONS"}
             </h3>
             <div className="space-y-2">
               <div className="flex items-center gap-2">
@@ -180,12 +178,12 @@ export default function EmailPanel({ onClose }: Props) {
                   className="cursor-pointer accent-[var(--accent)]"
                 />
                 <label htmlFor="email_enabled" className="text-xs text-[var(--text-secondary)] cursor-pointer">
-                  {t("email.enableIntegration")}
+                  {"Enable email integration"}
                 </label>
               </div>
               <div className="grid grid-cols-3 gap-2 items-center">
                 <label className="text-xs text-[var(--text-secondary)]">
-                  {t("email.checkInterval")}
+                  {"Check interval (s)"}
                 </label>
                 <Input
                   type="number"
@@ -205,14 +203,14 @@ export default function EmailPanel({ onClose }: Props) {
             disabled={testing || !config.imap_host}
           >
             {testing ? <Loader2 size={14} className="animate-spin" /> : null}
-            {testing ? t("email.testing") : t("email.testConnection")}
+            {testing ? "Testing…" : "Test Connection"}
           </Button>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={onClose}>
-              {t("common.cancel")}
+              {"Cancel"}
             </Button>
             <Button variant="brand" onClick={handleSave} disabled={saving}>
-              {saving ? t("email.saving") : t("common.save")}
+              {saving ? "Saving…" : "Save"}
             </Button>
           </div>
         </div>

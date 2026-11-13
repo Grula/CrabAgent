@@ -31,22 +31,6 @@ class TestToolSets:
         assert "handoff_to" in tools
 
 
-# ── _translate_agent_field ────────────────────────────────────────────
-
-
-class TestTranslateAgentField:
-    def test_returns_original_when_no_translation(self):
-        result = agents_module._translate_agent_field("unknown_agent", "role", "Original Role", "en")
-        assert result == "Original Role"
-
-    def test_returns_translated_when_available(self):
-        # 'researcher' agent likely has zh-CN translations
-        result = agents_module._translate_agent_field("researcher", "role", "Web Researcher", "zh-CN")
-        # Should return something (either translated or fallback)
-        assert isinstance(result, str)
-        assert len(result) > 0
-
-
 # ── build_agent_switch_msg ────────────────────────────────────────────
 
 
@@ -60,7 +44,7 @@ class TestBuildAgentSwitchMsg:
             "backstory": "Expert developer",
             "icon": "💻",
         }
-        msg = agents_module.build_agent_switch_msg(agent_def, locale="en")
+        msg = agents_module.build_agent_switch_msg(agent_def)
 
         assert msg["role"] == "user"
         assert msg["agent"] == "coder"
@@ -90,16 +74,10 @@ class TestBuildSystemPrompt:
             "goal": "Accurate results",
             "backstory": "Experienced researcher",
         }
-        prompt = agents_module._build_system_prompt(agent_def, locale="en")
+        prompt = agents_module._build_system_prompt(agent_def)
 
         assert isinstance(prompt, str)
         assert len(prompt) > 0
-
-    def test_load_list_falls_back_to_english_for_missing_locale(self):
-        items = agents_module._load_list("zz-ZZ", "team_prompt.when")
-
-        assert isinstance(items, list)
-        assert len(items) > 0
 
     def test_includes_shared_instruction(self):
         agent_def = {
@@ -108,7 +86,7 @@ class TestBuildSystemPrompt:
             "goal": "g",
             "backstory": "",
         }
-        prompt = agents_module._build_system_prompt(agent_def, has_shared=True, locale="en")
+        prompt = agents_module._build_system_prompt(agent_def, has_shared=True)
         assert len(prompt) > 0
 
     def test_includes_help_instruction(self):
@@ -118,7 +96,7 @@ class TestBuildSystemPrompt:
             "goal": "g",
             "backstory": "",
         }
-        prompt = agents_module._build_system_prompt(agent_def, can_request_help=True, locale="en")
+        prompt = agents_module._build_system_prompt(agent_def, can_request_help=True)
         assert len(prompt) > 0
 
 
@@ -366,6 +344,45 @@ class TestSpawnSubAgent:
         assert "not found" in result
 
     @pytest.mark.asyncio
+    async def test_sub_agent_inherits_parent_workspace(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+        """The sub-agent must operate in the parent's resolved workspace."""
+        agent_def = {
+            "name": "coder",
+            "display_name": "Code Expert",
+            "role": "Write code",
+            "goal": "Clean code",
+            "backstory": "",
+            "model": "",
+            "allow_delegation": False,
+            "tool_permissions": {},
+        }
+        monkeypatch.setattr(agents_module, "get_agent", _async_return(agent_def))
+        monkeypatch.setattr(agents_module, "_classify_task", lambda task: "code")
+        monkeypatch.setattr(agents_module, "inject_agent_lessons", _async_return("prompt"))
+        monkeypatch.setattr(agents_module, "_load_shared_context", _async_return(""))
+        monkeypatch.setattr(agents_module, "load_sub_agent_model_map", _async_return({}))
+
+        captured = {}
+
+        async def fake_run_agent(context, query):
+            captured["sub"] = context
+            context.messages.append({"role": "assistant", "content": "done"})
+            return context.messages
+
+        monkeypatch.setattr("crabagent.core.agent.loop.run_agent", fake_run_agent)
+
+        project = tmp_path / "project"
+        project.mkdir()
+        # Deliberately un-normalised: '.../project/../project' resolves to 'project',
+        # so this pins the sub-agent workspace to the *resolved* parent workspace.
+        parent = AgentContext(workspace=Path(str(project) + "/../" + project.name))
+
+        await agents_module.spawn_sub_agent("coder", "fix the bug", parent)
+
+        assert "sub" in captured
+        assert captured["sub"].workspace == project.resolve()
+
+    @pytest.mark.asyncio
     async def test_runs_agent_and_returns_result(self, monkeypatch: pytest.MonkeyPatch):
         agent_def = {
             "name": "coder",
@@ -508,22 +525,3 @@ def _async_return(value):
         return value
 
     return inner
-
-
-class TestTeamPromptLocalization:
-    @pytest.mark.asyncio
-    async def test_team_prompt_uses_chinese_translations(self, monkeypatch):
-        async def registry():
-            return [{
-                "name": "coder",
-                "display_name": "Code Expert",
-                "role": "Write code",
-                "goal": "Ship fixes",
-                "tool_permissions": {},
-            }]
-
-        monkeypatch.setattr(agents_module, "load_agent_registry", registry)
-        prompt = await agents_module.build_team_prompt(locale="zh-CN")
-
-        assert "## Agent 团队" in prompt
-        assert "team_prompt." not in prompt

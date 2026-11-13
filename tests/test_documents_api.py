@@ -324,7 +324,7 @@ async def test_quick_edit_theme_returns_error_status_when_set_props_fails(
 
     assert resp.status == "error"
     assert resp.results[0]["error"] == "theme failed"
-    assert "主题更新失败" in resp.message
+    assert "Theme update failed" in resp.message
 
 
 @pytest.mark.asyncio

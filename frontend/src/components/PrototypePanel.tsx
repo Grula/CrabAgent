@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useTranslation } from "react-i18next";
 import { Smartphone, Monitor, Tablet, Code, Eye, Columns2, Save, RefreshCw, X } from "lucide-react";
 import { cn } from "../lib/cn";
 import * as filesApi from "../api/files";
@@ -27,7 +26,6 @@ const DEVICE_LABELS: Record<string, string> = {
 };
 
 export function PrototypePanel({ filePath, className, onClose }: Props) {
-  const { t } = useTranslation();
   const [viewMode, setViewMode] = useState<ViewMode>("preview");
   const [deviceIdx, setDeviceIdx] = useState(1);
   const [source, setSource] = useState<string>("");
@@ -189,13 +187,13 @@ export function PrototypePanel({ filePath, className, onClose }: Props) {
       {/* Toolbar */}
       <div className="flex items-center gap-1 px-2 py-1.5 border-b border-[var(--border)] bg-[var(--bg-secondary)] shrink-0 flex-wrap">
         <button onClick={() => handleViewModeChange("preview")} className={cn("flex items-center gap-1 px-2 py-1 rounded text-[11px]", viewMode === "preview" ? "bg-[var(--brand-bg)] text-[var(--brand)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)]")}>
-          <Eye size={12} /> {t("prototype.preview")}
+          <Eye size={12} /> {"Preview"}
         </button>
         <button onClick={() => handleViewModeChange("source")} className={cn("flex items-center gap-1 px-2 py-1 rounded text-[11px]", viewMode === "source" ? "bg-[var(--brand-bg)] text-[var(--brand)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)]")}>
-          <Code size={12} /> {t("prototype.source")}
+          <Code size={12} /> {"Source"}
         </button>
         <button onClick={() => handleViewModeChange("split")} className={cn("flex items-center gap-1 px-2 py-1 rounded text-[11px]", viewMode === "split" ? "bg-[var(--brand-bg)] text-[var(--brand)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)]")}>
-          <Columns2 size={12} /> {t("prototype.split")}
+          <Columns2 size={12} /> {"Split"}
         </button>
         <div className="w-px h-4 bg-[var(--border)] mx-1" />
         {DEVICES.map((d, i) => (
@@ -220,7 +218,7 @@ export function PrototypePanel({ filePath, className, onClose }: Props) {
         {/* Save button with feedback */}
         <button onClick={handleSave} className={cn("flex items-center gap-1 px-2 py-1 rounded text-[11px] transition-colors", saved ? "text-[var(--success)] bg-[var(--success-bg)]" : "text-[var(--accent)] hover:bg-[var(--accent-bg)]")}>
           <Save size={12} />
-          {saved ? t("common.saved") : t("common.save")}
+          {saved ? "Saved" : "Save"}
           <span className="text-[9px] opacity-50 ml-0.5">⌘S</span>
         </button>
 
@@ -290,7 +288,7 @@ export function PrototypePanel({ filePath, className, onClose }: Props) {
           {serverLoading ? (
             <div className="flex-1 flex flex-col items-center justify-center text-[var(--text-tertiary)] gap-3">
               <RefreshCw size={28} className="animate-spin" />
-              <span className="text-sm animate-pulse">{t("prototype.startingServer")}</span>
+              <span className="text-sm animate-pulse">{"Starting preview server…"}</span>
             </div>
           ) : error ? (
             <div className="flex-1 flex flex-col items-center justify-center gap-2 text-[var(--danger)]">

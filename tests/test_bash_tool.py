@@ -67,7 +67,7 @@ class TestBashValidation:
         context = AgentContext(workspace=tmp_path)
         # Writing to /etc/passwd triggers NEED_CONFIRM
         result = await bash_command("echo data > /etc/passwd", context=context)
-        assert "安全提醒" in result or "确认" in result
+        assert "Safety notice" in result or "confirmation" in result
 
     @pytest.mark.asyncio
     async def test_need_confirm_denied_by_user(self, tmp_path: Path):
@@ -93,11 +93,38 @@ class TestBashValidation:
 
         context = AgentContext(workspace=tmp_path, confirm_callback=fake_confirm)
         # This will try to actually run the command after approval
-        # It should not return the "需要确认" message
+        # It should not return the "needs confirmation" message
         result = await bash_command("echo data > /etc/passwd", context=context)
         assert approved["v"] is True
-        assert "安全提醒" not in result
-        assert "确认" not in result
+        assert "Safety notice" not in result
+        assert "needs your confirmation" not in result
+
+
+# ── workspace cwd default (bash must run in context.workspace) ─────────
+
+_unix_only = pytest.mark.skipif(bash_tool.IS_WINDOWS, reason="uses POSIX pwd")
+
+
+class TestWorkspaceCwd:
+    @_unix_only
+    @pytest.mark.asyncio
+    async def test_bash_defaults_to_workspace(self, tmp_path: Path):
+        """bash with no workdir must run inside context.workspace."""
+        context = AgentContext(workspace=tmp_path)
+        result = await bash_command("pwd", context=context)
+        assert Path(result.strip()).resolve() == Path(context.workspace).resolve()
+
+    @_unix_only
+    @pytest.mark.asyncio
+    async def test_bash_workdir_override(self, tmp_path: Path):
+        """An explicit workdir still wins over the workspace default."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        other = tmp_path / "other"
+        other.mkdir()
+        context = AgentContext(workspace=workspace)
+        result = await bash_command("pwd", workdir=str(other), context=context)
+        assert Path(result.strip()).resolve() == other.resolve()
 
 
 # ── _build_subprocess_kwargs ──────────────────────────────────────────
@@ -367,7 +394,7 @@ def _async_return(value):
 
 @pytest.mark.asyncio
 async def test_stream_output_preserves_split_utf8_and_terminal_controls(monkeypatch):
-    raw = "中文🙂\r\x1b[2Kdone\n".encode("utf-8")
+    raw = "text🙂\r\x1b[2Kdone\n".encode("utf-8")
 
     class FakeStream:
         def __init__(self, chunks):
@@ -392,3 +419,131 @@ async def test_stream_output_preserves_split_utf8_and_terminal_controls(monkeypa
     assert "".join(stdout) == raw.decode("utf-8")
     assert "".join(text for text, _ in events) == raw.decode("utf-8")
     assert all(call_id == "call-1" for _, call_id in events)
+
+
+# ── background jobs: bash_output / bash_stop ──────────────────────────
+
+unix_only = pytest.mark.skipif(bash_tool.IS_WINDOWS, reason="uses POSIX shell and signals")
+
+
+def _session(tmp_path: Path, session_id: str) -> AgentContext:
+    context = AgentContext(workspace=tmp_path)
+    context.metadata["session_id"] = session_id
+    return context
+
+
+def _pid_of(result: str) -> int:
+    return int(result.split("PID=")[1].split()[0])
+
+
+@pytest.fixture
+def background_logs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Keep background logs inside tmp_path and stop every job the test started."""
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    monkeypatch.setattr(bash_tool.tempfile, "gettempdir", lambda: str(logs))
+    before = set(bash_tool._JOBS)
+    yield logs
+    for pid in set(bash_tool._JOBS) - before:
+        job = bash_tool._JOBS.pop(pid)
+        try:
+            os.killpg(os.getpgid(job.pid), 9)
+        except (OSError, AttributeError):
+            pass
+
+
+class TestBackgroundJobs:
+    @unix_only
+    @pytest.mark.asyncio
+    async def test_each_background_command_gets_its_own_log(self, tmp_path: Path, background_logs: Path):
+        context = _session(tmp_path, "s1")
+
+        first = await bash_command("echo one; sleep 30", background=True, context=context)
+        second = await bash_command("echo two; sleep 30", background=True, context=context)
+
+        job_one = bash_tool._JOBS[_pid_of(first)]
+        job_two = bash_tool._JOBS[_pid_of(second)]
+        assert job_one.log_file != job_two.log_file
+        assert Path(job_one.log_file).read_text().strip() == "one"
+        assert Path(job_two.log_file).read_text().strip() == "two"
+        assert "bash_output(pid=" in first and "bash_stop(pid=" in first
+
+    @unix_only
+    @pytest.mark.asyncio
+    async def test_bash_output_returns_only_new_output(self, tmp_path: Path, background_logs: Path):
+        context = _session(tmp_path, "s1")
+        started = await bash_command("echo first; sleep 2; echo second; sleep 30", background=True, context=context)
+        pid = _pid_of(started)
+
+        initial = await bash_tool.bash_output(pid=pid, context=context)
+        later = await bash_tool.bash_output(pid=pid, wait_seconds=10, context=context)
+        idle = await bash_tool.bash_output(pid=pid, context=context)
+
+        assert "running" in initial.splitlines()[0]
+        assert "first" in initial and "second" not in initial
+        assert "second" in later and "first" not in later
+        assert idle.splitlines()[-1] == "[no new output]"
+
+    @unix_only
+    @pytest.mark.asyncio
+    async def test_finished_command_reports_exit_code_and_output(self, tmp_path: Path, background_logs: Path):
+        context = _session(tmp_path, "s1")
+
+        result = await bash_command("echo done; exit 3", background=True, context=context)
+
+        assert "already exited (exit code 3)" in result
+        assert "done" in result
+        listing = await bash_tool.bash_output(context=context)
+        assert f"PID {_pid_of(result)} | exited (exit code 3)" in listing
+
+    @unix_only
+    @pytest.mark.asyncio
+    async def test_bash_stop_terminates_the_whole_process_tree(self, tmp_path: Path, background_logs: Path):
+        context = _session(tmp_path, "s1")
+        marker = tmp_path / "child.pid"
+        started = await bash_command(
+            f"sh -c 'echo $$ > {marker}; sleep 60' & wait", background=True, context=context
+        )
+        pid = _pid_of(started)
+        child_pid = int(marker.read_text().strip())
+
+        result = await bash_tool.bash_stop(pid=pid, context=context)
+
+        assert "stopped" in result
+        assert await bash_tool._check_process_alive(pid) == ""
+        assert await bash_tool._check_process_alive(child_pid) == ""
+        assert "nothing to stop" in await bash_tool.bash_stop(pid=pid, context=context)
+
+    @unix_only
+    @pytest.mark.asyncio
+    async def test_jobs_are_private_to_the_session_that_started_them(self, tmp_path: Path, background_logs: Path):
+        owner = _session(tmp_path, "owner")
+        stranger = _session(tmp_path, "stranger")
+        started = await bash_command("sleep 30", background=True, context=owner)
+        pid = _pid_of(started)
+
+        assert "no background command" in await bash_tool.bash_output(pid=pid, context=stranger)
+        assert "no background command" in await bash_tool.bash_stop(pid=pid, context=stranger)
+        assert "No background commands" in await bash_tool.bash_output(context=stranger)
+        assert await bash_tool._check_process_alive(pid) != ""
+
+    @unix_only
+    @pytest.mark.asyncio
+    async def test_timed_out_command_can_be_followed_and_stopped(self, tmp_path: Path, background_logs: Path):
+        context = _session(tmp_path, "s1")
+
+        result = await bash_command("echo alpha; sleep 2; echo omega; sleep 60", timeout=1000, context=context)
+        pid = int(result.split("PID: ")[1].split()[0])
+
+        assert "[auto-background]" in result and f"bash_output(pid={pid})" in result
+        assert "alpha" in result
+        followed = await bash_tool.bash_output(pid=pid, wait_seconds=10, context=context)
+        assert "omega" in followed and "alpha" not in followed
+        assert "stopped" in await bash_tool.bash_stop(pid=pid, context=context)
+
+    @pytest.mark.asyncio
+    async def test_unknown_or_invalid_pid_is_reported(self, tmp_path: Path):
+        context = _session(tmp_path, "s1")
+
+        assert "no background command" in await bash_tool.bash_output(pid=999999, context=context)
+        assert "pid must be a number" in await bash_tool.bash_stop(pid="abc", context=context)

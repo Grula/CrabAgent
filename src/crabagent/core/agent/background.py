@@ -154,7 +154,6 @@ def _context_payload(context, agent_name, task, allowed_tools):
         "model": context.model,
         "provider_name": context.provider_name,
         "max_iterations": context.max_iterations,
-        "locale": context.locale,
         "agent_name": agent_name,
         "task": task,
         "allowed_tools": list(allowed_tools or []),
@@ -169,7 +168,6 @@ def _rebuild_context(payload, scope):
     model = payload.get("model")
     provider_name = payload.get("provider_name")
     max_iterations = payload.get("max_iterations")
-    locale = payload.get("locale") or "en"
     agent_name = payload.get("agent_name")
     task = payload.get("task")
     allowed_tools = payload.get("allowed_tools") or []
@@ -179,7 +177,7 @@ def _rebuild_context(payload, scope):
             or any(not isinstance(name, str) for name in allowed_tools)
             or set(allowed_tools) - SAFE_TOOLS
             or not isinstance(max_iterations, int) or isinstance(max_iterations, bool)
-            or max_iterations <= 0 or not isinstance(locale, str)):
+            or max_iterations <= 0):
         raise ValueError("Invalid forwarded payload")
     registry = ToolRegistry()
     if "read" in allowed_tools:
@@ -187,8 +185,8 @@ def _rebuild_context(payload, scope):
         register_safe_read(registry)
     isolated = AgentContext(workspace=Path(workspace), tool_registry=registry,
                             model=model, provider_name=provider_name,
-                            max_iterations=max_iterations, locale=locale)
-    isolated.metadata.update(user_id=scope[0], session_id=scope[1], branch_id=scope[2], locale=locale)
+                            max_iterations=max_iterations)
+    isolated.metadata.update(user_id=scope[0], session_id=scope[1], branch_id=scope[2])
     return isolated, agent_name, task
 
 
@@ -390,8 +388,8 @@ async def start(context, agent_name, task, allowed_tools=None, *, _group_step=No
         register_safe_read(registry)
     isolated = AgentContext(workspace=context.workspace, tool_registry=registry,
                             model=context.model, provider_name=context.provider_name,
-                            max_iterations=context.max_iterations, locale=context.locale)
-    isolated.metadata.update(user_id=scope[0], session_id=scope[1], branch_id=scope[2], locale=context.locale)
+                            max_iterations=context.max_iterations)
+    isolated.metadata.update(user_id=scope[0], session_id=scope[1], branch_id=scope[2])
     try:
         await _ensure_executor()
     except ValueError as exc:

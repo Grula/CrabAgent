@@ -1,5 +1,4 @@
 import { useEffect, useState, useCallback } from "react";
-import { useTranslation } from "react-i18next";
 import {
   X as XIcon,
   Play,
@@ -36,13 +35,13 @@ interface Props {
 }
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
-  pending: { label: "待开始", color: "text-[var(--text-secondary)]" },
-  in_progress: { label: "进行中", color: "text-blue-500" },
-  waiting_user: { label: "等待你", color: "text-orange-500" },
-  done: { label: "已完成", color: "text-green-500" },
-  partial: { label: "部分完成", color: "text-amber-500" },
-  failed: { label: "执行失败", color: "text-red-500" },
-  cancelled: { label: "已取消", color: "text-[var(--text-tertiary)]" },
+  pending: { label: "Not started", color: "text-[var(--text-secondary)]" },
+  in_progress: { label: "In progress", color: "text-blue-500" },
+  waiting_user: { label: "Waiting on you", color: "text-orange-500" },
+  done: { label: "Completed", color: "text-green-500" },
+  partial: { label: "Partially done", color: "text-amber-500" },
+  failed: { label: "Run failed", color: "text-red-500" },
+  cancelled: { label: "Cancelled", color: "text-[var(--text-tertiary)]" },
 };
 
 const CHECK_ICONS: Record<string, string> = {
@@ -62,7 +61,6 @@ const CHECK_COLORS: Record<string, string> = {
 };
 
 export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onTaskChanged }: Props) {
-  const { t } = useTranslation();
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [rollbackBusy, setRollbackBusy] = useState<number | null>(null);
@@ -109,7 +107,7 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
       if (action === "retry") await retryTask(task.id);
       await refresh();
     } catch (e: any) {
-      toast.error(e?.message || t("task.operationFailed"));
+      toast.error(e?.message || "Operation failed");
     }
   };
 
@@ -130,21 +128,21 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
       const result = await rollbackRun(task.id, runId, force);
       setRollbackPreview((prev) => ({ ...prev, [runId]: result }));
       if (result.status === "conflict") {
-        toast.error(`冲突：${result.conflicts.map((c) => c.file).join("、")}`);
+        toast.error(`Conflict: ${result.conflicts.map((c) => c.file).join(", ")}`);
       } else if (result.restored.length > 0) {
-        toast.success(`已恢复 ${result.restored.length} 个文件`);
+        toast.success(`Restored ${result.restored.length} files`);
         await refresh();
       } else {
-        toast.info("文件无变化，未执行回滚");
+        toast.info("No file changes; rollback not performed");
       }
     } catch (e: any) {
       // 409 conflict detail carries the structured result
       const detailPayload = e?.detail;
       if (detailPayload?.conflicts) {
         setRollbackPreview((prev) => ({ ...prev, [runId]: detailPayload as RollbackResult }));
-        toast.error(`冲突：${detailPayload.conflicts.map((c: any) => c.file).join("、")}`);
+        toast.error(`Conflict: ${detailPayload.conflicts.map((c: any) => c.file).join(", ")}`);
       } else {
-        toast.error(e?.message || t("task.operationFailed"));
+        toast.error(e?.message || "Operation failed");
       }
     } finally {
       setRollbackBusy(null);
@@ -157,19 +155,19 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
       case "pending":
         return (
           <Button variant="brand" size="sm" onClick={() => handleAction("start")}>
-            <Play size={12} className="mr-1" /> {t("task.actionStart")}
+            <Play size={12} className="mr-1" /> {"Start"}
           </Button>
         );
       case "in_progress":
         return (
           <Button variant="ghost" size="sm" onClick={() => handleAction("cancel")}>
-            <Square size={12} className="mr-1" /> {t("task.actionStop")}
+            <Square size={12} className="mr-1" /> {"Stop"}
           </Button>
         );
       case "waiting_user":
         return task.source_session && onSwitchSession ? (
           <Button variant="brand" size="sm" onClick={() => onSwitchSession(task.source_session!)}>
-            {t("task.actionHandle")}
+            {"Review"}
           </Button>
         ) : null;
       case "partial":
@@ -177,13 +175,13 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
       case "cancelled":
         return (
           <Button variant="brand" size="sm" onClick={() => handleAction("retry")}>
-            <RotateCcw size={12} className="mr-1" /> {t("task.actionRetry")}
+            <RotateCcw size={12} className="mr-1" /> {"Retry"}
           </Button>
         );
       case "done":
         return (
           <Button variant="brand" size="sm" onClick={handleOpenResult}>
-            <Package size={12} className="mr-1" /> {t("task.actionOpenResult")}
+            <Package size={12} className="mr-1" /> {"Open result"}
           </Button>
         );
       default:
@@ -201,7 +199,7 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
         <div className="flex items-start gap-2 px-4 py-3 border-b border-[var(--border)]">
           <div className="flex-1 min-w-0">
             <div className="text-sm font-semibold text-[var(--text-primary)] truncate">
-              {task?.title || t("common.loading")}
+              {task?.title || "Loading…"}
             </div>
             <div className="flex items-center gap-2 mt-1 text-xs">
               <span className={cn("font-medium", statusInfo?.color)}>
@@ -216,7 +214,7 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
                 <span className="text-[10px] text-[var(--text-tertiary)] flex items-center gap-0.5">
                   <ShieldCheck size={10} />
                   {task.verification_status === "passed"
-                    ? t("task.verifiedPassed")
+                    ? "verified"
                     : task.verification_status}
                 </span>
               )}
@@ -233,14 +231,14 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
 
         <div className="flex-1 overflow-y-auto p-4 space-y-5">
           {loading && !detail ? (
-            <div className="text-sm text-[var(--text-tertiary)]">{t("common.loading")}</div>
+            <div className="text-sm text-[var(--text-tertiary)]">{"Loading…"}</div>
           ) : task ? (
             <>
               {/* Warning */}
               {task.warning_summary && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-5 text-amber-600 dark:text-amber-400">
                   <div className="flex items-center gap-1 font-medium mb-1">
-                    <AlertTriangle size={12} /> {t("task.warnings")}
+                    <AlertTriangle size={12} /> {"Warnings & limits"}
                   </div>
                   <div className="whitespace-pre-wrap">{task.warning_summary}</div>
                 </div>
@@ -249,7 +247,7 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
               {/* Result */}
               {task.result_summary && (
                 <section>
-                  <SectionTitle icon={<FileCheck2 size={12} />} label={t("task.resultSummary")} />
+                  <SectionTitle icon={<FileCheck2 size={12} />} label={"Result"} />
                   <div className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap leading-5 mt-1.5">
                     {task.result_summary}
                   </div>
@@ -258,7 +256,7 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
 
               {/* Artifacts */}
               <section>
-                <SectionTitle icon={<Package size={12} />} label={t("task.artifacts")} />
+                <SectionTitle icon={<Package size={12} />} label={"Artifacts"} />
                 {detail?.artifacts?.length ? (
                   <div className="space-y-1.5 mt-1.5">
                     {detail.artifacts
@@ -269,24 +267,24 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
                           className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--bg-secondary)] text-xs"
                         >
                           <span className="text-[var(--accent)]">
-                            {a.action === "created" ? "＋" : a.action === "modified" ? "✎" : "•"}
+                            {a.action === "created" ? "+" : a.action === "modified" ? "✎" : "•"}
                           </span>
                           <span className="flex-1 truncate text-[var(--text-primary)]">{a.name}</span>
                           <span className="text-[10px] text-[var(--text-tertiary)]">v{a.version}</span>
                           {a.status === "missing" && (
-                            <span className="text-[10px] text-red-500">{t("task.artifactMissing")}</span>
+                            <span className="text-[10px] text-red-500">{"missing"}</span>
                           )}
                         </div>
                       ))}
                   </div>
                 ) : (
-                  <EmptyHint text={t("task.noArtifacts")} />
+                  <EmptyHint text={"No artifacts yet"} />
                 )}
               </section>
 
               {/* Timeline */}
               <section>
-                <SectionTitle icon={<History size={12} />} label={t("task.timeline")} />
+                <SectionTitle icon={<History size={12} />} label={"Timeline"} />
                 {detail?.recent_events?.length ? (
                   <div className="mt-1.5 space-y-1">
                     {detail.recent_events.map((e) => (
@@ -304,13 +302,13 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
                     ))}
                   </div>
                 ) : (
-                  <EmptyHint text={t("task.noTimeline")} />
+                  <EmptyHint text={"No timeline entries yet"} />
                 )}
               </section>
 
               {/* Runs */}
               <section>
-                <SectionTitle icon={<History size={12} />} label={t("task.runHistory")} />
+                <SectionTitle icon={<History size={12} />} label={"Run history"} />
                 {detail?.runs?.length ? (
                   <div className="space-y-2 mt-1.5">
                     {detail.runs.map((run) => {
@@ -341,7 +339,7 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
                               </span>
                             )}
                             {run.id === task.active_run_id && (
-                              <span className="text-[10px] text-blue-500">{t("task.activeRun")}</span>
+                              <span className="text-[10px] text-blue-500">{"active"}</span>
                             )}
                           </div>
                           {run.interrupted_reason && (
@@ -355,7 +353,7 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
                                 onClick={() => onSwitchSession(run.session_id!)}
                                 className="flex items-center gap-0.5 text-[10px] text-[var(--brand)] hover:underline"
                               >
-                                <ExternalLink size={10} /> {t("task.openSession")}
+                                <ExternalLink size={10} /> {"Source session"}
                               </button>
                             )}
                             {run.status !== "running" && (
@@ -364,7 +362,7 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
                                 disabled={rollbackBusy === run.id}
                                 className="flex items-center gap-0.5 text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50"
                               >
-                                <Undo2 size={10} /> {t("task.rollbackRun")}
+                                <Undo2 size={10} /> {"Undo this run"}
                               </button>
                             )}
                           </div>
@@ -372,7 +370,7 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
                             <div className="mt-1.5 text-[10px] leading-4 text-[var(--text-secondary)]">
                               {preview.status === "conflict" ? (
                                 <>
-                                  <div className="text-amber-500">{t("task.rollbackConflict")}</div>
+                                  <div className="text-amber-500">{"Files changed after this run; overwriting is risky:"}</div>
                                   {preview.conflicts.map((c) => (
                                     <div key={c.file}>· {c.file}</div>
                                   ))}
@@ -381,15 +379,15 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
                                     disabled={rollbackBusy === run.id}
                                     className="mt-1 text-red-500 hover:underline"
                                   >
-                                    {t("task.rollbackForce")}
+                                    {"Force restore anyway"}
                                   </button>
                                 </>
                               ) : preview.restored.length > 0 ? (
                                 <div className="text-green-500">
-                                  {t("task.rollbackDone", { count: preview.restored.length })}
+                                  {`Restored ${preview.restored.length} files`}
                                 </div>
                               ) : (
-                                <div>{t("task.rollbackNoChange")}</div>
+                                <div>{"No changes to roll back"}</div>
                               )}
                             </div>
                           )}
@@ -398,7 +396,7 @@ export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onT
                     })}
                   </div>
                 ) : (
-                  <EmptyHint text={t("task.noRuns")} />
+                  <EmptyHint text={"No runs yet"} />
                 )}
               </section>
             </>

@@ -134,7 +134,7 @@ class TestPreferenceExtraction:
 
         monkeypatch.setattr(reflect, "litellm", SimpleNamespace(acompletion=fake_acompletion))
 
-        convo = "User: 请用中文回复，并尽量输出 JSON 格式。" * 20
+        convo = "User: Please reply in Chinese and output JSON format when possible." * 20
         prefs = await reflect.llm_extract_user_preferences(convo, model="gpt-4o", max_prefs=2)
 
         assert len(prefs) == 2

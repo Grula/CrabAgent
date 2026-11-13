@@ -1,4 +1,3 @@
-import { useTranslation } from "react-i18next";
 import { useState, useEffect } from "react";
 import { ChevronRight, ChevronDown, Folder, FolderOpen, X, Check, ArrowUp, Home } from "lucide-react";
 import { FileEntry, getTree } from "../api/files";
@@ -11,7 +10,6 @@ interface Props {
 }
 
 export default function DirectoryPicker({ open, onClose, onSelect }: Props) {
-  const { t } = useTranslation();
   const [currentPath, setCurrentPath] = useState("/");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -106,7 +104,7 @@ export default function DirectoryPicker({ open, onClose, onSelect }: Props) {
           <button
             onClick={() => navigateTo("/")}
             className="shrink-0 p-0.5 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]"
-            title={t("directoryPicker.root")}
+            title={"Root"}
           >
             <Home size={13} />
           </button>
@@ -133,7 +131,7 @@ export default function DirectoryPicker({ open, onClose, onSelect }: Props) {
             onClick={goUp}
             disabled={currentPath === "/"}
             className="ml-auto shrink-0 p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] disabled:opacity-30 disabled:hover:bg-transparent"
-            title={t("directoryPicker.parentDir")}
+            title={"Parent directory"}
           >
             <ArrowUp size={13} />
           </button>

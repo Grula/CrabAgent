@@ -12,7 +12,6 @@ import { cn } from "./lib/cn";
 import { connectGlobalSSE } from "./api/monitor";
 import { toast } from "./components/ui/Toast";
 import { FtsStatusBar } from "./components/FtsStatusBar";
-import { DesktopPet } from "./components/DesktopPet";
 import { BackgroundTasks } from "./components/BackgroundTasks";
 import { MobileConsole } from "./pages/mobile/MobileConsole";
 
@@ -68,9 +67,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
     }
   }, []);
   useEffect(() => {
-    return window.electronAPI?.onOpenSession?.(() => setPage("chat"));
-  }, []);
-  useEffect(() => {
     const handleHashChange = () => {
       const targetPage = pageFromHash();
       if (targetPage) setPage(targetPage);
@@ -83,7 +79,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const ftsInProgress = ftsStatus?.in_progress;
   useEffect(() => {
     if (ftsStatus && !ftsStatus.in_progress && ftsStatus.total > 0) {
-      toast.success("搜索引擎索引完成");
+      toast.success("Search index ready");
     }
   }, [ftsStatus?.in_progress]);
 
@@ -147,12 +143,10 @@ function MainApp() {
 }
 
 export default function App() {
-  // 移动控制台路由：#/m* 由 MobileConsole 独立接管（PWA standalone 入口）
+  // Mobile console route: #/m* is handled entirely by MobileConsole (PWA standalone entry)
   if (window.location.hash.startsWith("#/m")) {
-    // 延迟 import 会引入异步闪烁，/m 组件很轻，直接同步引入（见文件头部 import）
+    // A lazy import would cause async flicker; the /m components are tiny, so import them synchronously (see the imports at the top of the file)
     return <MobileConsole />;
   }
-  return new URLSearchParams(window.location.search).get("surface") === "pet"
-    ? <DesktopPet />
-    : <MainApp />;
+  return <MainApp />;
 }

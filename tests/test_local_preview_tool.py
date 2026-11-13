@@ -11,7 +11,7 @@ from crabagent.core.agent.tools import collaboration_browser as browser
 async def test_local_preview_permission_is_owned_by_electron(monkeypatch, status):
     calls = []
 
-    def request(command, payload, *, context):
+    def request(command, payload=None, *, context):
         calls.append((command, payload))
         return {"status": status, "origin": "http://127.0.0.1:8766"}
 
@@ -23,4 +23,7 @@ async def test_local_preview_permission_is_owned_by_electron(monkeypatch, status
     ctx = SimpleNamespace(metadata={})
     result = json.loads(await browser.collab_browser_authorize_local_preview("http://127.0.0.1:8766/a", ctx))
     assert result["status"] == status
-    assert calls == [("authorize_local_preview", {"url": "http://127.0.0.1:8766/a"})]
+    assert calls == [
+        ("status", None),
+        ("authorize_local_preview", {"url": "http://127.0.0.1:8766/a"}),
+    ]

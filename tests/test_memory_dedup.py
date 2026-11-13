@@ -287,4 +287,4 @@ def test_meta_lesson_patterns_block_analyze_request_variant():
     """Ensure '1. **Analyze the Request:**' pattern is caught."""
     assert looks_like_meta_lesson("1. **Analyze the Request:**\n- Goal: Extract lesson") is True
     assert looks_like_meta_lesson("We need to extract one concrete lesson from this task.") is True
-    assert looks_like_meta_lesson("我们需要从提供的\"completed task\"中提取") is True
+    assert looks_like_meta_lesson("We need to extract it from the provided \"completed task\"") is True

@@ -12,8 +12,8 @@ _META_LESSON_PATTERNS = [
         r'^(we are given:|we are asked to extract one concrete lesson|the user wants to extract one concrete lesson)',
         re.IGNORECASE,
     ),
-    re.compile(r'^我们需要?从提供的.?completed task.?中提取', re.IGNORECASE),
-    re.compile(r'^我们需要?(分析|提取).*(教训|lesson)', re.IGNORECASE),
+    re.compile(r'^we need to extract .* from the provided .*completed task', re.IGNORECASE),
+    re.compile(r'^we need to (analyze|extract).*(lessons?)', re.IGNORECASE),
     re.compile(r'^(thinking\.|we need to extract one concrete lesson)', re.IGNORECASE),
     re.compile(r'^1\.\s+\*\*analyze the request:\*\*', re.IGNORECASE),
 ]

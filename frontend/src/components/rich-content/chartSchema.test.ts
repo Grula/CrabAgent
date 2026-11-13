@@ -5,26 +5,26 @@ describe("parseChartSpec", () => {
   it("accepts the current object series format", () => {
     const chart = parseChartSpec(JSON.stringify({
       version: 1, type: "bar", x: { field: "month" },
-      series: [{ field: "revenue", name: "收入" }],
-      data: [{ month: "1月", revenue: 120 }],
+      series: [{ field: "revenue", name: "revenue" }],
+      data: [{ month: "Jan", revenue: 120 }],
     }));
     expect(chart.x?.field).toBe("month");
-    expect(chart.series[0]).toEqual({ field: "revenue", name: "收入", color: undefined });
+    expect(chart.series[0]).toEqual({ field: "revenue", name: "revenue", color: undefined });
   });
 
   it("renders historical xField and string-series messages", () => {
     const chart = parseChartSpec(JSON.stringify({
-      version: 1, type: "bar", xField: "month", series: ["收入"],
-      data: [{ month: "1月", 收入: 120 }],
+      version: 1, type: "bar", xField: "month", series: ["revenue"],
+      data: [{ month: "Jan", revenue: 120 }],
     }));
     expect(chart.x?.field).toBe("month");
-    expect(chart.series[0].field).toBe("收入");
+    expect(chart.series[0].field).toBe("revenue");
   });
 
   it("infers a text category field when x is omitted", () => {
     const chart = parseChartSpec(JSON.stringify({
       version: 1, type: "line", series: ["revenue"],
-      data: [{ month: "1月", revenue: 120 }],
+      data: [{ month: "Jan", revenue: 120 }],
     }));
     expect(chart.x?.field).toBe("month");
   });
@@ -32,13 +32,13 @@ describe("parseChartSpec", () => {
   it("rejects executable or oversized data", () => {
     expect(() => parseChartSpec(JSON.stringify({
       version: 1, type: "bar", series: ["revenue"],
-      data: [{ month: "1月", revenue: { value: 120 } }],
-    }))).toThrow("无效字段");
+      data: [{ month: "Jan", revenue: { value: 120 } }],
+    }))).toThrow("invalid field");
   });
 });
 
 describe("parseKpiSpec", () => {
   it("accepts a valid KPI", () => {
-    expect(parseKpiSpec(JSON.stringify({ version: 1, title: "转化率", value: "18.6%", trend: "up" }))).toMatchObject({ title: "转化率", trend: "up" });
+    expect(parseKpiSpec(JSON.stringify({ version: 1, title: "conversion", value: "18.6%", trend: "up" }))).toMatchObject({ title: "conversion", trend: "up" });
   });
 });

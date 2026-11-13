@@ -1,7 +1,7 @@
 """Push notification configuration.
 
 Stores settings in the ``app_settings`` table as a JSON blob under key
-``push_config`` (same pattern as ``wechat_config``).
+``push_config``.
 
 Supported providers:
 - ``bark``  — iOS Bark app (APNs), default server https://api.day.app

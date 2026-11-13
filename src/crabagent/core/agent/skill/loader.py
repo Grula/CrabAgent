@@ -53,10 +53,16 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
     aux_files = []
     try:
         for child in sorted(skill_dir.rglob("*")):
-            if child.is_file() and child.name != "SKILL.md":
-                aux_files.append(child)
-                if len(aux_files) >= _MAX_AUX_FILES:
-                    break
+            if not child.is_file() or child.name == "SKILL.md":
+                continue
+            # Bytecode caches and hidden files are not skill content; counting
+            # them would crowd real files out of the auxiliary-file limit.
+            rel_parts = child.relative_to(skill_dir).parts
+            if "__pycache__" in rel_parts or child.suffix == ".pyc" or any(p.startswith(".") for p in rel_parts):
+                continue
+            aux_files.append(child)
+            if len(aux_files) >= _MAX_AUX_FILES:
+                break
     except Exception:
         pass
 

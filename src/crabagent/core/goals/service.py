@@ -235,8 +235,8 @@ def automatic_completion_evidence(summary: str) -> str | None:
     clean = re.sub(r"\s+", " ", summary).strip()
     if not clean:
         return None
-    completed = re.search(r"(已完成|完成了|已实现|已修复|已处理|完成构建)", clean)
-    verified = re.search(r"(测试.*通过|\d+\s+passed|构建成功|build ok|已验证|验证.*通过|diff --check.*通过)", clean, re.I)
+    completed = re.search(r"\b(completed|implemented|fixed|resolved|done|finished|built)\b", clean, re.I)
+    verified = re.search(r"(tests?\b.*\bpass|\d+\s+passed|build (ok|succeeded|passes)|verified|verification\b.*\bpass|diff --check\b.*\bpass)", clean, re.I)
     if not (completed and verified):
         return None
     return clean[:1200]

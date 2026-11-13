@@ -49,7 +49,6 @@ class SessionResponse(BaseModel):
     provider: str = ""
     agent: str = "default"
     active_branch: str = "main"
-    prompt_locale: str = ""
     history_searchable: bool = True
     created_at: str | None = None
     updated_at: str | None = None
@@ -64,7 +63,6 @@ def _conv_to_response(conv) -> SessionResponse:
         provider=getattr(conv, "provider", "") or "",
         agent=getattr(conv, "agent", None) or "default",
         active_branch=conv.active_branch or "main",
-        prompt_locale=getattr(conv, "prompt_locale", "") or "",
         history_searchable=getattr(conv, "history_searchable", True),
         created_at=conv.created_at.isoformat() if conv.created_at else None,
         updated_at=conv.updated_at.isoformat() if conv.updated_at else None,
@@ -135,7 +133,6 @@ async def compress_session(
         workspace=Path(conv.workspace) if conv.workspace else Path.cwd(),
         messages=[message_to_dict(msg) for msg in records],
         system_prompt=conv.system_prompt or "",
-        locale=getattr(user, "locale", None) or settings.language or "en",
     )
     persistence = PersistenceListener(conversation_id=conv.id, branch_id=branch_id)
     context.metadata["_persistence"] = persistence
@@ -182,7 +179,7 @@ async def search_sessions(
 
     tokenized_q = _segment(q).strip() or q
     # Use prefix matching (*) so partial token search works
-    # e.g. "项目" → "项目*" matches token "项目管理"
+    # e.g. "project" -> "project*" matches the token "projectmanagement"
     fts_query = " ".join(t + "*" for t in tokenized_q.split()) if tokenized_q else tokenized_q
 
     # 1) FTS5-CJK search (jieba-tokenized, handles Chinese + English)
@@ -587,10 +584,9 @@ async def reset_system_prompt(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Clear the cached system prompt so it gets rebuilt with the current locale on next message."""
+    """Clear the cached system prompt so it is rebuilt on the next message."""
     conv = await get_owned_conversation(db, session_id, user)
     if conv.system_prompt:
         conv.system_prompt = ""
-        conv.prompt_locale = ""
         await db.commit()
     return {"status": "ok", "session_id": session_id}

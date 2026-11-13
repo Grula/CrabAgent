@@ -7,7 +7,6 @@
  */
 
 import { memo, useState } from "react";
-import { useTranslation } from "react-i18next";
 import {
   Search,
   Sparkles,
@@ -212,7 +211,6 @@ export const SubAgentCard = memo(function SubAgentCard({
   isActive,
   showConnector,
 }: SubAgentCardProps) {
-  const { t } = useTranslation();
   const [internalExpanded, setInternalExpanded] = useState(false);
   const isExpanded = expanded !== undefined ? expanded : internalExpanded;
 
@@ -243,10 +241,10 @@ export const SubAgentCard = memo(function SubAgentCard({
 
   const statusLabel =
     status === "completed"
-      ? t("subAgent.completed")
+      ? "completed"
       : status === "error"
-        ? t("subAgent.failed")
-        : t("subAgent.running");
+        ? "failed"
+        : "running";
 
   return (
     <>
@@ -333,13 +331,12 @@ export interface DelegateGroupProps {
 }
 
 export function DelegateGroup({ mode, children, title }: DelegateGroupProps) {
-  const { t } = useTranslation();
   const label =
     mode === "pipeline"
-      ? title || t("subAgent.pipeline")
+      ? title || "Pipeline"
       : mode === "parallel"
-        ? title || t("subAgent.parallel")
-        : title || t("subAgent.delegation");
+        ? title || "Parallel"
+        : title || "Delegation";
 
   return (
     <div className="mb-3 ml-3">

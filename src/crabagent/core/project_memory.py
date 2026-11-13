@@ -133,21 +133,21 @@ class ProjectProfile:
         parts: list[str] = []
 
         if self.last_active:
-            parts.append(f"上次活跃：{self.last_active}")
+            parts.append(f"Last active: {self.last_active}")
 
         if self.tech_stack and self.tech_stack != ["(unknown)"]:
-            parts.append(f"技术栈：{' / '.join(self.tech_stack)}")
+            parts.append(f"Tech stack: {' / '.join(self.tech_stack)}")
 
         if self.recent_lessons:
-            lessons = "；".join(self.recent_lessons[:15])
+            lessons = "; ".join(self.recent_lessons[:15])
             if self.lesson_count > 15:
-                lessons += f" 等{self.lesson_count}条"
-            parts.append(f"项目经验：{lessons}")
+                lessons += f" (+{self.lesson_count - 15} more)"
+            parts.append(f"Project lessons: {lessons}")
 
         if not parts:
             return ""
 
-        return "=== 项目上下文 ===\n" + "\n".join(parts) + "\n====================\n"
+        return "=== Project Context ===\n" + "\n".join(parts) + "\n====================\n"
 
 
 # ---------------------------------------------------------------------------
@@ -155,30 +155,18 @@ class ProjectProfile:
 # ---------------------------------------------------------------------------
 
 
-def _agents_md_path(workspace: Path, locale: str = "en") -> Path:
-    """Return the AGENTS.md path for the given locale.
-
-    For non-English locales the file is named ``AGENTS.<locale>.md``
-    (e.g. ``AGENTS.zh-CN.md``).  English uses the plain ``AGENTS.md``.
-    """
-    if locale and locale != "en":
-        return workspace / f"AGENTS.{locale}.md"
+def _agents_md_path(workspace: Path) -> Path:
+    """Return the ``AGENTS.md`` path inside *workspace*."""
     return workspace / "AGENTS.md"
 
 
-def load_agents_md(workspace: Path, locale: str = "en") -> str:
+def load_agents_md(workspace: Path) -> str:
     """Load ``AGENTS.md`` from workspace root.
 
-    For non-English *locale*, tries ``AGENTS.<locale>.md`` first, then
-    falls back to the default ``AGENTS.md``.  Returns the file content
-    if present, stripped of leading/trailing whitespace.  Returns empty
-    string if no suitable file exists.
+    Returns the file content if present, stripped of leading/trailing
+    whitespace.  Returns an empty string if the file does not exist.
     """
-    # Try locale-specific file first
-    path = _agents_md_path(workspace, locale)
-    if not path.is_file() and locale != "en":
-        # Fallback to default
-        path = workspace / "AGENTS.md"
+    path = _agents_md_path(workspace)
     if not path.is_file():
         return ""
     try:
@@ -194,14 +182,12 @@ def load_agents_md(workspace: Path, locale: str = "en") -> str:
     return text
 
 
-def save_agents_md(workspace: Path, content: str, locale: str = "en") -> str:
-    """Save ``AGENTS.md`` to workspace root.
+def save_agents_md(workspace: Path, content: str) -> str:
+    """Save ``AGENTS.md`` to workspace root, creating or overwriting it.
 
-    For non-English *locale*, writes to ``AGENTS.<locale>.md`` instead
-    of the default ``AGENTS.md``.  Creates or overwrites the file.
     Returns a status message.
     """
-    path = _agents_md_path(workspace, locale)
+    path = _agents_md_path(workspace)
     try:
         path.write_text(content.strip() + "\n", encoding="utf-8")
         return f"AGENTS.md saved ({len(content)} chars) to {path}"

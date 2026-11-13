@@ -5,14 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SessionList from "./SessionList";
 import type { Session } from "../api/sessions";
 
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("../api/sessions", () => ({ searchSessions: vi.fn().mockResolvedValue([]) }));
 vi.mock("../api/time", () => ({ formatDate: () => "2025-01-01" }));
 
 const sessions: Session[] = [
-  { session_id: "s1", title: "First chat", workspace: "w", model: "m", provider: "p", agent: "default", active_branch: "main", prompt_locale: "", history_searchable: true, created_at: null, updated_at: "2025-01-01T00:00:00" },
-  { session_id: "s2", title: "Second chat", workspace: "w", model: "m", provider: "p", agent: "default", active_branch: "main", prompt_locale: "", history_searchable: true, created_at: null, updated_at: "2025-01-02T00:00:00" },
-  { session_id: "s3", title: "Third chat", workspace: "w", model: "m", provider: "p", agent: "default", active_branch: "main", prompt_locale: "", history_searchable: true, created_at: null, updated_at: "2025-01-03T00:00:00" },
+  { session_id: "s1", title: "First chat", workspace: "w", model: "m", provider: "p", agent: "default", active_branch: "main", history_searchable: true, created_at: null, updated_at: "2025-01-01T00:00:00" },
+  { session_id: "s2", title: "Second chat", workspace: "w", model: "m", provider: "p", agent: "default", active_branch: "main", history_searchable: true, created_at: null, updated_at: "2025-01-02T00:00:00" },
+  { session_id: "s3", title: "Third chat", workspace: "w", model: "m", provider: "p", agent: "default", active_branch: "main", history_searchable: true, created_at: null, updated_at: "2025-01-03T00:00:00" },
 ];
 
 const baseProps = {
@@ -49,7 +48,7 @@ describe("SessionList mobile drawer new-chat entry", () => {
     await render(<SessionList {...baseProps} mobileOpen onMobileClose={onClose} />);
     const drawer = container.querySelector(".fixed.w-72")!;
     expect(drawer).not.toBeNull();
-    const newBtn = drawer.querySelector<HTMLButtonElement>('[aria-label="session.newChat"]');
+    const newBtn = drawer.querySelector<HTMLButtonElement>('[aria-label="New Chat"]');
     expect(newBtn).not.toBeNull();
     // Button sits in the mobile header, at the top of the drawer (above search + list)
     const header = newBtn!.closest("div")!;
@@ -64,7 +63,7 @@ describe("SessionList mobile drawer new-chat entry", () => {
     await render(<SessionList {...baseProps} />);
     // No mobile drawer overlay is rendered
     expect(container.querySelector(".fixed.w-72")).toBeNull();
-    const newBtns = container.querySelectorAll('button[title^="session.newChat"]');
+    const newBtns = container.querySelectorAll('button[title^="New Chat"]');
     // Both mobile and desktop headers exist in the sidebar tree; the desktop
     // header (hidden md:flex) keeps its original new-chat button untouched
     expect(newBtns.length).toBe(2);

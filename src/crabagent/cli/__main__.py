@@ -5,7 +5,6 @@ import asyncio
 import json
 import logging
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
@@ -65,7 +64,6 @@ def main():
     parser.add_argument("--mcp", action="store_true", help="Enable MCP tools for this one-off request")
     parser.add_argument("--no-persist", action="store_true", help="Disable conversation persistence")
     parser.add_argument("--old", action="store_true", help="Use legacy single-panel TUI")
-    parser.add_argument("--build-desktop", action="store_true", help="Build desktop app (.dmg on macOS, .exe on Windows)")
 
     args = parser.parse_args()
     subcmd_words = {"init", "provider", "skill", "models"}
@@ -81,10 +79,6 @@ def main():
     from crabagent.core import configure_litellm
 
     configure_litellm()
-
-    if args.build_desktop:
-        _run_build_desktop()
-        return
 
     if args.serve:
         _run_serve(args)
@@ -556,37 +550,9 @@ async def _setup_agent_context(
     workspace = args.workspace or settings.workspace
     workspace = workspace.resolve()
 
-    base_prompt = (
-        f"You are CrabAgent, an AI assistant. "
-        f"Today is {datetime.now(UTC).strftime('%Y-%m-%d %A')}. "
-        f"Working directory: {workspace}"
-    )
-    try:
-        from crabagent.core.agent.agents import build_team_prompt
+    from crabagent.core.agent.system_prompt import build_system_prompt
 
-        team_prompt = await build_team_prompt()
-        if team_prompt:
-            base_prompt += "\n\n" + team_prompt
-    except Exception:
-        pass
-
-    try:
-        from crabagent.core.agent.agents import build_memory_prompt
-
-        mem_prompt = await build_memory_prompt(user_id, workspace_path=str(workspace))
-        if mem_prompt:
-            base_prompt += "\n\n" + mem_prompt
-    except Exception:
-        pass
-
-    try:
-        from crabagent.core.agent.agents import build_memory_prompt
-
-        mem_prompt = await build_memory_prompt(user_id if "user_id" in dir() else 0)
-        if mem_prompt:
-            base_prompt += "\n\n" + mem_prompt
-    except Exception:
-        pass
+    base_prompt = await build_system_prompt(workspace, user_id=user_id, interface="terminal")
 
     context = AgentContext(
         workspace=workspace,
@@ -1597,259 +1563,6 @@ async def _handle_skill_show_slash(arg: str):
         print(f"Skill '{arg}' not found. Available: {names}")
         return
     print(format_skill_content(skill))
-
-
-def _run_build_desktop():
-    """Build the desktop app package from pip-installed crabagent.
-
-    Produces a .dmg on macOS or a .exe (NSIS installer) on Windows.
-    """
-    import platform
-    import shutil
-    import tempfile
-    import subprocess
-    import os
-    import re
-
-    import crabagent as _ca
-
-    def _fix_spec_paths(spec_path: Path, pkg_dir: Path):
-        """Fix PyInstaller spec paths for pip-installed layout (no src/ directory)."""
-        content = spec_path.read_text("utf-8")
-        content = content.replace(
-            'PROJECT_ROOT = Path(os.getcwd())',
-            f'PROJECT_ROOT = Path(r"{pkg_dir}")'
-        )
-        content = content.replace(
-            'SRC = PROJECT_ROOT / "src"',
-            f'SRC = Path(r"{pkg_dir}")'
-        )
-        content = content.replace(
-            'STATIC = SRC / "crabagent" / "static"',
-            'STATIC = SRC / "static"'
-        )
-        content = content.replace(
-            'str(SRC / "crabagent" / "__main__.py")',
-            'str(SRC / "__main__.py")'
-        )
-        content = content.replace(
-            'str(SRC / "crabagent" / "runtime_hooks.py")',
-            'str(SRC / "runtime_hooks.py")'
-        )
-        # Fix data-file paths for the flat pip package layout.
-        content = content.replace(
-            'SRC / "crabagent" / "VERSION"',
-            'SRC / "VERSION"'
-        )
-        # Note: i18n JSON path is handled inside the spec itself (both layouts)
-        # Fix pyproject.toml lookup — editable installs have it at pkg_dir/../../pyproject.toml
-        content = content.replace(
-            '_PYPROJECT = PROJECT_ROOT / "pyproject.toml"',
-            f'_PYPROJECT = Path(r"{pkg_dir}") / ".." / ".." / ".." / "pyproject.toml"'
-        )
-        spec_path.write_text(content, "utf-8")
-
-    is_windows = platform.system() == "Windows"
-    pkg_dir = Path(_ca.__file__).parent
-    electron_src = pkg_dir / "electron"
-    spec_src = pkg_dir / "crabagent.spec"
-
-    if not electron_src.exists() or not spec_src.exists():
-        print("Error: Desktop build files not found. Reinstall with: pip install crabagent")
-        sys.exit(1)
-
-    work_dir = Path(tempfile.mkdtemp(prefix="crabagent-build-"))
-    print(f"Working directory: {work_dir}")
-    print(f"Target platform: {platform.system()}")
-
-    try:
-        # Copy the electron template WITHOUT node_modules / lock files:
-        # npm install below needs a fresh install, and copying the template's
-        # node_modules would turn .bin symlinks into real files (copytree
-        # follows symlinks by default), breaking electron-builder's shim.
-        shutil.copytree(
-            electron_src, work_dir / "electron",
-            ignore=shutil.ignore_patterns("node_modules", "package-lock.json", "dist-electron"),
-        )
-        shutil.copy2(spec_src, work_dir / "crabagent.spec")
-        # Fix spec paths for pip-installed layout (no src/ directory)
-        _fix_spec_paths(work_dir / "crabagent.spec", pkg_dir)
-
-        # Generate .ico from .png for Windows builds
-        if is_windows:
-            icon_png = pkg_dir / "electron" / "build" / "icon.png"
-            icon_ico = work_dir / "electron" / "build" / "icon.ico"
-            if icon_png.exists():
-                try:
-                    from PIL import Image
-                    img = Image.open(str(icon_png))
-                    img.save(str(icon_ico), format="ICO",
-                             sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
-                    print("   Generated icon.ico from icon.png")
-                except Exception as e:
-                    print(f"   Warning: could not generate icon.ico ({e})")
-
-        print("\n[1/4] Installing Electron dependencies...")
-        # Ensure npm is reachable even when the default PATH lacks the common
-        # install locations (e.g. a ~/.local node without npm shadows them).
-        build_env = dict(os.environ)
-        if not shutil.which("npm", path=build_env.get("PATH", "")):
-            for _cand in ("/usr/local/bin", "/opt/homebrew/bin"):
-                if Path(_cand, "npm").exists():
-                    build_env["PATH"] = _cand + os.pathsep + build_env.get("PATH", "")
-                    break
-        npm_cmd = ["npm", "install", "--silent"]
-        npm_result = subprocess.run(npm_cmd, cwd=str(work_dir / "electron"),
-                                   capture_output=True, encoding='utf-8', errors='replace', timeout=600,
-                                   env=build_env, shell=is_windows)
-        if npm_result.returncode != 0:
-            # Retry once: concurrent bin-linking can rarely leave broken .bin
-            # shims; a fresh install pass fixes them.
-            print("   npm install failed once, retrying...")
-            npm_result = subprocess.run(npm_cmd, cwd=str(work_dir / "electron"),
-                                        capture_output=True, encoding='utf-8', errors='replace', timeout=600,
-                                        env=build_env, shell=is_windows)
-        if npm_result.returncode != 0:
-            print("npm install failed:", npm_result.stderr[-300:])
-            sys.exit(1)
-        print("   Done.")
-
-        print("\n[2/4] Compiling Python backend with PyInstaller...")
-        pyi = subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller", "-q"],
-                           capture_output=True, timeout=60, shell=is_windows)
-        pyi_result = subprocess.run(["pyinstaller", str(work_dir / "crabagent.spec"), "--clean", "--noconfirm"],
-                                   capture_output=True, encoding='utf-8', errors='replace', timeout=600,
-                                   cwd=str(work_dir), shell=is_windows)
-        if pyi_result.returncode != 0:
-            print("PyInstaller failed:", pyi_result.stderr[-400:])
-            sys.exit(1)
-        print("   Done.")
-
-        print("\n[3/4] Assembling app bundle...")
-        resources_dir = work_dir / "electron" / "resources"
-        resources_dir.mkdir(exist_ok=True)
-
-        if is_windows:
-            # PyInstaller onedir: dist/crabagent-backend/ (directory with exe + DLLs)
-            backend_dir = work_dir / "dist" / "crabagent-backend"
-            if backend_dir.exists():
-                dest = resources_dir / "crabagent-backend"
-                if dest.exists():
-                    shutil.rmtree(dest)
-                shutil.copytree(backend_dir, dest)
-                print(f"   Copied backend directory ({sum(f.stat().st_size for f in dest.rglob('*') if f.is_file()) // 1024 // 1024} MB)")
-            else:
-                # Fallback: single exe
-                backend_exe = work_dir / "dist" / "crabagent-backend.exe"
-                if backend_exe.exists():
-                    shutil.copy2(backend_exe, resources_dir / "crabagent-backend.exe")
-                else:
-                    print(f"Error: Backend binary not found in {work_dir / 'dist'}")
-                    sys.exit(1)
-        else:
-            # macOS: onedir mode — copy entire directory
-            backend_dir = work_dir / "dist" / "crabagent-backend"
-            if backend_dir.is_dir():
-                dest = resources_dir / "crabagent-backend"
-                if dest.exists():
-                    shutil.rmtree(dest)
-                shutil.copytree(backend_dir, dest)
-                print(f"   Copied backend directory ({sum(f.stat().st_size for f in dest.rglob('*') if f.is_file()) // 1024 // 1024} MB)")
-            else:
-                # Fallback: single binary (legacy onefile mode)
-                backend_bin = work_dir / "dist" / "crabagent-backend"
-                shutil.copy2(backend_bin, resources_dir / "crabagent-backend")
-        print("   Done.")
-
-        print("\n[4/4] Building Electron installer...")
-        eb_target = "--win" if is_windows else "--mac"
-        eb_args = ["npx", "electron-builder", eb_target]
-        if is_windows:
-            eb_args.append("--config.win.sign=false")
-        else:
-            # macOS: strip existing signatures from embedded Python.framework and
-            # disable code signing entirely to avoid ad-hoc signing failures with
-            # the nested Python framework.
-            python_bin = resources_dir / "crabagent-backend" / "_internal" / "Python.framework"
-            if python_bin.exists():
-                try:
-                    # Replace root Python binary with symlink to avoid
-                    # "bundle format is ambiguous" codesign error
-                    root_python = python_bin / "Python"
-                    versions_python = python_bin / "Versions" / "Current" / "Python"
-                    if root_python.exists() and not root_python.is_symlink():
-                        root_python.unlink()
-                        root_python.symlink_to("Versions/Current/Python")
-                except Exception as e:
-                    print(f"   Warning: Could not fix Python.framework structure: {e}")
-            eb_args.append("--config.mac.identity=null")
-        env = {**build_env, "CSC_IDENTITY_AUTO_DISCOVERY": "false"}
-        electron_result = subprocess.run(
-            eb_args,
-            cwd=str(work_dir / "electron"), capture_output=True, encoding='utf-8', errors='replace', timeout=900,
-            env=env, shell=is_windows,
-        )
-        if is_windows:
-            # On Windows, code signing may fail due to permissions but app is still built
-            dist_dir = work_dir / "electron" / "dist-electron"
-            app_dirs = list(dist_dir.glob("win-unpacked"))
-            if not app_dirs:
-                print("Electron build failed:", electron_result.stderr[-400:])
-                sys.exit(1)
-        else:
-            if electron_result.returncode != 0:
-                print("Electron build failed:", electron_result.stderr[-400:])
-                sys.exit(1)
-        print("   Done.")
-
-        dist_dir = work_dir / "electron" / "dist-electron"
-        if is_windows:
-            # Look for installer exe or unpacked app dir
-            exe_installers = list(dist_dir.glob("*.exe"))
-            if exe_installers:
-                for exe in exe_installers:
-                    size_mb = exe.stat().st_size // 1024 // 1024
-                    print(f"\n  ✅ Build complete: {exe}")
-                    print(f"     Size: {size_mb} MB")
-                    print(f"     Open with: start {exe}")
-            else:
-                app_dirs = list(dist_dir.glob("win-unpacked"))
-                if app_dirs:
-                    exe_files = list(app_dirs[0].glob("*.exe"))
-                    for exe in exe_files:
-                        size_mb = exe.stat().st_size // 1024 // 1024
-                        print(f"\n  ✅ Build complete: {exe}")
-                        print(f"     Size: {size_mb} MB")
-                        print(f"     Open with: start {exe}")
-                else:
-                    print(f"\n  ✅ Build complete. Check: {dist_dir}")
-        else:
-            dmg_files = list(dist_dir.glob("*.dmg"))
-            if dmg_files:
-                for dmg in dmg_files:
-                    size_mb = dmg.stat().st_size // 1024 // 1024
-                    print(f"\n✅ Build complete: {dmg}")
-                    print(f"   Size: {size_mb} MB")
-                    print(f"   Install: open {dmg}")
-            else:
-                dist_dirs = list(dist_dir.glob("*.app"))
-                if dist_dirs:
-                    size_result = subprocess.run(
-                        ["du", "-sh", str(dist_dirs[0])],
-                        capture_output=True, text=True
-                    )
-                    size = size_result.stdout.strip()
-                    print(f"\n✅ Build complete: {dist_dirs[0]}")
-                    print(f"   Size: {size}")
-                    print(f"   Open with: open {dist_dirs[0]}")
-                else:
-                    print(f"\n  ✅ Build complete. Check: {dist_dir}")
-
-    except Exception as e:
-        print(f"\nBuild failed: {e}")
-        sys.exit(1)
-    finally:
-        print(f"\nBuild directory: {work_dir}")
 
 
 def _run_serve(args):

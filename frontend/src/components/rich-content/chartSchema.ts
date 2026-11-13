@@ -38,35 +38,35 @@ function parseJson(source: string): unknown {
   try {
     return JSON.parse(source);
   } catch {
-    throw new Error("JSON 格式无效");
+    throw new Error("Invalid JSON format");
   }
 }
 
 function text(value: unknown, field: string, required = false): string | undefined {
   if (value == null && !required) return undefined;
   if (typeof value !== "string" || !value.trim() || value.length > 160) {
-    throw new Error(`${field} 必须是长度不超过 160 的文本`);
+    throw new Error(`${field} must be text of at most 160 characters`);
   }
   return value;
 }
 
 export function parseChartSpec(source: string): CrabChartSpec {
   const raw = parseJson(source);
-  if (!isRecord(raw) || raw.version !== 1) throw new Error("仅支持 version: 1 的图表");
+  if (!isRecord(raw) || raw.version !== 1) throw new Error("Only version: 1 charts are supported");
   if (!(["bar", "line", "area", "pie", "scatter"] as string[]).includes(String(raw.type))) {
-    throw new Error("不支持的图表类型");
+    throw new Error("Unsupported chart type");
   }
   if (!Array.isArray(raw.series) || raw.series.length === 0 || raw.series.length > MAX_SERIES) {
-    throw new Error(`series 必须包含 1-${MAX_SERIES} 个系列`);
+    throw new Error(`series must contain 1-${MAX_SERIES} series`);
   }
   if (!Array.isArray(raw.data) || raw.data.length === 0 || raw.data.length > MAX_DATA_ROWS) {
-    throw new Error(`data 必须包含 1-${MAX_DATA_ROWS} 行数据`);
+    throw new Error(`data must contain 1-${MAX_DATA_ROWS} rows`);
   }
   const rawSeries = raw.series.map((item, index) => {
     // Accept the initial concise format ("series": ["revenue"]) so that
     // messages already saved in history remain renderable after schema upgrades.
     if (typeof item === "string") return { field: item, name: item };
-    if (!isRecord(item)) throw new Error(`series[${index}] 无效`);
+    if (!isRecord(item)) throw new Error(`series[${index}] is invalid`);
     return item;
   });
   const x = raw.x;
@@ -80,7 +80,7 @@ export function parseChartSpec(source: string): CrabChartSpec {
     .flatMap((row) => isRecord(row) ? Object.entries(row) : [])
     .find(([key, value]) => !seriesFields.includes(key) && typeof value === "string")?.[0];
   const xField = explicitXField || inferredXField;
-  if (raw.type !== "pie" && !xField) throw new Error("除饼图外必须提供 x.field，或在数据中包含文本分类字段");
+  if (raw.type !== "pie" && !xField) throw new Error("x.field is required except for pie charts, or include a text category field in the data");
 
   return {
     version: 1,
@@ -91,15 +91,15 @@ export function parseChartSpec(source: string): CrabChartSpec {
     y: isRecord(raw.y) ? { label: text(raw.y.label, "y.label") } : undefined,
     series: rawSeries.map((item, index) => {
       const color = text(item.color, `series[${index}].color`);
-      if (color && !SAFE_COLOR.test(color)) throw new Error("颜色仅支持 #hex、rgb() 或 hsl()");
+      if (color && !SAFE_COLOR.test(color)) throw new Error("Colors must be #hex, rgb(), or hsl()");
       return { field: text(item.field, `series[${index}].field`, true)!, name: text(item.name, `series[${index}].name`), color };
     }),
     data: raw.data.map((row, index) => {
-      if (!isRecord(row)) throw new Error(`data[${index}] 无效`);
+      if (!isRecord(row)) throw new Error(`data[${index}] is invalid`);
       const clean: Record<string, string | number | null> = {};
       for (const [key, value] of Object.entries(row)) {
         if (key.length > 80 || !["string", "number"].includes(typeof value) && value !== null) {
-          throw new Error(`data[${index}] 包含无效字段`);
+          throw new Error(`data[${index}] contains an invalid field`);
         }
         clean[key] = value as string | number | null;
       }
@@ -110,9 +110,9 @@ export function parseChartSpec(source: string): CrabChartSpec {
 
 export function parseKpiSpec(source: string): CrabKpiSpec {
   const raw = parseJson(source);
-  if (!isRecord(raw) || raw.version !== 1) throw new Error("仅支持 version: 1 的指标卡");
-  if (typeof raw.value !== "string" && typeof raw.value !== "number") throw new Error("value 必须是文本或数字");
+  if (!isRecord(raw) || raw.version !== 1) throw new Error("Only version: 1 KPI cards are supported");
+  if (typeof raw.value !== "string" && typeof raw.value !== "number") throw new Error("value must be text or a number");
   const trend = raw.trend;
-  if (trend != null && trend !== "up" && trend !== "down" && trend !== "neutral") throw new Error("trend 必须是 up、down 或 neutral");
+  if (trend != null && trend !== "up" && trend !== "down" && trend !== "neutral") throw new Error("trend must be up, down, or neutral");
   return { version: 1, title: text(raw.title, "title", true)!, value: raw.value, change: text(raw.change, "change"), trend: trend || undefined, description: text(raw.description, "description") };
 }

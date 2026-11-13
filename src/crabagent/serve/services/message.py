@@ -85,14 +85,14 @@ def message_to_dict(msg: Message) -> dict:
         payload = _json_safe(msg.content)
         if payload:
             label = {
-                "done": "已完成",
-                "partial": "部分完成",
-                "failed": "失败",
-                "cancelled": "已取消",
-            }.get(str(payload.get("status")), str(payload.get("status") or "已结束"))
-            d["content"] = f"[任务结果卡片] {payload.get('title', '')}：{label}"
+                "done": "Completed",
+                "partial": "Partially done",
+                "failed": "Failed",
+                "cancelled": "Cancelled",
+            }.get(str(payload.get("status")), str(payload.get("status") or "Finished"))
+            d["content"] = f"[Task result card] {payload.get('title', '')}: {label}"
         else:
-            d["content"] = "[任务结果卡片]"
+            d["content"] = "[Task result card]"
         return d
 
     if msg.content:

@@ -1,18 +1,17 @@
 /**
- * MobileTimeline — /m 会话实时时间线（屏 2）+ 会话级控制。
+ * MobileTimeline — /m live session timeline (screen 2) + session-level controls.
  *
- * 能力（P1.5）：
- * - 新建会话（可带工作空间）
- * - 切换工作空间 / 模型（provider+model）/ Agent
- * - 发送图片（base64 dataURL，≤5 张、单张 ≤5MB，与桌面端同参）
- * - assistant 消息 markdown 渲染（react-markdown + gfm + highlight）
+ * Capabilities (P1.5):
+ * - Create a session (optionally with a workspace)
+ * - Switch workspace / model (provider+model) / Agent
+ * - Send images (base64 dataURL, ≤5 files, ≤5MB each, same params as desktop)
+ * - Markdown rendering of assistant messages (react-markdown + gfm + highlight)
  *
- * ⚠️ SSE 事件类型是线上小写格式（"text_delta"/"text_done"/"tool_call"），
- *    不是 Python EventType 枚举的大写名。text_delta 的 data.text 是增量
- *    chunk（追加），text_done 是完整全文（工具轮次为空串）。
+ * ⚠️ SSE event types use the wire lowercase format ("text_delta"/"text_done"/"tool_call"),
+ *    not the uppercase Python EventType enum names. text_delta's data.text is an incremental
+ *    chunk (appended), while text_done is the full text (empty string on tool turns).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -49,7 +48,6 @@ const MAX_IMAGES = 5;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 export function MobileTimeline({ sessionId, onSessionChange }: Props) {
-  const { t } = useTranslation();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [live, setLive] = useState<LiveItem[]>([]);
@@ -57,16 +55,16 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
   const [sending, setSending] = useState(false);
   const [connected, setConnected] = useState(false);
 
-  // ── 会话级选择（进入会话时从 session 初始化） ──
+  // ── Session-level selections (initialized from the session on entry) ──
   const [selectedModel, setSelectedModel] = useState("");
   const [selectedProvider, setSelectedProvider] = useState("");
   const [selectedAgent, setSelectedAgent] = useState("");
 
-  // ── 图片附件 ──
+  // ── Image attachments ──
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ── 底部弹层 ──
+  // ── Bottom sheet ──
   const [sheet, setSheet] = useState<null | "workspace" | "model" | "agent">(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [currentWorkspace, setCurrentWorkspace] = useState("");
@@ -76,7 +74,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // 会话列表 + 工作空间
+  // Session list + workspaces
   useEffect(() => {
     void listSessions().then((ss) => {
       setSessions(ss);
@@ -85,13 +83,13 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
     void listWorkspaces().then((ws) => {
       setWorkspaces(ws);
       const cur = ws.find((w) => w.workspace);
-      // WorkspaceInfo 无 is_current 字段时默认第一项；新建会话可显式选择
+      // Default to the first item when WorkspaceInfo has no is_current; a new session can choose explicitly
       if (cur) setCurrentWorkspace(cur.workspace);
     }).catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 切换会话时：拉历史 + 从 session 同步模型/agent 选择
+  // On session switch: fetch history + sync model/agent selections from the session
   const refreshMessages = useCallback(async (sid: string) => {
     try {
       const msgs = await getMessages(sid, 80);
@@ -111,7 +109,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
     setPendingImages([]);
     if (!sessionId) return;
     void refreshMessages(sessionId);
-    // 从 session 同步模型/agent（provider 信息不在 Session 里，留空走服务端默认）
+    // Sync model/agent from the session (provider is not on Session, so leave it empty for the server default)
     const s = sessions.find((x) => x.session_id === sessionId);
     setSelectedModel(s?.model ?? "");
     setSelectedProvider("");
@@ -170,7 +168,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
       es.close();
       setConnected(false);
     };
-    // sessions 变化时不重连 SSE，只影响同步选择 —— 从 ref 读取即可
+    // Don't reconnect SSE when sessions change; it only affects the synced selections — read from the ref
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, refreshMessages]);
 
@@ -178,7 +176,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, live]);
 
-  // ── 动作 ──
+  // ── Actions ──
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
@@ -190,7 +188,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
     try {
       await sendPrompt(
         sessionId,
-        text || t("mobile.imagesOnly"),
+        text || "[images]",
         selectedModel || undefined,
         images.length > 0 ? images : undefined,
         selectedAgent || undefined,
@@ -199,12 +197,12 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
       );
       setTimeout(() => void refreshMessages(sessionId), 1200);
     } catch {
-      // 发送失败：把图片还回去，避免丢失
+      // Send failed: restore the images so they aren't lost
       setPendingImages((prev) => [...images, ...prev]);
     } finally {
       setSending(false);
     }
-  }, [input, sessionId, sending, pendingImages, selectedModel, selectedAgent, selectedProvider, refreshMessages, t]);
+  }, [input, sessionId, sending, pendingImages, selectedModel, selectedAgent, selectedProvider, refreshMessages]);
 
   const handleNewSession = useCallback(async () => {
     if (creating) return;
@@ -215,7 +213,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
       onSessionChange(s.session_id);
       setSheet(null);
     } catch {
-      // 401 由 client 统一处理
+      // 401 is handled centrally by the client
     } finally {
       setCreating(false);
     }
@@ -235,7 +233,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
     });
   }, []);
 
-  // ── 弹层数据懒加载 ──
+  // ── Lazy-load sheet data ──
   const openSheet = useCallback(async (which: "workspace" | "model" | "agent") => {
     setSheet(which);
     if (which === "model" && modelOptions.length === 0) {
@@ -279,12 +277,12 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
       const a = agents.find((x) => x.name === selectedAgent);
       return a?.display_name || a?.name || selectedAgent;
     }
-    return activeSession?.agent || t("mobile.defaultAgent");
-  }, [selectedAgent, agents, activeSession, t]);
+    return activeSession?.agent || "Default agent";
+  }, [selectedAgent, agents, activeSession]);
 
   return (
     <div className="flex flex-col h-full relative">
-      {/* 会话选择器 + 工具行 */}
+      {/* Session picker + tool row */}
       <div className="px-4 pt-2 pb-2 border-b border-zinc-800 bg-zinc-950/80 flex-shrink-0 flex flex-col gap-2">
         <div className="flex gap-2 items-center">
           <select
@@ -292,7 +290,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
             onChange={(e) => onSessionChange(e.target.value)}
             className="flex-1 min-w-0 bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-[13.5px] outline-none"
           >
-            {sessions.length === 0 && <option value="">{t("mobile.noSessions")}</option>}
+            {sessions.length === 0 && <option value="">{"No sessions yet"}</option>}
             {sessions.map((s) => (
               <option key={s.session_id} value={s.session_id}>
                 {s.title || s.session_id.slice(0, 12)}
@@ -302,7 +300,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
           <button
             onClick={() => void handleNewSession()}
             disabled={creating}
-            title={t("mobile.newChat")}
+            title={"New session"}
             className="w-9 h-9 flex-shrink-0 rounded-xl bg-blue-500/15 border border-blue-500/40 text-blue-400 text-[18px] leading-none active:bg-blue-500/30 disabled:opacity-40"
           >
             ＋
@@ -310,10 +308,10 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
         </div>
         <div className="flex gap-1.5 overflow-x-auto text-[11.5px]" style={{ scrollbarWidth: "none" }}>
           <button onClick={() => void openSheet("workspace")} className="chip whitespace-nowrap">
-            🌐 {currentWorkspace ? currentWorkspace.split("/").pop() : t("mobile.workspace")}
+            🌐 {currentWorkspace ? currentWorkspace.split("/").pop() : "Workspace"}
           </button>
           <button onClick={() => void openSheet("model")} className="chip whitespace-nowrap">
-            ⚙️ {selectedModel ? selectedModel.split("/").pop() : t("mobile.defaultModel")}
+            ⚙️ {selectedModel ? selectedModel.split("/").pop() : "Default model"}
           </button>
           <button onClick={() => void openSheet("agent")} className="chip whitespace-nowrap">
             🤖 {agentLabel}
@@ -323,17 +321,17 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
 
       {sessionId && <BackgroundTasks key={sessionId} sessionId={sessionId} mobile />}
 
-      {/* 时间线 */}
+      {/* Timeline */}
       <div className="flex-1 overflow-y-auto px-4 pt-3 pb-4">
         {!sessionId && (
-          <p className="text-[13px] text-zinc-600 mt-8 text-center">{t("mobile.noSessions")}</p>
+          <p className="text-[13px] text-zinc-600 mt-8 text-center">{"No sessions yet"}</p>
         )}
         {sessionId && (
           <div className="flex flex-col gap-3">
             {messages.map((m) => (
               <div key={m.id} className={m.role === "user" ? "self-end max-w-[85%]" : "self-start max-w-[92%]"}>
                 <div className="text-[10.5px] text-zinc-500 mb-0.5 font-semibold">
-                  {m.role === "user" ? t("mobile.you") : "CrabAgent"}
+                  {m.role === "user" ? "You" : "CrabAgent"}
                 </div>
                 <div
                   className={`rounded-2xl px-3.5 py-2.5 ${
@@ -350,14 +348,14 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
                     </ReactMarkdown>
                   )}
                 </div>
-                {/* 用户消息图片 */}
+                {/* User message images */}
                 {m.role === "user" && m.image_data && (
                   <img src={m.image_data} alt="" className="mt-1.5 rounded-xl max-h-40" />
                 )}
               </div>
             ))}
 
-            {/* 实时事件（尚未落库） */}
+            {/* Live events (not yet persisted) */}
             {live.map((item) =>
               item.kind === "tool" ? (
                 <div key={item.id} className="self-start text-[12px] text-sky-300/80 bg-sky-950/40 border border-sky-500/20 rounded-lg px-2.5 py-1.5">
@@ -387,7 +385,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
         )}
       </div>
 
-      {/* 待发图片预览 */}
+      {/* Pending image preview */}
       {pendingImages.length > 0 && (
         <div className="flex-shrink-0 px-4 py-2 border-t border-zinc-800 bg-zinc-950/90 flex gap-2 overflow-x-auto">
           {pendingImages.map((img, i) => (
@@ -404,7 +402,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
         </div>
       )}
 
-      {/* 插话输入条 */}
+      {/* Interjection input bar */}
       <div
         className="flex-shrink-0 border-t border-zinc-800 bg-zinc-950/90 backdrop-blur px-3 pt-2.5 flex gap-2 items-center"
         style={{ paddingBottom: "calc(0.625rem + env(safe-area-inset-bottom))" }}
@@ -424,7 +422,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
           onClick={() => fileInputRef.current?.click()}
           disabled={pendingImages.length >= MAX_IMAGES}
           className="w-9 h-9 flex-shrink-0 rounded-full bg-zinc-800/70 border border-zinc-700 text-zinc-400 text-[16px] disabled:opacity-40"
-          title={t("mobile.attachImage")}
+          title={"Attach image"}
         >
           🖼
         </button>
@@ -432,7 +430,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && void handleSend()}
-          placeholder={working ? t("mobile.steerPlaceholder") : t("mobile.inputPlaceholder")}
+          placeholder={working ? "Steer the task…" : "Send a message…"}
           className="flex-1 min-w-0 bg-zinc-900 border border-zinc-700 rounded-full px-4 py-2.5 text-[13.5px] outline-none focus:border-blue-500/60"
         />
         <button
@@ -444,24 +442,24 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
         </button>
       </div>
 
-      {/* 连接状态提示 */}
+      {/* Connection status notice */}
       {!connected && sessionId && (
         <div className="absolute top-0 left-0 right-0 bg-red-500/10 border-b border-red-500/30 text-red-400 text-[12px] px-4 py-2 z-20">
-          {t("mobile.reconnecting")}
+          {"Reconnecting…"}
         </div>
       )}
 
-      {/* ── 底部弹层：工作空间 / 模型 / Agent ── */}
+      {/* ── Bottom sheet: workspace / model / Agent ── */}
       {sheet && (
         <div className="mc-sheet-backdrop" onClick={() => setSheet(null)}>
           <div className="mc-sheet" onClick={(e) => e.stopPropagation()}>
             <div className="px-4 pt-3 pb-2 text-[14px] font-semibold border-b border-zinc-800 flex items-center justify-between">
               <span>
                 {sheet === "workspace"
-                  ? t("mobile.workspace")
+                  ? "Workspace"
                   : sheet === "model"
-                    ? t("mobile.selectModel")
-                    : t("mobile.selectAgent")}
+                    ? "Model"
+                    : "Agent"}
               </span>
               <button onClick={() => setSheet(null)} className="text-zinc-500 text-[13px]">
                 ✕
@@ -487,7 +485,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
                       {w.workspace === currentWorkspace && <span>✓</span>}
                     </button>
                   ))}
-                  <p className="text-[11px] text-zinc-600 px-3 mt-2">{t("mobile.workspaceHint")}</p>
+                  <p className="text-[11px] text-zinc-600 px-3 mt-2">{"Applies to newly created sessions."}</p>
                 </>
               )}
               {sheet === "model" && (
@@ -502,7 +500,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
                       !selectedModel ? "bg-blue-500/15 text-blue-300" : "text-zinc-300 active:bg-zinc-800"
                     }`}
                   >
-                    {t("mobile.defaultModel")}
+                    {"Default model"}
                   </button>
                   {modelOptions.map((o) => {
                     const val = o.model;
@@ -525,7 +523,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
                     );
                   })}
                   {modelOptions.length === 0 && (
-                    <p className="text-[12px] text-zinc-600 px-3 py-2">{t("mobile.loading")}</p>
+                    <p className="text-[12px] text-zinc-600 px-3 py-2">{"Loading…"}</p>
                   )}
                 </>
               )}
@@ -540,7 +538,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
                       !selectedAgent ? "bg-blue-500/15 text-blue-300" : "text-zinc-300 active:bg-zinc-800"
                     }`}
                   >
-                    {t("mobile.defaultAgent")}
+                    {"Default agent"}
                   </button>
                   {agents.map((a) => (
                     <button
@@ -558,7 +556,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
                     </button>
                   ))}
                   {agents.length === 0 && (
-                    <p className="text-[12px] text-zinc-600 px-3 py-2">{t("mobile.loading")}</p>
+                    <p className="text-[12px] text-zinc-600 px-3 py-2">{"Loading…"}</p>
                   )}
                 </>
               )}

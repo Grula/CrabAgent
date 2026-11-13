@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Collaboration browser</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0d1117; color: #e6edf3; font: 12px/1.4 -apple-system, Segoe UI, sans-serif; }
+      #bar { display: flex; gap: 6px; align-items: center; padding: 6px; border-bottom: 1px solid #30363d; background: #161b22; }
+      #bar button { padding: 5px 10px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #e6edf3; cursor: pointer; font: inherit; }
+      #bar button:hover { background: #30363d; }
+      #url { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #e6edf3; font: inherit; }
+      #stage { position: fixed; top: 45px; left: 0; right: 0; bottom: 0; }
+      #frame { width: 100%; height: 100%; display: block; object-fit: contain; }
+      #status { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: #8b949e; display: none; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <div id="bar">
+      <button data-act="back" title="Back">&larr;</button>
+      <button data-act="forward" title="Forward">&rarr;</button>
+      <button data-act="reload" title="Reload">&#8635;</button>
+      <input id="url" type="text" placeholder="https://example.com" spellcheck="false" />
+      <button id="open">Open</button>
+    </div>
+    <div id="stage">
+      <img id="frame" alt="Collaboration browser" />
+      <div id="status"></div>
+    </div>
+    <script>
+      (function () {
+        function token() { return localStorage.getItem('crab_token') || ''; }
+        var img = document.getElementById('frame');
+        var status = document.getElementById('status');
+        var urlInput = document.getElementById('url');
+        var timer = null, lastUrl = null;
+
+        function setStatus(msg) {
+          status.style.display = msg ? 'block' : 'none';
+          status.textContent = msg || '';
+        }
+
+        function stop() { if (timer) { clearTimeout(timer); timer = null; } }
+
+        function clearFrame() {
+          img.removeAttribute('src');
+          if (lastUrl) { URL.revokeObjectURL(lastUrl); lastUrl = null; }
+        }
+
+        function poll() {
+          fetch('/api/collab-browser/frame', { headers: { Authorization: 'Bearer ' + token() } })
+            .then(function (res) {
+              if (res.status !== 200) throw new Error('http ' + res.status);
+              return res.blob().then(function (blob) {
+                var url = URL.createObjectURL(blob);
+                if (lastUrl) URL.revokeObjectURL(lastUrl);
+                lastUrl = url;
+                img.src = url;
+                setStatus('');
+                timer = setTimeout(poll, 400);
+              });
+            })
+            .catch(function () {
+              stop();
+              clearFrame();
+              setStatus('browser unavailable');
+              setTimeout(function () { if (!timer) poll(); }, 5000);
+            });
+        }
+
+        function post(path, body) {
+          return fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+            body: JSON.stringify(body)
+          }).then(function (res) {
+            if (res.status !== 200) throw new Error('http ' + res.status);
+            return res.json();
+          }).then(function (data) {
+            var result = (data && data.result) || {};
+            if (result.url) urlInput.value = result.url;
+            setStatus('');
+            if (!timer) poll();
+          }).catch(function () {
+            stop();
+            setStatus('browser unavailable');
+            setTimeout(function () { if (!timer) poll(); }, 5000);
+          });
+        }
+
+        function navigate() {
+          var url = urlInput.value.trim();
+          if (url) post('/api/collab-browser/navigate', { url: url });
+        }
+
+        document.getElementById('open').addEventListener('click', navigate);
+        urlInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') navigate(); });
+        Array.prototype.forEach.call(document.querySelectorAll('#bar button[data-act]'), function (btn) {
+          btn.addEventListener('click', function () {
+            post('/api/collab-browser/action', { action: btn.getAttribute('data-act') });
+          });
+        });
+
+        if (!token()) {
+          setStatus('not signed in');
+          return;
+        }
+        poll();
+      })();
+    </script>
+  </body>
+</html>

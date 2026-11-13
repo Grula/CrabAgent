@@ -1,16 +1,15 @@
 /**
- * MobileConsole — /m 移动控制台入口（PWA standalone 主页面）。
+ * MobileConsole — /m mobile console entry point (PWA standalone home page).
  *
- * 路由约定（hash）：
- *   #/m                  → 任务流
- *   #/m/chat             → 会话时间线
- *   #/m/approve/<key>    → 深链落地：任务流并高亮指定请求（只带 request_key，不带 token）
+ * Routing convention (hash):
+ *   #/m                  → task flow
+ *   #/m/chat             → session timeline
+ *   #/m/approve/<key>    → deep-link target: task flow with the given request highlighted (carries only request_key, no token)
  *
- * 复用桌面端的 api client 与 LoginPage（登录一次，localStorage 长效）。
- * 桌面 UI 完全不受影响：App.tsx 仅在 hash 以 #/m 开头时渲染本组件。
+ * Reuses the desktop api client and LoginPage (log in once, persisted in localStorage).
+ * The desktop UI is unaffected: App.tsx renders this component only when the hash starts with #/m.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
 import LoginPage from "../LoginPage";
 import { MobileTaskFlow } from "./MobileTaskFlow";
@@ -28,7 +27,6 @@ function parseHash(): { tab: Tab; focusKey?: string } {
 }
 
 export function MobileConsole() {
-  const { t } = useTranslation();
   const [authed, setAuthed] = useState(!!api.getToken());
   const initial = useMemo(parseHash, []);
   const [tab, setTab] = useState<Tab>(initial.tab);
@@ -36,7 +34,7 @@ export function MobileConsole() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [healthOk, setHealthOk] = useState<boolean | null>(null);
 
-  // 连接健康检查（Mac 离线 / Tailscale 未连时给出明确降级提示）
+  // Connection health check (shows an explicit degraded notice when the Mac is offline / Tailscale is down)
   useEffect(() => {
     let cancelled = false;
     const check = async () => {
@@ -73,7 +71,7 @@ export function MobileConsole() {
 
   return (
     <div className="flex flex-col h-dvh bg-zinc-950 text-zinc-100">
-      {/* 顶栏 */}
+      {/* Top bar */}
       <header
         className="flex-shrink-0 border-b border-zinc-800 bg-zinc-950/95 px-4 pb-2.5"
         style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
@@ -84,7 +82,7 @@ export function MobileConsole() {
             onClick={() => api.clearToken()}
             className="text-[11px] text-zinc-500 border border-zinc-700 rounded-full px-2.5 py-1"
           >
-            {t("mobile.logout")}
+            {"Logout"}
           </button>
         </div>
         <div className="flex items-center gap-1.5 mt-1 text-[12px] text-zinc-500">
@@ -94,14 +92,14 @@ export function MobileConsole() {
             }`}
           />
           {healthOk === false
-            ? t("mobile.offline")
+            ? "Offline — check Mac / Tailscale"
             : healthOk
-              ? t("mobile.connected")
-              : t("mobile.connecting")}
+              ? "Connected"
+              : "Connecting…"}
         </div>
       </header>
 
-      {/* 主区 */}
+      {/* Main area */}
       <main className="flex-1 relative overflow-hidden">
         <div className={`absolute inset-0 overflow-y-auto ${tab !== "tasks" && "hidden"}`}>
           <MobileTaskFlow focusKey={focusKey} onOpenSession={openSession} />
@@ -111,15 +109,15 @@ export function MobileConsole() {
         </div>
       </main>
 
-      {/* 底部 Tab（P1：任务 / 会话；文档、设置随 P2/P3 扩展） */}
+      {/* Bottom tabs (P1: tasks / sessions; docs and settings arrive in P2/P3) */}
       <nav
         className="flex-shrink-0 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur flex"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         {(
           [
-            { id: "tasks", icon: "◈", label: t("mobile.tabTasks") },
-            { id: "chat", icon: "▤", label: t("mobile.tabSessions") },
+            { id: "tasks", icon: "◈", label: "Tasks" },
+            { id: "chat", icon: "▤", label: "Sessions" },
           ] as const
         ).map(({ id, icon, label }) => (
           <button

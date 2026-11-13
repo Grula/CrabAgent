@@ -1,16 +1,15 @@
 /**
- * MobileTaskFlow — /m 首页任务流（屏 1）。
+ * MobileTaskFlow — /m home task flow (screen 1).
  *
- * 三个区块，全部复用现有 API，零后端改动：
- *  1. 等你处理 — GET /task-requests?status=pending（approval / choice / input / human_step / review）
- *     决策走 POST /task-requests/{key}/approve | /reject（answer 用于 choice/input 回答）
- *  2. 运行中  — GET /agents/monitor（含浏览器协作外的所有活跃 Agent 会话）
- *  3. 待办任务 — GET /tasks?status=pending
+ * Three sections, all reusing existing APIs with zero backend changes:
+ *  1. Waiting on you — GET /task-requests?status=pending (approval / choice / input / human_step / review)
+ *     Decisions go through POST /task-requests/{key}/approve | /reject (answer carries the choice/input reply)
+ *  2. Running — GET /agents/monitor (all active Agent sessions except browser collaboration)
+ *  3. Pending tasks — GET /tasks?status=pending
  *
- * 10s 轮询 + visibilitychange 刷新；收到深链 request_key 时高亮对应卡片。
+ * 10s polling + refresh on visibilitychange; highlights the matching card when a deep-link request_key arrives.
  */
 import { useCallback, useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
 import { getAgentMonitor, AgentMonitorInfo } from "../../api/monitor";
 import { listTasks, Task } from "../../api/tasks";
@@ -31,7 +30,7 @@ export interface TaskRequestItem {
 }
 
 interface Props {
-  /** 深链带来的 request_key（#/m/approve/<key>），用于置顶高亮 */
+  /** request_key from a deep link (#/m/approve/<key>), used to pin and highlight */
   focusKey?: string;
   onOpenSession: (sessionId: string) => void;
 }
@@ -44,11 +43,11 @@ const RISK_STYLES: Record<string, string> = {
 };
 
 const TYPE_STYLES: Record<string, { badge: string; label: string }> = {
-  approval: { badge: "bg-amber-500/20 text-amber-400", label: "approval" },
-  choice: { badge: "bg-purple-500/20 text-purple-300", label: "question" },
-  input: { badge: "bg-purple-500/20 text-purple-300", label: "question" },
-  human_step: { badge: "bg-blue-500/20 text-blue-300", label: "humanStep" },
-  review: { badge: "bg-blue-500/20 text-blue-300", label: "review" },
+  approval: { badge: "bg-amber-500/20 text-amber-400", label: "Approval" },
+  choice: { badge: "bg-purple-500/20 text-purple-300", label: "Question" },
+  input: { badge: "bg-purple-500/20 text-purple-300", label: "Question" },
+  human_step: { badge: "bg-blue-500/20 text-blue-300", label: "Human step" },
+  review: { badge: "bg-blue-500/20 text-blue-300", label: "Review" },
 };
 
 function elapsedLabel(startedAt: number): string {
@@ -67,7 +66,6 @@ function waitedLabel(iso: string | null): string {
 }
 
 export function MobileTaskFlow({ focusKey, onOpenSession }: Props) {
-  const { t } = useTranslation();
   const [requests, setRequests] = useState<TaskRequestItem[]>([]);
   const [running, setRunning] = useState<AgentMonitorInfo[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -105,7 +103,7 @@ export function MobileTaskFlow({ focusKey, onOpenSession }: Props) {
         await api.post(`/task-requests/${encodeURIComponent(key)}/${decision}`, answer ? { answer } : {});
         setRequests((prev) => prev.filter((r) => r.request_key !== key));
       } catch {
-        // 决策失败（409 资源变更 / 已过期）— 刷新拿最新状态
+        // Decision failed (409 changed resource / already expired) — refresh to get the latest state
         void fetchAll();
       } finally {
         setBusyKey(null);
@@ -116,13 +114,13 @@ export function MobileTaskFlow({ focusKey, onOpenSession }: Props) {
 
   return (
     <div className="flex flex-col gap-5 px-4 pt-3 pb-24">
-      {/* ── 等你处理 ── */}
+      {/* ── Waiting on you ── */}
       <section>
         <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-2">
-          {t("mobile.awaiting", { count: requests.length })}
+          {`Waiting for you (${requests.length})`}
         </h2>
         {loaded && requests.length === 0 && (
-          <p className="text-[13px] text-zinc-600 px-1">{t("mobile.noPending")}</p>
+          <p className="text-[13px] text-zinc-600 px-1">{"Nothing waiting on you 🎉"}</p>
         )}
         {requests.map((r) => {
           const meta = TYPE_STYLES[r.request_type] ?? TYPE_STYLES.review;
@@ -140,17 +138,17 @@ export function MobileTaskFlow({ focusKey, onOpenSession }: Props) {
               <div className="flex items-center justify-between gap-2 mb-1.5">
                 <div className="flex items-center gap-1.5">
                   <span className={`text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${meta.badge}`}>
-                    {t(`mobile.${meta.label}`)}
+                    {meta.label}
                   </span>
                   {(r.risk_level === "high" || r.risk_level === "critical") && (
                     <span className={`text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${RISK_STYLES[r.risk_level]}`}>
-                      {t("mobile.riskHigh")}
+                      {"HIGH RISK"}
                     </span>
                   )}
                 </div>
                 {r.created_at && (
                   <span className="text-[11px] text-zinc-500 whitespace-nowrap">
-                    {t("mobile.waited", { time: waitedLabel(r.created_at) })}
+                    {`waited ${waitedLabel(r.created_at)}`}
                   </span>
                 )}
               </div>
@@ -164,7 +162,7 @@ export function MobileTaskFlow({ focusKey, onOpenSession }: Props) {
                 </pre>
               )}
 
-              {/* choice：选项点选即回；input：自由回答 */}
+              {/* choice: tapping an option submits; input: free-form answer */}
               {(r.request_type === "choice" || r.request_type === "input") && (
                 <div className="mt-2.5 flex flex-col gap-1.5">
                   {(r.options ?? []).map((opt) => (
@@ -187,7 +185,7 @@ export function MobileTaskFlow({ focusKey, onOpenSession }: Props) {
                 </div>
               )}
 
-              {/* approval / human_step / review：批准 / 拒绝 */}
+              {/* approval / human_step / review: approve / reject */}
               {(r.request_type === "approval" || r.request_type === "human_step" || r.request_type === "review") && (
                 <div className="flex gap-2 mt-3">
                   <button
@@ -195,14 +193,14 @@ export function MobileTaskFlow({ focusKey, onOpenSession }: Props) {
                     onClick={() => void decide(r.request_key, "reject")}
                     className="flex-1 py-2.5 rounded-xl text-[14px] font-semibold bg-red-500/10 text-red-400 border border-red-500/35 active:bg-red-500/20"
                   >
-                    {t("mobile.reject")}
+                    {"Reject"}
                   </button>
                   <button
                     disabled={isBusy}
                     onClick={() => void decide(r.request_key, "approve")}
                     className="flex-1 py-2.5 rounded-xl text-[14px] font-semibold bg-green-500/15 text-green-400 border border-green-500/45 active:bg-green-500/30"
                   >
-                    {r.request_type === "approval" ? t("mobile.approve") : t("mobile.doneStep")}
+                    {r.request_type === "approval" ? "Approve" : "Done"}
                   </button>
                 </div>
               )}
@@ -211,10 +209,10 @@ export function MobileTaskFlow({ focusKey, onOpenSession }: Props) {
         })}
       </section>
 
-      {/* ── 运行中 ── */}
+      {/* ── Running ── */}
       <section>
         <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-2">
-          {t("mobile.running", { count: running.length })}
+          {`Running (${running.length})`}
         </h2>
         {running.map((a) => (
           <button
@@ -224,7 +222,7 @@ export function MobileTaskFlow({ focusKey, onOpenSession }: Props) {
           >
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-green-500/15 text-green-400">
-                {t("mobile.statusRunning")}
+                {"Running"}
               </span>
               <span className="text-[11px] text-zinc-500">{elapsedLabel(a.started_at)}</span>
             </div>
@@ -233,15 +231,15 @@ export function MobileTaskFlow({ focusKey, onOpenSession }: Props) {
           </button>
         ))}
         {loaded && running.length === 0 && (
-          <p className="text-[13px] text-zinc-600 px-1">{t("mobile.noRunning")}</p>
+          <p className="text-[13px] text-zinc-600 px-1">{"No active sessions"}</p>
         )}
       </section>
 
-      {/* ── 待办任务 ── */}
+      {/* ── Pending tasks ── */}
       {tasks.length > 0 && (
         <section>
           <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-2">
-            {t("mobile.tasks", { count: tasks.length })}
+            {`Pending tasks (${tasks.length})`}
           </h2>
           {tasks.map((task) => (
             <div key={task.id} className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-3.5 mb-2.5">
@@ -274,7 +272,6 @@ function FreeAnswer({
   onChange: (v: string) => void;
   onSubmit: () => void;
 }) {
-  const { t } = useTranslation();
   return (
     <div className="flex gap-2 items-center mt-1">
       <input
@@ -282,7 +279,7 @@ function FreeAnswer({
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && value.trim() && onSubmit()}
-        placeholder={t("mobile.otherReply")}
+        placeholder={"Or type your own answer…"}
         className="flex-1 bg-zinc-800/70 border border-zinc-700 rounded-xl px-3 py-2.5 text-[13px] outline-none focus:border-purple-500/60"
       />
       {value.trim() && (

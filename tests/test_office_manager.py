@@ -35,8 +35,8 @@ async def test_view_text_builds_expected_args(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(manager, "exec", fake_exec)
     await manager.view_text("demo.xlsx", max_lines=10, sheet="Sheet1", cols="A:C", start=5)
 
-    # officecli 的 view text 不支持 --sheet（会报 unknown option），
-    # sheet 过滤在 office_read 工具层完成，这里不应出现 --sheet。
+    # officecli `view text` does not support --sheet (it reports unknown option),
+    # so sheet filtering happens in the office_read tool layer; --sheet must not appear here.
     assert captured["args"] == (
         "view",
         "demo.xlsx",
@@ -146,7 +146,7 @@ async def test_batch_serializes_commands_to_json(monkeypatch: pytest.MonkeyPatch
 async def test_batch_normalizes_props_arrays_and_redundant_type(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """batch props 必须全是标量：数组转 CSV，add 的冗余 props.type 剥掉。"""
+    """batch props must all be scalars: arrays become CSV, redundant props.type is stripped."""
     manager = OfficeManager()
     manager._available = True
     manager._binary_path = "/fake/officecli"
@@ -163,20 +163,20 @@ async def test_batch_normalizes_props_arrays_and_redundant_type(
             "command": "add",
             "parent": "/body",
             "type": "table",
-            "props": {"data": [["季度", "营收"], ["Q1", "1200"]], "style": "medium1"},
+            "props": {"data": [["Quarter", "Revenue"], ["Q1", "1200"]], "style": "medium1"},
         },
         {
             "command": "add",
             "parent": "/body",
             "type": "paragraph",
-            "props": {"type": "paragraph", "text": "标题"},
+            "props": {"type": "paragraph", "text": "Title"},
         },
     ])
 
     payload = json.loads(captured["args"][3])
-    # data 二维数组 → CSV 字符串（CLI prop 值不接受数组）
-    assert payload[0]["props"]["data"] == "季度,营收;Q1,1200"
-    # 冗余的 props.type 被剥离，命令层 type 保留
+    # 2-D data array → CSV string (CLI prop values do not accept arrays)
+    assert payload[0]["props"]["data"] == "Quarter,Revenue;Q1,1200"
+    # Redundant props.type is stripped; the command-level type is kept
     assert "type" not in payload[1]["props"]
     assert payload[1]["type"] == "paragraph"
 

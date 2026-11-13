@@ -5,7 +5,6 @@ import CalendarPage, { MobileAgenda } from "./CalendarPage";
 import type { CalendarEvent } from "../api/calendar";
 
 vi.mock("../api/client", () => ({ api: {} }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
 describe("mobile page layouts", () => {
   it("starts with the agent list and hides details on narrow screens", () => {
@@ -15,10 +14,10 @@ describe("mobile page layouts", () => {
   });
   it("provides a mobile agenda and overview", () => {
     const html = renderToStaticMarkup(<CalendarPage />);
-    expect(html).toContain('aria-label="日程列表"');
+    expect(html).toContain('aria-label="Schedule list"');
     expect(html).toContain("hidden md:flex");
-    expect(html).toContain("今日概览");
-    expect(html).toContain('aria-label="日历设置"');
+    expect(html).toContain("Today&#x27;s overview");
+    expect(html).toContain('aria-label="Calendar settings"');
   });
   it("sorts and filters the agenda and shows empty and loading states", () => {
     const events = [
@@ -30,8 +29,8 @@ describe("mobile page layouts", () => {
     const html = renderToStaticMarkup(<MobileAgenda {...props} loading={false} />);
     expect(html.indexOf("Earlier")).toBeLessThan(html.indexOf("Later"));
     expect(html).not.toContain("Outside");
-    expect(html).toContain("全天");
-    expect(renderToStaticMarkup(<MobileAgenda {...props} events={[]} loading={false} />)).toContain("此时段没有事件");
-    expect(renderToStaticMarkup(<MobileAgenda {...props} events={[]} loading />)).toContain("加载中...");
+    expect(html).toContain("All day");
+    expect(renderToStaticMarkup(<MobileAgenda {...props} events={[]} loading={false} />)).toContain("No events in this period");
+    expect(renderToStaticMarkup(<MobileAgenda {...props} events={[]} loading />)).toContain("Loading...");
   });
 });

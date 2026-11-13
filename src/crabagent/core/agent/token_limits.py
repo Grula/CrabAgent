@@ -71,8 +71,8 @@ DEFAULT_MODEL_TOKEN_LIMITS: dict[str, int] = {
     "kimi-k2.7-code": 256_000,
     "kimi-k2.7-code-highspeed": 256_000,
     "kimi-for-coding": 256_000,
-    # StepFun (阶跃星辰)。旧模型名自带窗口标识（8k/16k/32k/128k）；
-    # step-5-preview 官方口径 1M 上下文；step-3.7-flash 官方口径 256k 上下文。
+    # StepFun. Older model names encode their window (8k/16k/32k/128k);
+    # step-5-preview has a documented 1M context window; step-3.7-flash 256k.
     "step-5-preview": 1_000_000,
     "step-3.7-flash": 256_000,
     "step-1-8k": 8_000,

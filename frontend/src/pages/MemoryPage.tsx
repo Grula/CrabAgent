@@ -1,4 +1,3 @@
-import { useTranslation } from "react-i18next";
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   FolderOpen,
@@ -31,10 +30,10 @@ import FloatingMenu from "../components/ui/FloatingMenu";
 
 type MemoryTab = "project" | "agent_lesson" | "user_preference";
 
-const TAB_KEYS: Record<MemoryTab, string> = {
-  project: "memory.teamKnowledge",
-  agent_lesson: "memory.lessons",
-  user_preference: "memory.preferences",
+const TAB_LABELS: Record<MemoryTab, string> = {
+  project: "Team Knowledge",
+  agent_lesson: "Lessons Learned",
+  user_preference: "User Preferences",
 };
 
 const TAB_TYPES: Record<MemoryTab, string> = {
@@ -56,7 +55,6 @@ function formatDate(iso: string): string {
 }
 
 export default function MemoryPage() {
-  const { t } = useTranslation();
   const [tab, setTab] = useState<MemoryTab>("project");
   const [entries, setEntries] = useState<MemoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -70,7 +68,7 @@ export default function MemoryPage() {
   const [wsOpen, setWsOpen] = useState(false);
   const wsAnchorRef = useRef<HTMLDivElement>(null);
   const wsPanelRef = useRef<HTMLDivElement>(null);
-  // 工作区下拉通过 portal 渲染，外点关闭需同时排除锚点和浮层。
+  // The workspace dropdown renders via portal, so outside-click dismissal must exclude both the anchor and the floating layer.
   useEffect(() => {
     if (!wsOpen) return;
     const onDown = (e: PointerEvent) => {
@@ -151,10 +149,10 @@ export default function MemoryPage() {
   const handleDelete = async (entry: MemoryEntry) => {
     try {
       await deleteAgentMemory(entry.key);
-      toast.success(t("memory.deleted"));
+      toast.success("Memory deleted");
       fetchEntries();
     } catch {
-      toast.error(t("memory.deleteFailed"));
+      toast.error("Failed to delete");
     }
   };
 
@@ -162,17 +160,17 @@ export default function MemoryPage() {
     if (!editingEntry) return;
     try {
       await updateMemory(editingEntry.key, editContent);
-      toast.success(t("memory.memoryUpdated"));
+      toast.success("Memory updated");
       setEditingEntry(null);
       fetchEntries();
     } catch {
-      toast.error(t("memory.failedUpdate"));
+      toast.error("Failed to update");
     }
   };
 
   const handleCreate = async () => {
     if (!createForm.key || !createForm.content) {
-      toast.error(t("memory.keyContentRequired"));
+      toast.error("Key and content are required");
       return;
     }
     try {
@@ -184,12 +182,12 @@ export default function MemoryPage() {
         content: createForm.content,
         importance: 0.5,
       });
-      toast.success(t("memory.memoryCreated"));
+      toast.success("Memory created");
       setShowCreate(false);
       setCreateForm({ key: "", content: "", category: "" });
       fetchEntries();
     } catch {
-      toast.error(t("memory.failedCreate"));
+      toast.error("Failed to create");
     }
   };
 
@@ -202,18 +200,18 @@ export default function MemoryPage() {
       <div className="flex items-center gap-4 px-6 h-12 border-b border-[var(--border)] bg-[var(--bg-secondary)]">
         <Brain size={15} className="text-[var(--text-tertiary)]" />
         <span className="text-sm font-semibold tracking-wide text-[var(--text-primary)] font-mono">
-          {t("memory.title").toUpperCase()}
+          {"Memory".toUpperCase()}
         </span>
         <div className="flex-1" />
         <span className="text-xs text-[var(--text-tertiary)]">
-          {t("memory.entries", { count: entries.length })}
+          {`${entries.length} entries`}
         </span>
       </div>
 
       {/* Tabs */}
       <div className="px-5 pt-5">
         <div className="flex items-center gap-1 mb-4 border-b border-[var(--border)] pb-2">
-          {(Object.keys(TAB_KEYS) as MemoryTab[]).map((tabId) => (
+          {(Object.keys(TAB_LABELS) as MemoryTab[]).map((tabId) => (
             <button
               key={tabId}
               onClick={() => setTab(tabId)}
@@ -224,7 +222,7 @@ export default function MemoryPage() {
                   : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]/60",
               )}
             >
-              {t(TAB_KEYS[tabId])}
+              {TAB_LABELS[tabId]}
               {tab === tabId && (
                 <span className="absolute -bottom-[10px] left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-[var(--brand)]" />
               )}
@@ -246,7 +244,7 @@ export default function MemoryPage() {
                 <span className="flex-1 truncate">
                   {selectedWorkspace
                     ? selectedWorkspace.split("/").slice(-2).join("/")
-                    : t("workspaceSwitcher.directory")}
+                    : "Directory"}
                 </span>
                 <ChevronDown
                   size={12}
@@ -309,7 +307,7 @@ export default function MemoryPage() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={t("memory.searchPlaceholder")}
+            placeholder={"Search memories..."}
             className="w-full h-8 pl-8 pr-3 rounded-lg text-xs border border-[var(--border)] bg-[var(--bg-tertiary)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none focus:border-[var(--brand)] transition-colors"
           />
           {search && (
@@ -328,7 +326,7 @@ export default function MemoryPage() {
             onChange={(e) => setAgentFilter(e.target.value)}
             className="h-8 px-2 rounded-lg text-xs border border-[var(--border)] bg-[var(--bg-tertiary)] text-[var(--text-primary)] outline-none focus:border-[var(--brand)]"
           >
-            <option value="">{t("memory.allAgents")}</option>
+            <option value="">{"All agents"}</option>
             {displayAgentNames.map((name) => (
               <option key={name} value={name}>{name}</option>
             ))}
@@ -336,7 +334,7 @@ export default function MemoryPage() {
         )}
 
         <Button variant="ghost" size="xs" onClick={() => setShowCreate(true)}>
-          <Plus size={13} /> {t("memory.add")}
+          <Plus size={13} /> {"Add"}
         </Button>
       </div>
 
@@ -351,15 +349,15 @@ export default function MemoryPage() {
         ) : entries.length === 0 ? (
           <EmptyState
             icon={<Brain size={28} className="text-[var(--text-tertiary)]" />}
-            title={search ? t("memory.noMatching") : t("memory.noMemoriesYet")}
+            title={search ? "No matching memories" : "No memories yet"}
             description={
               search
-                ? t("memory.tryDifferent")
+                ? "Try a different search term"
                 : tab === "project"
-                  ? t("memory.startWorking")
+                  ? "Start working in a project to build memory"
                   : tab === "agent_lesson"
-                    ? t("memory.agentLessonsAuto")
-                    : t("memory.userPrefsLearned")
+                    ? "Agent lessons appear automatically after tasks"
+                    : "User preferences are learned over time"
             }
           />
         ) : (
@@ -411,14 +409,14 @@ export default function MemoryPage() {
                       setEditContent(entry.content);
                     }}
                     className="p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]"
-                    title={t("memory.edit")}
+                    title={"Edit"}
                   >
                     <Pencil size={12} />
                   </button>
                   <button
                     onClick={() => handleDelete(entry)}
                     className="p-1 rounded text-[var(--danger)] hover:bg-[var(--danger-bg)]"
-                    title={t("memory.delete")}
+                    title={"Delete"}
                   >
                     <Trash2 size={12} />
                   </button>
@@ -433,15 +431,15 @@ export default function MemoryPage() {
       <Modal
         open={!!editingEntry}
         onOpenChange={(o) => !o && setEditingEntry(null)}
-        title={t("memory.editTitle")}
+        title={"Edit Memory"}
         size="md"
         footer={
           <div className="flex gap-2">
             <Button variant="brand" onClick={handleEdit}>
-              <Check size={13} /> {t("memory.save")}
+              <Check size={13} /> {"Save"}
             </Button>
             <Button variant="ghost" onClick={() => setEditingEntry(null)}>
-              {t("memory.cancel")}
+              {"Cancel"}
             </Button>
           </div>
         }
@@ -449,7 +447,7 @@ export default function MemoryPage() {
         {editingEntry && (
           <div className="space-y-3">
             <div className="text-xs text-[var(--text-tertiary)]">
-              <span className="font-medium">{t("memory.keyLabel")}</span> {editingEntry.key}
+              <span className="font-medium">{"Key:"}</span> {editingEntry.key}
             </div>
             <textarea
               value={editContent}
@@ -464,46 +462,46 @@ export default function MemoryPage() {
       <Modal
         open={showCreate}
         onOpenChange={(o) => !o && setShowCreate(false)}
-        title={t("memory.addMemory")}
+        title={"Add Memory"}
         size="md"
         footer={
           <div className="flex gap-2">
             <Button variant="brand" onClick={handleCreate}>
-              <Plus size={13} /> {t("memory.create")}
+              <Plus size={13} /> {"Create"}
             </Button>
             <Button variant="ghost" onClick={() => setShowCreate(false)}>
-              {t("memory.cancel")}
+              {"Cancel"}
             </Button>
           </div>
         }
       >
         <div className="space-y-3">
           <Input
-            label={t("memory.key")}
+            label={"Key"}
             value={createForm.key}
             onChange={(e) => setCreateForm({ ...createForm, key: e.target.value })}
-            placeholder={t("memory.keyPlaceholder")}
+            placeholder={"e.g. lesson:my_tip"}
           />
           <div>
             <label className="block text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)] mb-1">
-              {t("memory.category")}
+              {"Category"}
             </label>
             <input
               value={createForm.category}
               onChange={(e) => setCreateForm({ ...createForm, category: e.target.value })}
-              placeholder={t("memory.categoryPlaceholder") || "e.g. tech_stack, architecture"}
+              placeholder="e.g. tech_stack, architecture"
               className="w-full h-8 px-3 rounded-lg text-xs border border-[var(--border)] bg-[var(--bg-tertiary)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none focus:border-[var(--brand)] transition-colors"
             />
           </div>
           <div>
             <label className="block text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)] mb-1">
-              {t("memory.content")}
+              {"Content"}
             </label>
             <textarea
               value={createForm.content}
               onChange={(e) => setCreateForm({ ...createForm, content: e.target.value })}
               className="w-full min-h-[100px] p-3 rounded-lg text-xs border border-[var(--border)] bg-[var(--bg-tertiary)] text-[var(--text-primary)] outline-none focus:border-[var(--brand)] resize-y transition-colors font-mono leading-relaxed"
-              placeholder={t("memory.contentPlaceholder")}
+              placeholder={"Enter memory content..."}
             />
           </div>
         </div>

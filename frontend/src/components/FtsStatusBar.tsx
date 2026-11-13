@@ -26,7 +26,7 @@ export function FtsStatusBar({ done, total }: Props) {
       <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border)] shadow-lg">
         <Search size={13} className="text-[var(--accent-2)] shrink-0" />
         <span className="text-[11px] text-[var(--text-secondary)] whitespace-nowrap">
-          索引消息 {done.toLocaleString()} / {total.toLocaleString()}
+          Index messages {done.toLocaleString()} / {total.toLocaleString()}
         </span>
         <div className="w-20 h-1 rounded-full bg-[var(--bg-tertiary)] overflow-hidden">
           <div

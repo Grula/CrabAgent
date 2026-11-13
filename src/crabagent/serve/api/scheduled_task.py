@@ -78,7 +78,7 @@ async def create_task(
 ):
     parts = req.cron_expression.strip().split()
     if len(parts) != 5:
-        raise HTTPException(status_code=400, detail="cron 表达式必须包含5个字段（分 时 日 月 周）")
+        raise HTTPException(status_code=400, detail="A cron expression must contain 5 fields (minute hour day month weekday)")
 
     task = ScheduledTask(
         user_id=user.id,
@@ -105,7 +105,7 @@ async def update_task(
     result = await db.execute(select(ScheduledTask).where(ScheduledTask.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail="Task not found")
 
     cron_changed = False
     if req.name is not None:
@@ -115,7 +115,7 @@ async def update_task(
     if req.cron_expression is not None:
         parts = req.cron_expression.strip().split()
         if len(parts) != 5:
-            raise HTTPException(status_code=400, detail="cron 表达式必须包含5个字段")
+            raise HTTPException(status_code=400, detail="A cron expression must contain 5 fields")
         task.cron_expression = req.cron_expression.strip()
         cron_changed = True
     if req.model is not None:
@@ -169,7 +169,7 @@ async def delete_task(
     result = await db.execute(select(ScheduledTask).where(ScheduledTask.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail="Task not found")
 
     get_scheduler().remove_task(task_id)
     await db.execute(delete(ScheduledTask).where(ScheduledTask.id == task_id))
@@ -186,7 +186,7 @@ async def run_task_now(
     result = await db.execute(select(ScheduledTask).where(ScheduledTask.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=404, detail="Task not found")
 
     import asyncio
 

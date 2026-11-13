@@ -1,6 +1,6 @@
 # 🦀 CrabAgent
 
-> **AI Knowledge Work Platform** — Chat when you need answers, Work when you need results, Computer Use when the task is on your desktop. One agent across terminal, browser, and native macOS apps.
+> **AI Knowledge Work Platform** — Chat when you need answers, Work when you need results. One agent across terminal, browser, and documents.
 
 CrabAgent is a local-first AI platform with **two working modes** that adapt to what you're doing:
 
@@ -30,7 +30,7 @@ Chat Mode                          Work Mode
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-**[English](README.md)** | **[中文](README.zh-CN.md)**
+**[English](README.md)**
 
 ---
 
@@ -46,9 +46,9 @@ The default mode. Session list on the left, full-width conversation on the right
 - Multi-turn conversations with full project memory
 
 ```
-You: "帮我分析一下这个项目的架构"
+You: "Analyze the architecture of this project"
 AI: [reads files, analyzes patterns, generates structured report]
-You: "把分析结果整理成一份 Word 文档"
+You: "Put the analysis into a Word document"
 AI: [creates document] → auto-switches to Work Mode with preview
 ```
 
@@ -67,7 +67,6 @@ When the AI creates or opens a file, the interface splits: AI chat shrinks to a 
 | 🔬 **Prototype** | Split-pane: source code on left, live preview on right | AI builds an HTML/JS prototype |
 | 📝 **Meeting** | Structured meeting notes panel with action item extraction | You click "Start Meeting" |
 | 🌐 **Browser** | Real embedded browser with shared login state; AI navigates and interacts while you handle CAPTCHA and MFA | You click "Collaboration Browser" |
-| 🖥️ **macOS Computer Use** | AI observes and operates native macOS apps — accessibility tree, window capture, keyboard/mouse input. Opt-in, allowlisted apps only | Settings → macOS 控制 |
 
 ### Work Mode features
 
@@ -83,7 +82,7 @@ When the AI creates or opens a file, the interface splits: AI chat shrinks to a 
 ```
 Work Mode in action:
 
-You: "读取 sales.xlsx 汇总 Q1 数据，做成一份报告"
+You: "Summarize Q1 from sales.xlsx into a report"
                           │
   ┌───────────────────────┼───────────────────────────────┐
   │  AI Chat Sidebar      │  Workspace (Document Preview) │
@@ -130,11 +129,11 @@ Handoff       → Pass context from one agent to another
 CrabAgent watches your inbox and turns emails into action items — automatically.
 
 ```
-Incoming email: "明天下午3点开会讨论新功能"
+Incoming email: "Meeting tomorrow at 3 PM to discuss the new feature"
       │
       ├─ 🧠 LLM analyzes: meeting + deadline detected
       ├─ 📝 Drafts a reply for your review
-      ├─ ✅ Creates task: "参加关于crabagent的会议" (due tomorrow 3PM)
+      ├─ ✅ Creates task: "Meeting about crabagent" (due tomorrow 3PM)
       └─ 🔗 Links task to email conversation — click to view full context
 ```
 
@@ -142,32 +141,12 @@ No rules, no regex. Just LLM-powered understanding.
 
 ---
 
-## 💬 WeChat Channel — AI in Your Pocket
-
-Bind your WeChat account via QR code, and CrabAgent becomes reachable from your phone.
-
-```
-You (WeChat): "看一下26年1月有啥工作"
-       │
-       ├─ 🤖 Agent processes with full project context
-       ├─ 💬 Replies directly in WeChat chat
-       └─ 🔔 Pushes notifications: task overdue, scheduled task done, email summary
-```
-
-**Three modes:**
-- **Command execution** — send instructions from WeChat, Agent executes and replies
-- **Proactive notifications** — task deadlines, scheduled task results, email summaries auto-pushed
-- **Conversational** — multi-turn chat with full project memory
-
----
-
 ## 📱 Remote Access & Push — Full Agent, Anywhere
 
-Beyond the WeChat chat channel, CrabAgent supports a full-fidelity remote setup:
+CrabAgent supports a full-fidelity remote setup:
 
 - **Remote Web UI via Tailscale** — the local server listens on all interfaces, so after a zero-config Tailscale tunnel between your Mac and phone, opening `http://<mac-ip>:5210` on cellular gives you the complete desktop experience: sessions, task drawers, documents, and the collaboration browser. No port forwarding, nothing exposed to the public internet.
-- **Bark / ntfy push notifications** — when a task finishes, fails, or waits for your authorization, a push notification arrives on your phone instantly (waiting-for-you alerts are time-sensitive and break through iOS Focus). Tap the notification to deep-link straight back into the Agent UI. Configure it in Settings → "手机推送", with per-event toggles and a one-click test send.
-- **WeChat stays as a fallback** — both channels run in parallel and independently.
+- **Bark / ntfy push notifications** — when a task finishes, fails, or waits for your authorization, a push notification arrives on your phone instantly (waiting-for-you alerts are time-sensitive and break through iOS Focus). Tap the notification to deep-link straight back into the Agent UI. Configure it in Settings → "Mobile push", with per-event toggles and a one-click test send.
 
 ---
 
@@ -203,10 +182,10 @@ Settings → Providers → Add → "ChatGPT Subscription (Plus/Pro)"
 Every time you work in a project, CrabAgent automatically extracts lessons and preferences. Next time you open it, it already knows:
 
 ```
-=== 项目上下文 ===
-上次活跃：06-05 15:30
-技术栈：Python / FastAPI / SQLAlchemy
-项目经验：N+1 查询用 selectinload 优化；API 文档用 OpenAPI 规范
+=== Project Context ===
+Last active: 06-05 15:30
+Tech stack: Python / FastAPI / SQLAlchemy
+Project lessons: Fixed N+1 queries with selectinload; documented the API with the OpenAPI spec
 ====================
 ```
 
@@ -236,23 +215,6 @@ crabagent --serve          # → http://localhost:5210
 # Single-shot CLI
 crabagent "organize this directory"
 ```
-
-### Desktop App (macOS & Windows)
-
-Build the Electron wrapper (requires Python + `crabagent` installed on your system):
-
-```bash
-# One-command build (from git clone):
-make desktop                       # macOS → CrabAgent-x.x.x-arm64.dmg
-
-# Or from pip install (auto-detects platform):
-crabagent --build-desktop          # macOS → .dmg | Windows → .exe installer
-
-# Windows (PowerShell):
-.\scripts\build-desktop.ps1        # → CrabAgent-x.x.x-setup.exe
-```
-
-The desktop app includes a floating **desktop pet** that reacts to agent state (idle, thinking, working, waiting, celebrating, error). Drag it anywhere on screen; use the tray or app menu to show/hide it.
 
 ---
 
@@ -297,31 +259,6 @@ Work across multiple projects simultaneously. The workspace switcher shows a **l
 pip install 'crabagent[browser]'
 playwright install chromium
 ```
-
-### 🖥️ macOS Computer Use
-Let the AI observe and operate **native macOS applications** — not just the browser. Built on a signed one-shot Swift helper; all enforcement lives in native code, not prompts.
-
-The helper ships **pre-built inside the `crabagent` wheel** — no manual build needed.
-After `pip install crabagent`, build the desktop app yourself:
-
-```bash
-crabagent --build-desktop        # builds the .app / .dmg (helper included)
-```
-
-The `npm run build-helper` step below is only for developers who modify the
-helper's Swift source:
-
-
-**Capabilities**
-- **AX-tree observation** — roles, labels, values and frames of every control (up to 300 nodes, values truncated)
-- **Per-window capture** — ScreenCaptureKit JPEG of a single window, never the whole screen
-- **Input** — CGEvent click, Unicode text (CJK + emoji), named keys, modifier combos (`cmd+s`), scroll
-
-**Safety model** — input is opt-in and gated by four independent layers: the macOS 控制 toggle in Settings, a per-app allowlist (unknown apps trigger a confirmation card; approval persists), frontmost-app verification before every action, and Secure Input / lock-screen refusal. `Cmd+Q` / `Cmd+Tab` are denied. Budgeted (60 actions / 20 observations / 15 min) and audited.
-
-**TCC stability** — the helper runs from `~/.crabagent/bin` (outside the app bundle) under a stable code-signing identity, so Accessibility and Screen Recording grants survive repacks.
-
-Requires macOS 13+; grant **Accessibility** and **Screen Recording** to CrabAgent in System Settings on first use.
 
 ### 🔌 MCP Client
 Connect external MCP servers (stdio + HTTP). Tools auto-discover and get prefixed.
@@ -414,7 +351,6 @@ CrabAgent/
 │   ├── core/          # Database, config, project memory, embedding
 │   └── serve/         # FastAPI + API + scheduler
 ├── frontend/          # React SPA
-├── electron/          # Electron desktop app
 ├── scripts/           # Build scripts
 ├── crabagent.spec     # PyInstaller config
 └── crabagent.db       # SQLite database

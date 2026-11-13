@@ -1,4 +1,4 @@
-"""OfficeCLI 安装状态查询端点。"""
+"""OfficeCLI installation-status endpoint."""
 
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ router = APIRouter(prefix="/officecli", tags=["officecli"])
 
 @router.get("/status")
 async def officecli_status():
-    """返回 OfficeCLI 的安装状态，供前端轮询。"""
+    """Return the OfficeCLI install status for the frontend to poll."""
     mgr = get_office_manager()
     status = mgr.get_install_status()
-    # 补充 available 字段方便前端判断
+    # Add the available flag so the frontend can decide quickly
     status["available"] = mgr.available
     if mgr.version:
         status["version"] = mgr.version
@@ -27,7 +27,7 @@ async def officecli_status():
 
 @router.get("/perf")
 async def officecli_perf():
-    """返回最近 OfficeCLI 命令的轻量性能统计。"""
+    """Return lightweight performance stats for recent OfficeCLI commands."""
     mgr = get_office_manager()
     return {
         "available": mgr.available,

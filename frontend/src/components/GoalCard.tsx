@@ -20,12 +20,12 @@ const statusStyle = {
 };
 
 const statusLabel = {
-  active: "进行中",
-  paused: "已暂停",
-  budget_limited: "预算已到",
-  complete: "已完成",
-  unmet: "遇到阻塞",
-  cleared: "已归档",
+  active: "In progress",
+  paused: "Paused",
+  budget_limited: "Budget reached",
+  complete: "Completed",
+  unmet: "Blocked",
+  cleared: "Archived",
 };
 
 export function GoalCard({ goal, busy, onPause, onResume, onEdit, onHistory }: Props) {
@@ -44,21 +44,21 @@ export function GoalCard({ goal, busy, onPause, onResume, onEdit, onHistory }: P
               {goal.status === "complete" ? <CheckCircle2 size={11} /> : goal.status === "unmet" ? <CircleAlert size={11} /> : <Goal size={11} />}
               {statusLabel[goal.status]}
             </span>
-            {!isDone && <span className="text-[11px] text-[var(--text-tertiary)]">目标模式</span>}
+            {!isDone && <span className="text-[11px] text-[var(--text-tertiary)]">Goal mode</span>}
           </div>
           <p className="mt-1 text-sm font-medium text-[var(--text-primary)] line-clamp-2">{goal.objective}</p>
           {detail && <p className="mt-1 text-xs text-[var(--text-secondary)] line-clamp-2">{detail}</p>}
-          {goal.next_step && !isDone && <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">下一步：{goal.next_step}</p>}
+          {goal.next_step && !isDone && <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">Next step: {goal.next_step}</p>}
         </div>
         <div className="flex shrink-0 gap-1">
-          {!isDone && goal.status === "active" && <button onClick={onPause} disabled={busy} title="暂停目标" className="p-2 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] disabled:opacity-50"><Pause size={15} /></button>}
-          {!isDone && goal.status !== "active" && <button onClick={onResume} disabled={busy} title="继续目标" className="p-2 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--brand)] disabled:opacity-50"><Play size={15} /></button>}
-          <button onClick={onHistory} title="查看目标进展" className="px-2 text-[11px] rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">进展</button>
-          <button onClick={onEdit} disabled={busy} title="编辑目标" className="p-2 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] disabled:opacity-50"><Pencil size={15} /></button>
+          {!isDone && goal.status === "active" && <button onClick={onPause} disabled={busy} title="Pause goal" className="p-2 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] disabled:opacity-50"><Pause size={15} /></button>}
+          {!isDone && goal.status !== "active" && <button onClick={onResume} disabled={busy} title="Resume goal" className="p-2 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--brand)] disabled:opacity-50"><Play size={15} /></button>}
+          <button onClick={onHistory} title="View goal progress" className="px-2 text-[11px] rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">Progress</button>
+          <button onClick={onEdit} disabled={busy} title="Edit goal" className="p-2 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)] disabled:opacity-50"><Pencil size={15} /></button>
         </div>
       </div>
       {(goal.success_criteria.length > 0 || goal.token_budget) && <div className="border-t border-[var(--border-subtle)] px-3.5 py-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[var(--text-tertiary)]">
-        {goal.success_criteria.length > 0 && <span>{goal.success_criteria.length} 项验收条件</span>}
+        {goal.success_criteria.length > 0 && <span>{goal.success_criteria.length} acceptance criteria</span>}
         {goal.token_budget && <span>{goal.tokens_used.toLocaleString()} / {goal.token_budget.toLocaleString()} tokens</span>}
       </div>}
     </section>

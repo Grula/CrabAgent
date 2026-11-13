@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { useTranslation } from "react-i18next";
 import { ChevronDown, Check, Search } from "lucide-react";
 import { cn } from "../lib/cn";
 import { ProviderModels } from "../hooks/useModelSelector";
@@ -18,6 +17,8 @@ interface Props {
   disabled?: boolean;
   className?: string;
   dropdownUpward?: boolean;
+  /** "field": bordered input look (forms); "chip": borderless picker inside the chat composer */
+  variant?: "field" | "chip";
 }
 
 export default function ModelSelector({
@@ -28,8 +29,8 @@ export default function ModelSelector({
   disabled,
   className,
   dropdownUpward = true,
+  variant = "field",
 }: Props) {
-  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const resolvedProvider = selectedProvider ?? providerModels.find((item) =>
     item.models.some((model) => model.id === selectedModel),
@@ -198,7 +199,9 @@ export default function ModelSelector({
         }}
         onKeyDown={handleKeyDown}
         disabled={disabled}
-        className={cn(
+        title="Model"
+        aria-expanded={open}
+        className={variant === "chip" ? "composer-chip" : cn(
           "flex items-center gap-1.5 text-xs h-7 pl-2.5 pr-1.5 rounded-md",
           "bg-[var(--bg-tertiary)] border border-[var(--border)]",
           "text-[var(--text-primary)] font-mono",
@@ -239,7 +242,7 @@ export default function ModelSelector({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={t("modelSelector.searchPlaceholder")}
+                placeholder={"Search models…"}
                 className="flex-1 bg-transparent text-xs font-mono text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none"
               />
             </div>

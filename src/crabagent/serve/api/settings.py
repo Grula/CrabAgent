@@ -130,7 +130,7 @@ async def test_proxy(
 
 @router.get("/skills")
 async def list_skills(user=Depends(get_current_user)):
-    """返回当前已发现的所有 skill 列表。"""
+    """Return the list of all currently discovered skills."""
     from crabagent.core.agent.skill.loader import discover_skills
 
     skill_dirs = app_settings.skill_discovery_dirs()
@@ -151,7 +151,7 @@ async def list_skills(user=Depends(get_current_user)):
 
 @router.get("/skills/{name}")
 async def get_skill_detail(name: str, user=Depends(get_current_user)):
-    """返回指定 skill 的完整内容。"""
+    """Return the full content of the given skill."""
     from crabagent.core.agent.skill.loader import discover_skills
 
     skill_dirs = app_settings.skill_discovery_dirs()

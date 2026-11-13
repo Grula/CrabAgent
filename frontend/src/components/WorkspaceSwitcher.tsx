@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useTranslation } from "react-i18next";
 import {
   Activity, Check, ChevronDown, Eye, EyeOff, FolderOpen, GripVertical,
   Home, Pin, Plus, Settings2, Star,
@@ -26,7 +25,6 @@ function workspaceName(workspace: string): string {
 }
 
 export default function WorkspaceSwitcher({ current, onChange, onOverlayChange }: Props) {
-  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [currentWorkspacePath, setCurrentWorkspacePath] = useState("");
@@ -115,7 +113,7 @@ export default function WorkspaceSwitcher({ current, onChange, onOverlayChange }
 
   const displayName = current
     ? workspaceName(current)
-    : (workspaceName(currentWorkspacePath) || t("workspaceSwitcher.directory"));
+    : (workspaceName(currentWorkspacePath) || "Directory");
   const visibleWorkspaces = workspaces.filter((workspace) => !workspace.hidden);
   const hiddenWorkspaces = workspaces.filter((workspace) => workspace.hidden);
   const totalActive = Object.values(activeByWorkspace).reduce((total, count) => total + count, 0);
@@ -150,12 +148,12 @@ export default function WorkspaceSwitcher({ current, onChange, onOverlayChange }
   };
 
   const ATTENTION_BADGE: Record<string, { style: React.CSSProperties; animate?: boolean; title: string }> = {
-    waiting: { style: { background: "#f97316", color: "#fff" }, title: "等待你的处理" },
-    failed: { style: { background: "#ef4444", color: "#fff" }, title: "有失败任务" },
-    due: { style: { background: "#f59e0b", color: "#fff" }, title: "任务临近截止" },
-    partial: { style: { background: "#f59e0b", color: "#fff" }, title: "有部分完成的任务" },
-    working: { style: { background: "var(--success)", color: "#fff" }, animate: true, title: "正在执行" },
-    completed_unread: { style: { background: "#3b82f6", color: "#fff" }, title: "有新成果" },
+    waiting: { style: { background: "#f97316", color: "#fff" }, title: "Waiting for you" },
+    failed: { style: { background: "#ef4444", color: "#fff" }, title: "Tasks failed" },
+    due: { style: { background: "#f59e0b", color: "#fff" }, title: "Task deadline approaching" },
+    partial: { style: { background: "#f59e0b", color: "#fff" }, title: "Some tasks partially done" },
+    working: { style: { background: "var(--success)", color: "#fff" }, animate: true, title: "Running" },
+    completed_unread: { style: { background: "#3b82f6", color: "#fff" }, title: "New results available" },
   };
 
   const attentionBadge = (workspacePath: string) => {
@@ -201,24 +199,24 @@ export default function WorkspaceSwitcher({ current, onChange, onOverlayChange }
       <button onClick={() => setOpen(!open)} className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors", "bg-[var(--bg-tertiary)] border border-[var(--border)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] text-[var(--text-secondary)]")}>
         <FolderOpen size={12} />
         <span className="truncate max-w-[120px]">{displayName}</span>
-        {attentionBadge(current || currentWorkspacePath) ?? (totalActive > 0 && <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-bold leading-none animate-pulse" style={{ background: "var(--success)", color: "#fff" }} title={`${totalActive} 个活跃会话`}>{totalActive}</span>)}
+        {attentionBadge(current || currentWorkspacePath) ?? (totalActive > 0 && <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-bold leading-none animate-pulse" style={{ background: "var(--success)", color: "#fff" }} title={`${totalActive} active sessions`}>{totalActive}</span>)}
         <ChevronDown size={10} className={cn("transition-transform", open && "rotate-180")} />
       </button>
 
       {open && createPortal(<div ref={menuRef} style={{ top: menuPosition.top, left: menuPosition.left, maxHeight: `calc(100dvh - ${menuPosition.top}px - 8px)` }} className={cn("fixed z-50 min-w-[min(220px,90vw)] max-w-[min(90vw,320px)] overflow-y-auto", "bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg shadow-[var(--shadow-lg)] py-1 animate-fade-in")}>
         <button onClick={() => { onChange(""); setOpen(false); }} className={cn("w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors", !current ? "text-[var(--brand)] font-medium bg-[var(--brand)]/5" : "text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]")}>
-          <Home size={12} /><span className="flex-1 truncate" title={currentWorkspacePath}>{workspaceName(currentWorkspacePath) || t("workspaceSwitcher.directory")}</span>{!current && <Check size={12} />}
+          <Home size={12} /><span className="flex-1 truncate" title={currentWorkspacePath}>{workspaceName(currentWorkspacePath) || "Directory"}</span>{!current && <Check size={12} />}
         </button>
         {visibleWorkspaces.length > 0 && <div className="border-t border-[var(--border)] my-1" />}
         {visibleWorkspaces.map(workspaceRow)}
-        {hiddenWorkspaces.length > 0 && <div className="px-3 pt-2 pb-1 text-[10px] text-[var(--text-tertiary)]">{t("workspaceSwitcher.hiddenCount", { count: hiddenWorkspaces.length })}</div>}
+        {hiddenWorkspaces.length > 0 && <div className="px-3 pt-2 pb-1 text-[10px] text-[var(--text-tertiary)]">{`${hiddenWorkspaces.length} hidden workspaces`}</div>}
         <div className="border-t border-[var(--border)] my-1" />
-        <button onClick={() => { setOpen(false); setShowPicker(true); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"><Plus size={12} /><span>{t("workspaceSwitcher.chooseDirectory")}</span></button>
-        <button onClick={() => { setOpen(false); setShowManager(true); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"><Settings2 size={12} /><span>{t("workspaceSwitcher.manage")}</span></button>
+        <button onClick={() => { setOpen(false); setShowPicker(true); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"><Plus size={12} /><span>{"Choose directory…"}</span></button>
+        <button onClick={() => { setOpen(false); setShowManager(true); }} className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"><Settings2 size={12} /><span>{"Manage workspaces"}</span></button>
       </div>, document.body)}
 
       <DirectoryPicker open={showPicker} onClose={() => setShowPicker(false)} onSelect={handlePickerSelect} />
-      <Modal open={showManager} onOpenChange={setShowManager} title={t("workspaceSwitcher.manage")} description={t("workspaceSwitcher.manageDescription")} size="lg">
+      <Modal open={showManager} onOpenChange={setShowManager} title={"Manage workspaces"} description={"Drag to reorder, pin frequent workspaces, or hide low-use workspaces. Hiding never deletes directories or sessions."} size="lg">
         <div className="space-y-2">
           {workspaces.map((workspace) => {
             const isCurrent = workspace.workspace === current;
@@ -226,10 +224,10 @@ export default function WorkspaceSwitcher({ current, onChange, onOverlayChange }
               <GripVertical size={16} className="shrink-0 cursor-grab text-[var(--text-tertiary)]" />
               <FolderOpen size={15} className={workspace.hidden ? "text-[var(--text-tertiary)]" : "text-[var(--brand)]"} />
               <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium text-[var(--text-primary)]" title={workspace.workspace}>{workspaceName(workspace.workspace)}</div><div className="truncate text-[11px] text-[var(--text-tertiary)]">{workspace.workspace}</div></div>
-              <span className="text-[11px] text-[var(--text-tertiary)]">{workspace.session_count} {t("workspaceSwitcher.sessions")}</span>
-              <span className={cn("hidden sm:inline text-[10px]", workspace.hidden ? "text-[var(--text-tertiary)]" : "text-[var(--success)]")}>{workspace.hidden ? t("workspaceSwitcher.hidden") : t("workspaceSwitcher.visible")}</span>
-              <button type="button" onClick={() => updatePreference(workspace.workspace, { pinned: !workspace.pinned })} className={cn("rounded-lg p-2 transition-colors hover:bg-[var(--bg-secondary)]", workspace.pinned ? "text-[var(--brand)]" : "text-[var(--text-tertiary)]")} title={workspace.pinned ? t("workspaceSwitcher.unpin") : t("workspaceSwitcher.pin")}><Star size={15} fill={workspace.pinned ? "currentColor" : "none"} /></button>
-              <button type="button" disabled={isCurrent} onClick={() => updatePreference(workspace.workspace, { hidden: !workspace.hidden })} className={cn("rounded-lg p-2 transition-colors hover:bg-[var(--bg-secondary)]", isCurrent ? "cursor-not-allowed text-[var(--border-strong)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)]")} title={isCurrent ? t("workspaceSwitcher.currentProtected") : workspace.hidden ? t("workspaceSwitcher.show") : t("workspaceSwitcher.hide")}>
+              <span className="text-[11px] text-[var(--text-tertiary)]">{workspace.session_count} {"sessions"}</span>
+              <span className={cn("hidden sm:inline text-[10px]", workspace.hidden ? "text-[var(--text-tertiary)]" : "text-[var(--success)]")}>{workspace.hidden ? "Hidden" : "Visible"}</span>
+              <button type="button" onClick={() => updatePreference(workspace.workspace, { pinned: !workspace.pinned })} className={cn("rounded-lg p-2 transition-colors hover:bg-[var(--bg-secondary)]", workspace.pinned ? "text-[var(--brand)]" : "text-[var(--text-tertiary)]")} title={workspace.pinned ? "Unpin" : "Pin to top"}><Star size={15} fill={workspace.pinned ? "currentColor" : "none"} /></button>
+              <button type="button" disabled={isCurrent} onClick={() => updatePreference(workspace.workspace, { hidden: !workspace.hidden })} className={cn("rounded-lg p-2 transition-colors hover:bg-[var(--bg-secondary)]", isCurrent ? "cursor-not-allowed text-[var(--border-strong)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)]")} title={isCurrent ? "The current workspace cannot be hidden" : workspace.hidden ? "Show workspace" : "Hide workspace"}>
                 {workspace.hidden ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>;

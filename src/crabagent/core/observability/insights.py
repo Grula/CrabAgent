@@ -44,10 +44,10 @@ def analyze_spans(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
             insights.append({
                 "type": "tool_loop",
                 "severity": "warning",
-                "title": f"工具 '{name}' 被调用了 {len(group)} 次",
+                "title": f"Tool '{name}' was called {len(group)} times",
                 "detail": (
-                    "Agent 可能在循环中反复调用同一工具。"
-                    "考虑优化 prompt 或增加终止条件。"
+                    "The agent may be calling the same tool in a loop."
+                    "Consider improving the prompt or adding stop conditions."
                 ),
                 "span_ids": [s["id"] for s in group if "id" in s],
             })
@@ -64,12 +64,12 @@ def analyze_spans(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "type": "token_hotspot",
                     "severity": "info",
                     "title": (
-                        f"单次 LLM 调用消耗 {max_prompt:,} prompt tokens"
-                        f"（占总量 {pct}%）"
+                        f"A single LLM call used {max_prompt:,} prompt tokens"
+                        f" ({pct}% of total)"
                     ),
                     "detail": (
-                        "上下文可能累积过长。"
-                        "考虑启用上下文压缩或拆分任务以减少单次调用成本。"
+                        "Context may have grown too long."
+                        "Consider enabling context compression or splitting the task to lower per-call cost."
                     ),
                     "span_id": max_span.get("id"),
                 })
@@ -89,11 +89,11 @@ def analyze_spans(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
             insights.append({
                 "type": "context_bloat",
                 "severity": "warning",
-                "title": "上下文快速膨胀",
+                "title": "Context growing fast",
                 "detail": (
-                    f"Prompt tokens 从 {prompts[0]:,} 增长到 "
-                    f"{prompts[-1]:,}（{len(prompts)} 轮，"
-                    f"约 {growth}x 增长）。"
+                    f"Prompt tokens grew from {prompts[0]:,} to "
+                    f"{prompts[-1]:,} ({len(prompts)} rounds, "
+                    f"about {growth}x)."
                 ),
             })
 
@@ -104,11 +104,11 @@ def analyze_spans(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for s in error_tools:
             name = s.get("name", "unknown")
             error_names[name] = error_names.get(name, 0) + 1
-        detail_parts = [f"{name}: {count}次" for name, count in list(error_names.items())[:3]]
+        detail_parts = [f"{name}: {count} calls" for name, count in list(error_names.items())[:3]]
         insights.append({
             "type": "tool_errors",
             "severity": "error",
-            "title": f"{len(error_tools)} 次工具调用失败",
+            "title": f"{len(error_tools)} tool calls failed",
             "detail": "; ".join(detail_parts),
             "span_ids": [s["id"] for s in error_tools if "id" in s],
         })
@@ -127,7 +127,7 @@ def analyze_spans(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
         insights.append({
             "type": "slow_tools",
             "severity": "info",
-            "title": f"{len(slow_tools)} 次工具调用超过 30 秒",
+            "title": f"{len(slow_tools)} tool calls took over 30s",
             "detail": "; ".join(detail_parts),
             "span_ids": [s["id"] for s in slow_tools if "id" in s],
         })

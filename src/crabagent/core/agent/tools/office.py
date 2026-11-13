@@ -17,7 +17,7 @@ _SUPPORTED_EXTENSIONS = {".docx", ".xlsx", ".pptx"}
 
 
 def _resolve_path(file_path: str, context: Any = None) -> str:
-    """将相对路径解析为工作区下的绝对路径。"""
+    """Resolve a relative path to an absolute path under the workspace."""
     if os.path.isabs(file_path):
         return file_path
     if context and hasattr(context, "workspace") and context.workspace:
@@ -26,52 +26,52 @@ def _resolve_path(file_path: str, context: Any = None) -> str:
 
 
 def _resolve_path_or_current(file_path: str, context: Any = None) -> tuple[str | None, str | None]:
-    """解析路径，如果 file_path 为空则尝试从 context 中取当前文档。
+    """Resolve the path; if file_path is empty, try to get the current document from context.
 
     Returns:
-        (resolved_path, None) 成功
-        (None, error_message) 失败
+        (resolved_path, None) on success
+        (None, error_message) on failure
     """
     if file_path:
         return _resolve_path(file_path, context), None
-    # file_path 为空 → 从 context metadata 中读 current_doc
+    # file_path empty → read current_doc from context metadata
     if context and context.metadata.get("current_doc"):
         doc = context.metadata["current_doc"]
         return _resolve_path(doc, context), None
-    return None, "⚠️ 请指定文档路径，或先在左侧文件树中打开一个文档"
+    return None, "⚠️ Please specify a document path, or open a document in the file tree on the left first"
 
 
 async def _ensure_available() -> str | None:
-    """确保 OfficeCLI 可用，必要时自动检测+自动安装。返回错误信息或 None。"""
+    """Ensure OfficeCLI is available, auto-detecting and auto-installing if needed. Returns an error message or None."""
     mgr = get_office_manager()
     if not mgr.available:
-        # 先尝试检测（可能已安装在非标准路径）
+        # Try detection first (it may be installed at a non-standard path)
         if await mgr.detect():
             return None
-        # 自动下载安装
+        # Download and install automatically
         logger.info("OfficeCLI not found — attempting auto-install…")
         if await mgr.install():
             logger.info("OfficeCLI auto-install succeeded")
             return None
-        # 安装失败，显示安装指引
+        # Installation failed; show installation guidance
         from crabagent.core.office.manager import _INSTALL_HINT
         return _INSTALL_HINT
     return None
 
 
 async def _collect_formulas(mgr: Any, file_path: str, sheet: str = "") -> str:
-    """收集 xlsx 中的公式单元格，返回可读的公式摘要。
+    """Collect formula cells in an xlsx file and return a readable formula summary.
 
-    使用 query cell 选择器查找含公式的单元格，然后逐个获取详情。
+    Uses the query cell selector to find cells containing formulas, then fetches details one by one.
     """
-    # 用 query 查找所有有 formula 的单元格
+    # Use query to find all cells with a formula
     result = await mgr.query(file_path, "cell[formula]")
     if not result.success or not result.data:
         return ""
 
     cells = result.data if isinstance(result.data, list) else result.data.get("results", [])
     if not cells:
-        # query 可能返回 dict 格式
+        # query may return a dict
         if isinstance(result.data, dict):
             cells = result.data.get("results", [])
 
@@ -79,7 +79,7 @@ async def _collect_formulas(mgr: Any, file_path: str, sheet: str = "") -> str:
         return ""
 
     lines: list[str] = []
-    for cell_node in cells[:50]:  # 限制最多 50 个，避免输出过长
+    for cell_node in cells[:50]:  # Cap at 50 to avoid overly long output
         if isinstance(cell_node, dict):
             path = cell_node.get("path", "")
             fmt = cell_node.get("format", {})
@@ -94,7 +94,7 @@ async def _collect_formulas(mgr: Any, file_path: str, sheet: str = "") -> str:
 
 
 def _check_extension(file_path: str) -> str | None:
-    """检查文件扩展名是否受支持。"""
+    """Check whether the file extension is supported."""
     ext = Path(file_path).suffix.lower()
     if ext not in _SUPPORTED_EXTENSIONS:
         supported = ", ".join(sorted(_SUPPORTED_EXTENSIONS))
@@ -108,24 +108,24 @@ def _check_extension(file_path: str) -> str | None:
 def _validate_batch_commands(commands: list[dict[str, Any]]) -> tuple[list[dict[str, Any]] | None, str | None]:
     """Validate and normalize batch commands before passing them to OfficeCLI."""
     if not isinstance(commands, list) or not commands:
-        return None, "commands 必须是非空数组"
+        return None, "commands must be a non-empty array"
 
     allowed_commands = {"set", "add", "remove", "move", "swap"}
     normalized: list[dict[str, Any]] = []
 
     for idx, item in enumerate(commands, start=1):
         if not isinstance(item, dict):
-            return None, f"第 {idx} 条命令必须是对象"
+            return None, f"command #{idx} must be an object"
 
         command = str(item.get("command", "")).strip().lower()
         if command not in allowed_commands:
-            return None, f"第 {idx} 条命令不支持: {command or '<empty>'}"
+            return None, f"command #{idx} is not supported: {command or '<empty>'}"
 
         entry: dict[str, Any] = {"command": command}
         path = item.get("path")
         parent = item.get("parent")
 
-        # 兼容别名：模型可能沿用 office_edit 单命令的 element_path / element_type
+        # Compatible aliases: the model may reuse office_edit's element_path / element_type
         if path is None and isinstance(item.get("element_path"), str):
             path = item["element_path"]
         if parent is None and isinstance(item.get("element_path"), str):
@@ -136,21 +136,21 @@ def _validate_batch_commands(commands: list[dict[str, Any]]) -> tuple[list[dict[
 
         if command in {"set", "remove", "move", "swap"}:
             if not isinstance(path, str) or not path.strip():
-                return None, f"第 {idx} 条命令缺少 path"
+                return None, f"command #{idx} is missing path"
             entry["path"] = path.strip()
 
         if command == "add":
             if not isinstance(parent, str) or not parent.strip():
-                return None, f"第 {idx} 条 add 命令缺少 parent（父容器路径，如 /body、/slide[1]）"
+                return None, f"add command #{idx} is missing parent (parent container path, e.g. /body, /slide[1])"
             if not isinstance(element_type, str) or not element_type.strip():
-                return None, f"第 {idx} 条 add 命令缺少 type（元素类型，如 paragraph、shape）"
+                return None, f"add command #{idx} is missing type (element type, e.g. paragraph, shape)"
             entry["parent"] = parent.strip()
             entry["type"] = element_type.strip()
 
         props = item.get("props")
         if props is not None:
             if not isinstance(props, dict):
-                return None, f"第 {idx} 条命令的 props 必须是对象"
+                return None, f"props of command #{idx} must be an object"
             entry["props"] = props
 
         if command == "move":
@@ -162,8 +162,8 @@ def _validate_batch_commands(commands: list[dict[str, Any]]) -> tuple[list[dict[
                 isinstance(after, str) and after.strip()
             ) and not (isinstance(before, str) and before.strip()):
                 return None, (
-                    f"第 {idx} 条 move 命令缺少目标：to（目标父路径）"
-                    "或 after/before（参考元素路径）"
+                    f"move command #{idx} is missing a target: to (target parent path) "
+                    "or after/before (reference element paths)"
                 )
             if has_target:
                 entry["to"] = to_parent.strip()
@@ -175,12 +175,12 @@ def _validate_batch_commands(commands: list[dict[str, Any]]) -> tuple[list[dict[
                 try:
                     entry["index"] = int(item["index"])
                 except (TypeError, ValueError):
-                    return None, f"第 {idx} 条 move 命令的 index 必须是整数"
+                    return None, f"index of move command #{idx} must be an integer"
 
         if command == "swap":
             other = item.get("with")
             if not isinstance(other, str) or not other.strip():
-                return None, f"第 {idx} 条 swap 命令缺少 with"
+                return None, f"swap command #{idx} is missing with"
             entry["with"] = other.strip()
 
         if command == "add":
@@ -194,7 +194,7 @@ def _validate_batch_commands(commands: list[dict[str, Any]]) -> tuple[list[dict[
 
 
 async def _emit(context: Any, event_type: EventType, data: dict[str, Any]) -> None:
-    """发射 SSE 事件（仅在 serve 模式下有 event_bus）。"""
+    """Emit an SSE event (event_bus only exists in serve mode)."""
     if context and hasattr(context, "event_bus") and context.event_bus:
         try:
             await context.event_bus.emit(AgentEvent(type=event_type, data=data))
@@ -205,7 +205,7 @@ async def _emit(context: Any, event_type: EventType, data: dict[str, Any]) -> No
 async def _render_and_emit_preview(
     file_path: str, resolved: str, context: Any
 ) -> None:
-    """操作成功后渲染预览并发射。"""
+    """Render a preview and emit it after a successful operation."""
     mgr = get_office_manager()
     preview = await mgr.view_html(resolved)
     if preview.success:
@@ -222,37 +222,40 @@ async def _render_and_emit_preview(
 
 @registry.register(
     name="office_read",
-    description="读取 Office 文档的内容。支持 .docx(Word)、.xlsx(Excel)、.pptx(PowerPoint)。"
-    "返回纯文本内容或结构化 JSON，方便 AI 分析文档数据。",
+    description="Read Office document content. Supports .docx (Word), .xlsx (Excel), .pptx (PowerPoint). "
+    "Returns plain text or structured JSON for AI analysis of document data.",
     parameters={
         "type": "object",
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": "文档路径（绝对路径，或相对于当前工作区的路径）。留空则自动使用当前打开的文档。",
+                "description": "Document path (absolute, or relative to the current workspace). "
+                "Leave empty to automatically use the currently open document.",
             },
             "mode": {
                 "type": "string",
                 "enum": ["text", "outline", "stats"],
-                "description": "读取模式：text-全文文本, outline-大纲结构, stats-统计信息",
+                "description": "Read mode: text-full text, outline-outline structure, stats-statistics",
                 "default": "text",
             },
             "sheet": {
                 "type": "string",
-                "description": "（Excel 专用）工作表名称，如 'Sheet1'，留空则读取所有工作表",
+                "description": "(Excel only) worksheet name, e.g. 'Sheet1'. Leave empty to read all worksheets.",
             },
             "cols": {
                 "type": "string",
-                "description": "（Excel text 模式专用）列范围，如 'A:D'、'B:F'。留空则读取所有列",
+                "description": "(Excel text mode only) column range, e.g. 'A:D', 'B:F'. "
+                "Leave empty to read all columns.",
             },
             "max_lines": {
                 "type": "integer",
-                "description": "最大返回行数",
+                "description": "Maximum number of lines to return",
                 "default": 200,
             },
             "offset": {
                 "type": "integer",
-                "description": "起始行/段落编号（从1开始）。用于跳过文档前段内容，直接读取中后部分。",
+                "description": "Starting line/paragraph number (1-based). "
+                "Used to skip the beginning of the document and read the middle or later part directly.",
                 "default": 0,
             },
         },
@@ -268,7 +271,7 @@ async def office_read(
     offset: int = 0,
     context: Any = None,
 ) -> str:
-    """读取 Office 文档内容。"""
+    """Read Office document content."""
     err = await _ensure_available()
     if err:
         return err
@@ -296,12 +299,13 @@ async def office_read(
         )
 
     if not result.success:
-        return f"读取失败: {result.error}"
+        return f"Read failed: {result.error}"
 
     content = result.data or ""
 
-    # xlsx: CLI 不支持 --sheet 过滤（会报 unknown option），输出自带
-    # "=== Sheet: X ===" 分节，这里在工具层按 sheet 切分。
+    # xlsx: the CLI does not support --sheet filtering (it reports an unknown option);
+    # its output already contains "=== Sheet: X ===" sections, so split by sheet here
+    # at the tool layer.
     if (
         mode == "text"
         and resolved.endswith(".xlsx")
@@ -326,18 +330,19 @@ async def office_read(
         if sheet in sections:
             content = f"=== Sheet: {sheet} ===\n{sections[sheet]}"
         else:
-            available = ", ".join(sections) if sections else "(未知)"
+            available = ", ".join(sections) if sections else "(unknown)"
             content = (
                 f"{content}\n\n"
-                f"⚠️ 未找到工作表 '{sheet}'，已返回全部内容。可用工作表: {available}"
+                f"⚠️ Worksheet '{sheet}' not found; returning all content. "
+                f"Available worksheets: {available}"
             )
 
-    # 对 xlsx 文件，在 text 模式下追加公式信息
+    # For xlsx files, append formula information in text mode
     if mode == "text" and resolved.endswith(".xlsx"):
         try:
             formula_info = await _collect_formulas(mgr, resolved, sheet)
             if formula_info:
-                content += "\n\n--- 公式单元格 ---\n" + formula_info
+                content += "\n\n--- Formula cells ---\n" + formula_info
         except Exception:
             logger.debug("Formula collection failed", exc_info=True)
 
@@ -348,28 +353,29 @@ async def office_read(
     if cols and resolved.endswith(".xlsx") and mode == "text":
         extra_parts.append(f"cols={cols}")
     extra = f", {', '.join(extra_parts)}" if extra_parts else ""
-    summary = f"📄 已读取 {file_label} ({mode} 模式{extra}, {len(str(content))} 字符)\n\n"
+    summary = f"📄 Read {file_label} ({mode} mode{extra}, {len(str(content))} characters)\n\n"
     return summary + str(content)
 
 
 @registry.register(
     name="office_help",
-    description="查询 OfficeCLI 对指定文档格式的帮助参考，返回常用元素路径、属性和能力说明。"
-    "适合在编辑前先确认 docx/xlsx/pptx 支持哪些字段。",
+    description="Look up OfficeCLI help reference for a given document format, returning commonly used "
+    "element paths, properties and capability notes. "
+    "Useful for confirming which fields docx/xlsx/pptx support before editing.",
     parameters={
         "type": "object",
         "properties": {
             "file_format": {
                 "type": "string",
                 "enum": ["docx", "xlsx", "pptx"],
-                "description": "要查询的文档格式。",
+                "description": "Document format to query.",
             },
         },
         "required": ["file_format"],
     },
 )
 async def office_help(file_format: str = "", context: Any = None) -> str:
-    """查询 OfficeCLI 支持的格式帮助。"""
+    """Query OfficeCLI help for a supported format."""
     del context  # reserved for future event integration
 
     err = await _ensure_available()
@@ -378,22 +384,22 @@ async def office_help(file_format: str = "", context: Any = None) -> str:
 
     fmt = (file_format or "").strip().lower().lstrip(".")
     if fmt not in {"docx", "xlsx", "pptx"}:
-        return "请指定 file_format 为 docx、xlsx 或 pptx"
+        return "Please specify file_format as docx, xlsx or pptx"
 
     mgr = get_office_manager()
     result = await mgr.help_for(fmt)
     if not result.success:
-        return f"获取帮助失败: {result.error}"
+        return f"Failed to get help: {result.error}"
 
     content = str(result.data or "").strip()
     if not content:
-        return f"{fmt} 没有返回帮助内容"
+        return f"{fmt} returned no help content"
 
     max_chars = 20_000
     if len(content) > max_chars:
-        content = content[:max_chars] + "\n\n... (帮助内容已截断，请聚焦具体格式继续提问)"
+        content = content[:max_chars] + "\n\n... (help content truncated; focus on a specific format for further questions)"
 
-    return f"📚 OfficeCLI {fmt} 帮助\n\n{content}"
+    return f"📚 OfficeCLI {fmt} help\n\n{content}"
 
 
 # ── tool: office_create ────────────────────────────────────────────────
@@ -401,24 +407,29 @@ async def office_help(file_format: str = "", context: Any = None) -> str:
 
 @registry.register(
     name="office_batch_edit",
-    description="批量编辑 Office 文档中的多个元素，在单次打开/保存周期内执行多条命令。"
-    "适合一次性完成多步 set/add/remove/move/swap 操作，减少反复保存。",
+    description="Batch-edit multiple elements in an Office document, executing multiple commands within "
+    "a single open/save cycle. "
+    "Suitable for completing multi-step set/add/remove/move/swap operations at once, avoiding repeated saves.",
     parameters={
         "type": "object",
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": "文档路径。留空则自动使用当前打开的文档。",
+                "description": "Document path. Leave empty to automatically use the currently open document.",
             },
             "commands": {
                 "type": "array",
-                "description": "批量命令列表，每条命令是一个对象。字段与 office_edit 单命令不同，⚠️ 注意：\n"
-                "- set/remove/move/swap 用 \"path\"（元素路径）\n"
-                "- add 用 \"parent\"（父容器路径）+ \"type\"（元素类型），不是 element_path/element_type\n"
-                "- move 需 \"to\"（目标父路径），可选 \"index\"；swap 需 \"with\"（另一路径）\n"
-                "- 可选 \"props\" 对象传样式/文本，add 可用 \"after\"/\"before\" 指定插入参考元素\n"
-                "示例：\n"
-                '[{"command":"add","parent":"/body","type":"paragraph","props":{"text":"标题","size":22,"bold":true}},\n'
+                "description": "Batch command list; each command is an object. Fields differ from the "
+                "single-command office_edit, ⚠️ note:\n"
+                "- set/remove/move/swap use \"path\" (element path)\n"
+                "- add uses \"parent\" (parent container path) + \"type\" (element type), "
+                "not element_path/element_type\n"
+                "- move requires \"to\" (target parent path), optional \"index\"; "
+                "swap requires \"with\" (another path)\n"
+                "- optional \"props\" object passes style/text; add can use \"after\"/\"before\" "
+                "to specify reference elements for insertion\n"
+                "Example:\n"
+                '[{"command":"add","parent":"/body","type":"paragraph","props":{"text":"Title","size":22,"bold":true}},\n'
                 ' {"command":"set","path":"/body/p[1]","props":{"color":"#FF0000"}},\n'
                 ' {"command":"remove","path":"/body/p[3]"}]',
                 "items": {
@@ -428,12 +439,12 @@ async def office_help(file_format: str = "", context: Any = None) -> str:
                             "type": "string",
                             "enum": ["set", "add", "remove", "move", "swap"],
                         },
-                        "path": {"type": "string", "description": "set/remove/move/swap 的元素路径"},
-                        "parent": {"type": "string", "description": "add 的父容器路径，如 /body、/slide[1]、/Sheet1"},
-                        "type": {"type": "string", "description": "add 的元素类型，如 paragraph、shape、slide、row"},
-                        "to": {"type": "string", "description": "move 的目标父路径"},
-                        "with": {"type": "string", "description": "swap 的另一个元素路径"},
-                        "props": {"type": "object", "description": "属性键值对，如 text、size、bold、color"},
+                        "path": {"type": "string", "description": "Element path for set/remove/move/swap"},
+                        "parent": {"type": "string", "description": "Parent container path for add, e.g. /body, /slide[1], /Sheet1"},
+                        "type": {"type": "string", "description": "Element type for add, e.g. paragraph, shape, slide, row"},
+                        "to": {"type": "string", "description": "Target parent path for move"},
+                        "with": {"type": "string", "description": "The other element path for swap"},
+                        "props": {"type": "object", "description": "Property key-value pairs, e.g. text, size, bold, color"},
                     },
                     "required": ["command"],
                 },
@@ -447,7 +458,7 @@ async def office_batch_edit(
     commands: list[dict[str, Any]] | None = None,
     context: Any = None,
 ) -> str:
-    """批量编辑 Office 文档。"""
+    """Batch-edit an Office document."""
     err = await _ensure_available()
     if err:
         return err
@@ -477,29 +488,30 @@ async def office_batch_edit(
     mgr = get_office_manager()
     result = await mgr.batch(resolved, batch_commands or [])
     if not result.success:
-        return f"批量操作失败: {result.error}"
+        return f"Batch operation failed: {result.error}"
 
     await _render_and_emit_preview(file_label, resolved, context)
-    return f"✅ 已批量执行 {len(batch_commands or [])} 条操作"
+    return f"✅ Executed {len(batch_commands or [])} batch operations"
 
 
 @registry.register(
     name="office_create",
-    description="创建新的 Office 文档。支持 .docx(Word)、.xlsx(Excel)、.pptx(PowerPoint)。"
-    "创建后返回文件路径，可继续用 office_edit 添加内容。",
+    description="Create a new Office document. Supports .docx (Word), .xlsx (Excel), .pptx (PowerPoint). "
+    "Returns the file path after creation; use office_edit to add content.",
     parameters={
         "type": "object",
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": "要创建的文档路径（绝对路径，或相对于工作区的路径）。留空则自动使用当前打开的文档。",
+                "description": "Path of the document to create (absolute, or relative to the workspace). "
+                "Leave empty to automatically use the currently open document.",
             },
         },
         "required": [],
     },
 )
 async def office_create(file_path: str = "", context: Any = None) -> str:
-    """创建新的 Office 文档。"""
+    """Create a new Office document."""
     err = await _ensure_available()
     if err:
         return err
@@ -512,14 +524,14 @@ async def office_create(file_path: str = "", context: Any = None) -> str:
     if err_ext:
         return err_ext
 
-    # 如果文件已存在，先确认
+    # If the file already exists, confirm first
     if os.path.isfile(resolved):
         return (
             f"File already exists: {file_path}\n"
             f"Use office_edit to modify it, or delete it first."
         )
 
-    # 确保父目录存在
+    # Ensure the parent directory exists
     Path(resolved).parent.mkdir(parents=True, exist_ok=True)
 
     await _emit(context, EventType.DOC_OP_START, {
@@ -534,23 +546,23 @@ async def office_create(file_path: str = "", context: Any = None) -> str:
         await _emit(context, EventType.DOC_OP_DONE, {
             "file": file_path,
             "status": "ok",
-            "message": f"✅ 文档已创建: {file_path}",
+            "message": f"✅ Document created: {file_path}",
         })
-        # 尝试渲染预览
+        # Try rendering a preview
         preview = await mgr.view_html(resolved)
         if preview.success:
             await _emit(context, EventType.DOC_OP_PREVIEW, {
                 "file": file_path,
                 "html": preview.data,
             })
-        return f"✅ 文档已创建: {file_path}\n文件大小: {os.path.getsize(resolved)} bytes"
+        return f"✅ Document created: {file_path}\nFile size: {os.path.getsize(resolved)} bytes"
     else:
         await _emit(context, EventType.DOC_OP_DONE, {
             "file": file_path,
             "status": "error",
-            "message": f"创建失败: {result.error}",
+            "message": f"Creation failed: {result.error}",
         })
-        return f"创建失败: {result.error}"
+        return f"Creation failed: {result.error}"
 
 
 # ── tool: office_edit ──────────────────────────────────────────────────
@@ -581,106 +593,107 @@ def _describe_op(
 
 @registry.register(
     name="office_edit",
-    description="编辑 Office 文档中的元素。支持修改文本/样式（set）、添加元素（add）、"
-    "删除元素（remove）、移动元素（move）。适用于 Word/Excel/PowerPoint。",
+    description="Edit elements in an Office document. Supports modifying text/style (set), adding "
+    "elements (add), removing elements (remove) and moving elements (move). "
+    "Works with Word/Excel/PowerPoint.",
     parameters={
         "type": "object",
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": "文档路径。留空则自动使用当前打开的文档。",
+                "description": "Document path. Leave empty to automatically use the currently open document.",
             },
             "command": {
                 "type": "string",
                 "enum": ["set", "add", "remove", "move", "swap"],
-                "description": "操作类型：\n"
-                "- set: 修改已有元素的属性（文本、字体、颜色、大小、公式、合并等）\n"
-                "- add: 添加新元素（幻灯片、形状、表格、行、列、单元格等）。\n"
-                "  ⚠️ add 命令的 element_path 应传**父容器路径**，不是要插入的具体位置。\n"
-                "  例如：在 Excel 添加行 → element_path=/Sheet1（不是 /Sheet1/row[5]）\n"
-                "       在 PPT 添加幻灯片 → element_path=/（不是 /slide[3]）\n"
-                "       在 Word 添加段落 → element_path=/body（不是 /body/p[2]）\n"
-                "  如需在特定位置插入，用 props.after 或 props.before 指定参考元素。\n"
-                "- remove: 删除元素\n"
-                "- move: 移动元素。目标写在 props 里：props.to=目标父路径，"
-                "或 props.after=/props.before=参考元素路径，可选 props.index=插入位置\n"
-                "- swap: 交换两个元素，第二个元素路径写在 props.with",
+                "description": "Operation type:\n"
+                "- set: modify properties of an existing element (text, font, color, size, formula, merge, etc.)\n"
+                "- add: add a new element (slide, shape, table, row, column, cell, etc.).\n"
+                "  ⚠️ For add, element_path should be the **parent container path**, not the exact insertion point.\n"
+                "  For example: add a row in Excel → element_path=/Sheet1 (not /Sheet1/row[5])\n"
+                "               add a slide in PPT → element_path=/ (not /slide[3])\n"
+                "               add a paragraph in Word → element_path=/body (not /body/p[2])\n"
+                "  To insert at a specific position, use props.after or props.before to specify a reference element.\n"
+                "- remove: remove an element\n"
+                "- move: move an element. The target goes in props: props.to=target parent path, "
+                "or props.after=/props.before=reference element path, optional props.index=insertion position\n"
+                "- swap: swap two elements; the second element path goes in props.with",
             },
             "element_path": {
                 "type": "string",
-                "description": "元素路径。常用路径：\n"
-                "- / → 文档根\n"
-                "- /slide[1] → 第1张幻灯片\n"
-                "- /slide[1]/shape[1] → 第1张幻灯片的第1个形状\n"
-                "- /Sheet1/A1 → Excel 的 A1 单元格（注意：Sheet名区分大小写，用字母列号）\n"
-                "- /Sheet1/A1:C3 → Excel 的范围（用于合并/批量格式化）\n"
-                "- /Sheet1/row[3] → Excel 第3行（用于设置行高/删除行）\n"
-                "- /Sheet1/col[A] → Excel A列（用于设置列宽/删除列）\n"
-                "- /theme → PPT 主题（颜色/字体方案）\n"
-                "- /slidemaster[1] → PPT 母版\n"
-                "- /body/p[1] → Word 第1段落\n"
-                "- /body/tbl[1]/tr[2]/tc[1] → Word 表格第2行第1列单元格\n"
-                "- /slide[1]/table[1]/tr[2]/tc[1] → PPT 表格第2行第1列单元格\n\n"
-                "⚠️ add 命令：element_path 是**父容器路径**（如 /Sheet1, /body, /）。\n"
-                "   如需在特定元素后插入，在 props 中设置 after=/Sheet1/row[5]。\n\n"
-                "⚠️ Excel 注意：新建的空白工作表中没有预置的单元格。\n"
-                "   先使用 add 命令添加单元格（如 add → parent=/Sheet1, type=cell），\n"
-                "   然后再用 set 修改其内容。\n"
-                "   add 会自动创建行和单元格，路径形如 /Sheet1/A1、/Sheet1/B2 等。",
+                "description": "Element path. Common paths:\n"
+                "- / → document root\n"
+                "- /slide[1] → slide 1\n"
+                "- /slide[1]/shape[1] → shape 1 on slide 1\n"
+                "- /Sheet1/A1 → cell A1 in Excel (note: sheet names are case-sensitive; use letter column refs)\n"
+                "- /Sheet1/A1:C3 → Excel range (for merging / batch formatting)\n"
+                "- /Sheet1/row[3] → row 3 in Excel (for setting row height / deleting rows)\n"
+                "- /Sheet1/col[A] → column A in Excel (for setting column width / deleting columns)\n"
+                "- /theme → PPT theme (color/font scheme)\n"
+                "- /slidemaster[1] → PPT slide master\n"
+                "- /body/p[1] → paragraph 1 in Word\n"
+                "- /body/tbl[1]/tr[2]/tc[1] → row 2, column 1 cell of the first Word table\n"
+                "- /slide[1]/table[1]/tr[2]/tc[1] → row 2, column 1 cell of the first PPT table\n\n"
+                "⚠️ add command: element_path is the **parent container path** (e.g. /Sheet1, /body, /).\n"
+                "   To insert after a specific element, set after=/Sheet1/row[5] in props.\n\n"
+                "⚠️ Excel note: a newly created blank worksheet has no preset cells.\n"
+                "   First use the add command to add cells (e.g. add → parent=/Sheet1, type=cell),\n"
+                "   then use set to modify their content.\n"
+                "   add automatically creates rows and cells; paths look like /Sheet1/A1, /Sheet1/B2, etc.",
             },
             "props": {
                 "type": "object",
-                "description": "要设置的属性键值对。常用属性：\n"
-                "- text: 文本内容\n"
-                "- title: 幻灯片标题\n"
-                "- font: 字体名称\n"
-                "- size: 字号（pt）\n"
-                "- color: 颜色（十六进制 #FF0000 或命名色）\n"
-                "- background: 背景色\n"
-                "- width, height: 尺寸\n"
-                "- x, y: 位置\n\n"
-                "Excel 专用属性：\n"
-                "- formula: 单元格公式（不含=前缀），如 SUM(A1:A10)\n"
-                "- merge: 合并单元格，传范围如 A1:C3 或 true/false（用于 range 路径）\n"
-                "- numberformat: 数字格式，如 #,##0.00 或 yyyy-mm-dd\n"
-                "- fill: 单元格背景色\n"
-                "- border.all: 边框样式，如 'single;1pt;FF0000'\n"
-                "- bold/italic/underline/strike: 字体样式\n"
-                "- alignment.horizontal: 对齐（left/center/right）\n"
-                "- shift: 插入时位移（right/down）\n\n"
-                "Word 表格专用属性：\n"
-                "- colspan: 水平合并列数\n"
-                "- vmerge: 垂直合并（restart 标记起始，continue 标记后续）\n"
-                "- valign: 垂直对齐（top/center/bottom）\n\n"
-                "PPT 专用属性：\n"
-                "- layout: 幻灯片布局名（如 'Title Slide'、'Title and Content'、'Blank'）\n"
-                "- merge.right: 表格水平合并列数\n"
-                "- transition: 幻灯片切换效果（fade/push/wipe/morph）\n\n"
-                "PPT 主题属性（路径 /theme）：\n"
-                "- accent1~accent6: 主题配色\n"
-                "- headingFont: 标题字体 / bodyFont: 正文字体\n\n"
-                "表格创建属性（add table）：\n"
-                "- data: 表格数据。支持两种格式：\n"
-                "  - JSON 二维数组（推荐）：[['A','B'],['1','2']]\n"
-                "  - CSV 字符串（兼容）：'A,B;1,2'\n"
-                "- style: 表格样式（medium1~4, light1~3, dark1~2）\n"
-                "- headerFill/bodyFill: 表头/正文背景色\n"
-                "- border.all/border.horizontal/border.vertical: 边框",
+                "description": "Property key-value pairs to set. Common properties:\n"
+                "- text: text content\n"
+                "- title: slide title\n"
+                "- font: font name\n"
+                "- size: font size (pt)\n"
+                "- color: color (hex #FF0000 or named color)\n"
+                "- background: background color\n"
+                "- width, height: dimensions\n"
+                "- x, y: position\n\n"
+                "Excel-specific properties:\n"
+                "- formula: cell formula (without the = prefix), e.g. SUM(A1:A10)\n"
+                "- merge: merge cells; pass a range like A1:C3, or true/false (for range paths)\n"
+                "- numberformat: number format, e.g. #,##0.00 or yyyy-mm-dd\n"
+                "- fill: cell background color\n"
+                "- border.all: border style, e.g. 'single;1pt;FF0000'\n"
+                "- bold/italic/underline/strike: font styles\n"
+                "- alignment.horizontal: alignment (left/center/right)\n"
+                "- shift: shift direction when inserting (right/down)\n\n"
+                "Word table-specific properties:\n"
+                "- colspan: number of columns to merge horizontally\n"
+                "- vmerge: vertical merge (restart marks the start, continue marks the following cells)\n"
+                "- valign: vertical alignment (top/center/bottom)\n\n"
+                "PPT-specific properties:\n"
+                "- layout: slide layout name (e.g. 'Title Slide', 'Title and Content', 'Blank')\n"
+                "- merge.right: number of table columns to merge horizontally\n"
+                "- transition: slide transition effect (fade/push/wipe/morph)\n\n"
+                "PPT theme properties (path /theme):\n"
+                "- accent1~accent6: theme accent colors\n"
+                "- headingFont: heading font / bodyFont: body font\n\n"
+                "Table creation properties (add table):\n"
+                "- data: table data. Two formats supported:\n"
+                "  - JSON 2D array (recommended): [['A','B'],['1','2']]\n"
+                "  - CSV string (legacy): 'A,B;1,2'\n"
+                "- style: table style (medium1~4, light1~3, dark1~2)\n"
+                "- headerFill/bodyFill: header/body background color\n"
+                "- border.all/border.horizontal/border.vertical: borders",
             },
             "element_type": {
                 "type": "string",
-                "description": "（add 操作专用）要添加的元素类型：\n"
-                "- slide: 幻灯片（PPT）— 支持 layout/title/text 属性\n"
-                "- shape: 形状/文本框\n"
-                "- table: 表格— 支持 data/style/headerFill 属性\n"
-                "- chart: 图表\n"
-                "- image: 图片\n"
-                "- sheet: 工作表（Excel）\n"
-                "- row: 行（Excel: add 到 /SheetName — 支持 --after/--before 插入到指定位置）\n"
-                "- column: 列（Excel: add 到 /SheetName — --prop name=C 指定列字母）\n"
-                "- cell: 单元格（Excel: add 到 /SheetName — --prop ref=B2 指定位置）\n"
-                "- paragraph: 段落（Word）\n"
-                "- placeholder: PPT 占位符（--prop phType=title/body）",
+                "description": "(add only) Element type to add:\n"
+                "- slide: slide (PPT) — supports layout/title/text properties\n"
+                "- shape: shape/text box\n"
+                "- table: table — supports data/style/headerFill properties\n"
+                "- chart: chart\n"
+                "- image: image\n"
+                "- sheet: worksheet (Excel)\n"
+                "- row: row (Excel: add to /SheetName — supports --after/--before to insert at a specific position)\n"
+                "- column: column (Excel: add to /SheetName — --prop name=C sets the column letter)\n"
+                "- cell: cell (Excel: add to /SheetName — --prop ref=B2 sets the position)\n"
+                "- paragraph: paragraph (Word)\n"
+                "- placeholder: PPT placeholder (--prop phType=title/body)",
             },
         },
         "required": ["command"],
@@ -694,7 +707,7 @@ async def office_edit(
     element_type: str = "",
     context: Any = None,
 ) -> str:
-    """编辑 Office 文档中的元素。"""
+    """Edit elements in an Office document."""
     err = await _ensure_available()
     if err:
         return err
@@ -713,7 +726,7 @@ async def office_edit(
     mgr = get_office_manager()
     props = props or {}
 
-    # 发射进度事件
+    # Emit a progress event
     desc = _describe_op(command, element_path, props)
     await _emit(context, EventType.DOC_OP_DELTA, {
         "file": file_path,
@@ -721,20 +734,21 @@ async def office_edit(
         "element_path": element_path,
     })
 
-    # 执行操作
+    # Execute the operation
     if command == "set":
         result = await mgr.set_props(resolved, element_path, props)
     elif command == "add":
         if not element_type:
-            return "add 操作需要指定 element_type（如 slide、shape、table）"
+            return "add requires element_type (e.g. slide, shape, table)"
 
         # Smart path normalization: if the AI passed a specific child path
         # like /Sheet1/row[19] instead of the parent /Sheet1, extract the
         # parent and use --after to insert at the expected position.
         add_parent = element_path
         add_props = dict(props)
-        # 元素类型以 element_type 参数为准，props 里误带的冗余 "type" 剥掉，
-        # 避免 --prop type=... 干扰 CLI（与 batch 路径行为一致）。
+        # The element type comes from the element_type argument; strip any redundant
+        # "type" that ended up in props so --prop type=... does not confuse the CLI
+        # (consistent with the batch path behaviour).
         add_props.pop("type", None)
         if "[" in element_path and element_path.count("/") >= 2:
             # e.g. /Sheet1/row[19] → parent=/Sheet1, after=/Sheet1/row[19]
@@ -759,8 +773,8 @@ async def office_edit(
         index = props.get("index", -1)
         if not to_parent and not after and not before:
             return (
-                "move 操作需要指定目标：props.to（目标父路径，如 /body），"
-                "或 props.after / props.before（参考元素路径）"
+                "move requires a target: props.to (target parent path, e.g. /body), "
+                "or props.after / props.before (reference element paths)"
             )
         result = await mgr.move_element(
             resolved, element_path, to_parent, int(index), after=after, before=before
@@ -768,13 +782,13 @@ async def office_edit(
     elif command == "swap":
         path2 = props.get("with", "")
         if not path2:
-            return "swap 操作需要指定 props.with（第二个元素的路径）"
+            return "swap requires props.with (the path of the second element)"
         result = await mgr.exec("swap", resolved, element_path, path2)
     else:
-        return f"不支持的命令: {command}"
+        return f"Unsupported command: {command}"
 
     if result.success:
-        # 渲染预览
+        # Render preview
         await _render_and_emit_preview(file_path, resolved, context)
         actual_path = ""
         if hasattr(result, "data") and result.data:
@@ -784,7 +798,7 @@ async def office_edit(
             detail += f" → {actual_path}"
         return f"✅ {detail}"
     else:
-        return f"操作失败: {result.error}"
+        return f"Operation failed: {result.error}"
 
 
 # ── tool: office_query ─────────────────────────────────────────────────
@@ -792,32 +806,32 @@ async def office_edit(
 
 @registry.register(
     name="office_query",
-    description="查询 Office 文档中的元素。支持按路径获取结构化 JSON，"
-    "或使用选择器按条件查找元素。",
+    description="Query elements in an Office document. Supports fetching structured JSON by path, "
+    "or finding elements by condition using a selector.",
     parameters={
         "type": "object",
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": "文档路径。留空则自动使用当前打开的文档。",
+                "description": "Document path. Leave empty to automatically use the currently open document.",
             },
             "path_or_selector": {
                 "type": "string",
-                "description": "元素路径（如 /slide[1]/shape[1]）或选择器表达式。"
-                "选择器示例：\n"
-                '- "shape:contains(TODO)" → 查找含 TODO 的 shape\n'
-                '- "text:contains(报告)" → 查找含"报告"的文本\n'
-                '- "table:*" → 查找所有表格',
+                "description": "Element path (e.g. /slide[1]/shape[1]) or selector expression. "
+                "Selector examples:\n"
+                '- "shape:contains(TODO)" → find shapes containing TODO\n'
+                '- "text:contains(report)" → find text containing "report"\n'
+                '- "table:*" → find all tables',
             },
             "mode": {
                 "type": "string",
                 "enum": ["path", "selector"],
-                "description": "查询模式：path-按路径获取, selector-按选择器搜索",
+                "description": "Query mode: path-fetch by path, selector-search by selector",
                 "default": "path",
             },
             "depth": {
                 "type": "integer",
-                "description": "（path 模式）递归深度",
+                "description": "(path mode) recursion depth",
                 "default": 1,
             },
         },
@@ -831,7 +845,7 @@ async def office_query(
     depth: int = 1,
     context: Any = None,
 ) -> str:
-    """查询文档元素。"""
+    """Query document elements."""
     err = await _ensure_available()
     if err:
         return err
@@ -855,21 +869,21 @@ async def office_query(
         result = await mgr.get_element(resolved, path_or_selector, depth=depth)
 
     if not result.success:
-        return f"查询失败: {result.error}"
+        return f"Query failed: {result.error}"
 
     data = result.data
     if isinstance(data, (dict, list)):
         import json as _json
 
         output = _json.dumps(data, ensure_ascii=False, indent=2)
-        # 截断过长的输出，避免返回几十万字符
+        # Truncate overly long output to avoid returning hundreds of thousands of characters
         max_chars = 50_000
         if len(output) > max_chars:
             output = (
                 output[:max_chars]
-                + "\n\n... (输出已截断，共 "
+                + "\n\n... (output truncated, "
                 + str(len(output))
-                + " 字符。请使用更精确的路径或增加 depth 来缩小范围)"
+                + " characters total. Use a more precise path or increase depth to narrow the scope)"
             )
         return output
     return str(data)
@@ -880,21 +894,22 @@ async def office_query(
 
 @registry.register(
     name="office_render",
-    description="将 Office 文档渲染为 HTML 预览。返回的 HTML 可直接在浏览器中显示，"
-    "让用户看到文档的视觉呈现效果。",
+    description="Render an Office document as an HTML preview. The returned HTML can be displayed "
+    "directly in a browser, "
+    "letting users see the visual presentation of the document.",
     parameters={
         "type": "object",
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": "文档路径。留空则自动使用当前打开的文档。",
+                "description": "Document path. Leave empty to automatically use the currently open document.",
             },
         },
         "required": [],
     },
 )
 async def office_render(file_path: str = "", context: Any = None) -> str:
-    """渲染文档为 HTML 预览。"""
+    """Render the document as an HTML preview."""
     err = await _ensure_available()
     if err:
         return err
@@ -914,7 +929,7 @@ async def office_render(file_path: str = "", context: Any = None) -> str:
     result = await mgr.view_html(resolved)
 
     if not result.success:
-        return f"渲染失败: {result.error}"
+        return f"Rendering failed: {result.error}"
 
     html = result.data or ""
 

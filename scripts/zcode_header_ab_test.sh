@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
-# ZCode 归因头 vs 普通请求 的额度消耗对照实验
+# Quota-consumption A/B experiment: ZCode attribution headers vs. plain requests
 #
-# 用法:
-#   ZHIPU_KEY=你的key ./zcode_header_ab_test.sh [每组请求数] [模型]
+# Usage:
+#   ZHIPU_KEY=your_key ./zcode_header_ab_test.sh [requests_per_group] [model]
 #
-# 原理:
-#   同一把 GLM Coding Plan Key，发送完全相同的请求体两次:
-#     A 组: 普通 curl 头 (对照组)
-#     B 组: 完整 ZCode 归因头 (实验组)
-#   每组前后各查一次 /api/monitor/usage/quota/limit，对比消耗差值。
+# How it works:
+#   Using the same GLM Coding Plan key, send the exact same request body twice:
+#     Group A: plain curl headers (control group)
+#     Group B: full ZCode attribution headers (experiment group)
+#   Query /api/monitor/usage/quota/limit once before and after each group, then compare the consumed delta.
 set -euo pipefail
 
-KEY="${ZHIPU_KEY:?请先 export ZHIPU_KEY=你的GLM_Coding_Plan_Key}"
-N="${1:-10}"            # 每组请求数
-MODEL="${2:-glm-4.7}"   # 两端点通用的模型名(按你的套餐调整)
+KEY="${ZHIPU_KEY:?Please export ZHIPU_KEY=your_GLM_Coding_Plan_Key first}"
+N="${1:-10}"            # requests per group
+MODEL="${2:-glm-4.7}"   # model name supported by both endpoints (adjust to your plan)
 BASE="${ZHIPU_BASE:-https://api.z.ai}"
 
 ENDPOINT="$BASE/api/anthropic/v1/messages"
 QUOTA_URL="$BASE/api/monitor/usage/quota/limit"
 
-# 完全相同的请求体: prompt 固定 + max_tokens 固定 => 输出 token 数近似恒定
+# Identical request body: fixed prompt + fixed max_tokens => output token count is nearly constant
 BODY=$(cat <<EOF
 {
   "model": "$MODEL",
   "max_tokens": 512,
   "temperature": 0,
-  "messages": [{"role": "user", "content": "从 1 数到 100，每行一个数字，不要输出其他内容。"}]
+  "messages": [{"role": "user", "content": "Count from 1 to 100, one number per line, and output nothing else."}]
 }
 EOF
 )
@@ -35,7 +35,7 @@ query_quota() {
 }
 
 send_plain() {
-  # A 组: 无任何 ZCode 特征
+  # Group A: no ZCode-specific traits
   curl -sS "$ENDPOINT" \
     -H "Content-Type: application/json" \
     -H "Authorization: $KEY" \
@@ -44,7 +44,7 @@ send_plain() {
 }
 
 send_zcode() {
-  # B 组: 复刻 ZCode 的完整归因头
+  # Group B: replicate ZCode's full attribution headers
   curl -sS "$ENDPOINT" \
     -H "Content-Type: application/json" \
     -H "Authorization: $KEY" \
@@ -63,28 +63,28 @@ send_zcode() {
     -d "$BODY" > /dev/null
 }
 
-echo "===== 基线额度 ====="
+echo "===== Baseline quota ====="
 query_quota | tee /tmp/quota_baseline.json
 echo
 
-echo "===== A 组: 普通请求 x $N ====="
+echo "===== Group A: plain requests x $N ====="
 for i in $(seq "$N"); do
   echo "-- A$i"
   send_plain
 done
 
-echo "===== A 组后额度 ====="
+echo "===== Quota after group A ====="
 query_quota | tee /tmp/quota_after_a.json
 echo
 
-echo "===== B 组: ZCode 头请求 x $N ====="
+echo "===== Group B: ZCode-header requests x $N ====="
 for i in $(seq "$N"); do
   echo "-- B$i"
   send_zcode
 done
 
-echo "===== B 组后额度 ====="
+echo "===== Quota after group B ====="
 query_quota | tee /tmp/quota_after_b.json
 echo
 
-echo "结果文件: /tmp/quota_baseline.json /tmp/quota_after_a.json /tmp/quota_after_b.json"
+echo "Result files: /tmp/quota_baseline.json /tmp/quota_after_a.json /tmp/quota_after_b.json"

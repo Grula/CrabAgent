@@ -5,8 +5,6 @@ All notable changes to CrabAgent are documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-中文版本：[CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)
-
 ---
 
 ## [0.18.1] — Asynchronous Sub-Agent Teams (2026-11-12)
@@ -156,7 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Partially-completed tasks no longer show the failure animation** — The desktop pet mapped persistent `partial_tasks` attention to the error state, so any task finishing as "partial" kept the pet in the failed pose (and survived restarts by design). Partial results now map to the celebrate state; only real failures show the failure animation.
 - **"Partial completion" reminders now clear after viewing the result** — The `partial_tasks` attention query ignored `result_viewed_at`, so a viewed partial delivery kept surfacing forever (bubble, badges) until the task status changed. The query now filters on `result_viewed_at IS NULL`, matching the `unread_results` rule.
-- **Completion bubble no longer lingers while idle** — After the 6-second celebrate window the pet calms to idle but kept the bubble text; combined with persistent unread results this left "完成啦 / 新成果…" on screen indefinitely. The bubble now resets to the idle text together with the animation. Unread results remain accessible via the notification bell and task panel badges, and viewing the result clears all reminders.
+- **Completion bubble no longer lingers while idle** — After the 6-second celebrate window the pet calms to idle but kept the bubble text; combined with persistent unread results this left "Done! / New result…" on screen indefinitely. The bubble now resets to the idle text together with the animation. Unread results remain accessible via the notification bell and task panel badges, and viewing the result clears all reminders.
 
 ### Changed
 - Rebuilt and synchronized frontend assets; added a partial-attention lifecycle regression test (`test_partial_tasks_stop_after_result_viewed`).
@@ -169,7 +167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Push notification channel (`core/push/`)** — Bark (iOS, APNs) and ntfy (Android/self-hosted) providers with a stateless HTTP client each. `PushConfig` persists to the `app_settings` table (`push_config` key, same JSON-blob pattern as `wechat_config`); secrets are masked in API responses. `PushNotification` facade never raises: provider failures degrade to `False` + warning log.
 - **Task events push to the phone automatically** — `notify_task_event` hooks into the task domain-event broadcaster (`serve/app.py`): task transitions to done/partial/failed/cancelled push a summary, `waiting_user` pushes a time-sensitive notification that breaks through iOS Focus. Same (task_id, status) repeats within 10 minutes are deduplicated.
 - **`/api/push` endpoints** — `GET status` (masked config), `PUT config` (masked echo-back guard keeps stored secrets when clients round-trip), `POST test`. All JWT-protected.
-- **Push settings panel** — New "手机推送" tab in Settings: enable toggle, Bark/ntfy provider switch, per-event toggles (task done / task waiting / scheduled results / email digest), deep-link URL for tap-through navigation, and a one-click test send. No default addresses are pre-filled.
+- **Push settings panel** — New "Phone Push" tab in Settings: enable toggle, Bark/ntfy provider switch, per-event toggles (task done / task waiting / scheduled results / email digest), deep-link URL for tap-through navigation, and a one-click test send. No default addresses are pre-filled.
 - **Dual-channel notifications in scheduler** — System notifications, scheduled-task results, morning brief, and reminders now fan out to WeChat and push channels in parallel; each channel is independent (WeChat no longer being logged in doesn't affect push).
 - **Tailscale remote access guide** — `docs/remote-access-tailscale-bark.md` documents exposing the local Agent UI to your phone via a Tailscale WireGuard tunnel (the backend already listens on `0.0.0.0:5210`), with verification checklists and hardening notes.
 
@@ -195,7 +193,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.16.4] — Collaboration Browser Screenshots Work Outside the Browser Page
 
 ### Fixed
-- **`collab_browser_screenshot` returned an empty image** — When the chat ran outside the Collaboration Browser page, the shared `WebContentsView` was detached from the main window; `capturePage()` then returned an empty `NativeImage`, `toJPEG()` produced a zero-byte buffer, and the tool happily persisted `data:image/jpeg;base64,` into conversation history. On the next turn, LiteLLM converted the invalid image into a `file` content block without `file_data` and the request was rejected (`messages[0].content[0].file 必须传入 file_id、file_url、file_data 至少之一`), bricking the session.
+- **`collab_browser_screenshot` returned an empty image** — When the chat ran outside the Collaboration Browser page, the shared `WebContentsView` was detached from the main window; `capturePage()` then returned an empty `NativeImage`, `toJPEG()` produced a zero-byte buffer, and the tool happily persisted `data:image/jpeg;base64,` into conversation history. On the next turn, LiteLLM converted the invalid image into a `file` content block without `file_data` and the request was rejected (`messages[0].content[0].file must provide at least one of file_id, file_url, file_data`), bricking the session.
 - **Screenshots now work while the browser page is not visible** — When the view is detached, the bridge temporarily composites it into a hidden `BrowserWindow` (`backgroundThrottling: false`, `paintWhenInitiallyHidden: true`), captures, restores the original bounds and detaches again. Login state and page state are untouched.
 - **Empty captures are rejected at three layers** — Electron checks view attachment, `NativeImage.isEmpty()`, dimensions and JPEG byte length; the Python screenshot tools (`collab_browser_screenshot`, `computer_observe`) refuse empty data URLs; message-history serialization drops invalid image blocks so already-polluted sessions keep working.
 
@@ -208,10 +206,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **macOS computer use (opt-in)** — A native Swift helper gives the agent the ability to observe and operate native macOS applications: AX-tree observation (roles, labels, values, frames, up to 300 nodes), per-window capture via ScreenCaptureKit, and CGEvent input (click, Unicode text typing including CJK and emoji, named keys and modifier combos, scroll). Apps can be activated and auto-launched by bundle ID; windowless apps get a window created automatically (Cmd+N convention).
-- **Four-layer input safety** — Input is gated by an explicit opt-in toggle (Settings → macOS 控制), a per-app allowlist, frontmost-app verification before every action, and Secure Input / lock-screen refusal. Escape paths (`Cmd+Q`, `Cmd+Tab`) are denied. All enforcement lives in the helper and Electron main process, not in prompts.
-- **Dynamic app allow flow** — When the agent targets an app that is not allowlisted, the user receives a confirmation card ("AI 请求获得对该应用窗口的键鼠控制权限"); approval persists the app to the allowlist and retries the action once. Denial blocks without retry.
+- **Four-layer input safety** — Input is gated by an explicit opt-in toggle (Settings → macOS Control), a per-app allowlist, frontmost-app verification before every action, and Secure Input / lock-screen refusal. Escape paths (`Cmd+Q`, `Cmd+Tab`) are denied. All enforcement lives in the helper and Electron main process, not in prompts.
+- **Dynamic app allow flow** — When the agent targets an app that is not allowlisted, the user receives a confirmation card ("AI requests keyboard and mouse control permission for this app window"); approval persists the app to the allowlist and retries the action once. Denial blocks without retry.
 - **Python tool layer** — `macos_activate/windows/observe/capture/click/type/key/scroll` tools with the same budget and audit pipeline as the browser tools (60 actions / 20 observations / 15 min / 3 consecutive failures).
-- **Settings → macOS 控制** — Live TCC permission status (Accessibility, Screen Recording) with deep links into System Settings, the input opt-in toggle, and allowlist management.
+- **Settings → macOS Control** — Live TCC permission status (Accessibility, Screen Recording) with deep links into System Settings, the input opt-in toggle, and allowlist management.
 - **Stable TCC identity** — The helper runs from `~/.crabagent/bin` (outside the app bundle) signed with a code-signing certificate, so Accessibility and Screen Recording grants persist across repacks. `npm run build-helper` compiles and signs.
 - **Collaboration browser hardening** — The collaboration browser now routes all traffic through a per-launch authenticated local proxy with DNS-rebinding protection (validated IP pinned at connect time), system-proxy chaining (`PROXY`/`SOCKS5`), and rewritten private-network checks for IPv4/IPv6. Chromium error pages no longer wedge the observe loop; clicks on buttons covered by overlays are refused by hit-testing.
 - **Collaboration browser pause/resume** — The browser toolbar gains pause/resume controls for AI actions, surfaced via `collaboration-browser-state`.
@@ -220,7 +218,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`net.BlockList` false positives** — Adding the IPv4-mapped IPv6 range (`::ffff:0:0/96`) to a `net.BlockList` made every plain IPv4 address match, blocking all websites. Private-network checks are now implemented explicitly for v4 and v6.
 - **System proxy was bypassed** — The collaboration browser forced direct connections, breaking sites behind Clash/Corporate proxies. `resolveProxy` is now honored per-URL with two-token parsing (`PROXY host:port`), falling back to pinned direct connections.
 - **Chromium error pages wedged the observe loop** — A failed navigation (e.g. offline start page) made `location.href` (`chrome-error://…`) disagree with `webContents.getURL()` forever, so every observation failed and the 3-strike budget locked the whole feature. Error pages are now recognized as observable state and the AI can navigate away.
-- **Collaboration browser tab/UX** — Settings tabs no longer wrap character-by-character (nowrap + horizontal scroll, container widened to `max-w-5xl`); the browser toolbar gains a paused indicator; the "去授权" deep link raises System Settings to the front.
+- **Collaboration browser tab/UX** — Settings tabs no longer wrap character-by-character (nowrap + horizontal scroll, container widened to `max-w-5xl`); the browser toolbar gains a paused indicator; the "Grant Access" deep link raises System Settings to the front.
 - **`electron.log` could grow unbounded** (reached 7.6 GB) — the log now rotates at launch and every 2,000 lines once it exceeds 50 MB.
 
 ---
@@ -232,7 +230,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Conversation content occasionally blank until the session was re-selected** — The frontend message-loading pipeline silently discarded valid loads when the mutable active-session reference was clobbered by concurrent effects (workspace auto-load, ref-sync), the workspace auto-loader could override a manual session selection when its slower response arrived, and delayed reloads (`agent_end`, monitor) could paint another session's messages after a switch. Message loads are now arbitrated by a monotonic load token plus an active-session check, manual selections can no longer be overridden, and message fetches retry once on transient failure (e.g. SQLite busy during a long agent run).
 
 ### Changed
-- Context for the above: removing the idle reconnect loop ("重新连接中" every ~40s) unmasked the zombie-connection bug — the frequent reconnects had been accidentally re-registering queues and restoring event delivery. Both sides are now correct: reconnects only happen for genuinely dead connections, and the GC only collects genuinely dead queues.
+- Context for the above: removing the idle reconnect loop ("Reconnecting" every ~40s) unmasked the zombie-connection bug — the frequent reconnects had been accidentally re-registering queues and restoring event delivery. Both sides are now correct: reconnects only happen for genuinely dead connections, and the GC only collects genuinely dead queues.
 
 ## [0.15.1] — Startup Freeze Fix
 
@@ -408,7 +406,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.12.7] — Ghosting Fix & Image Tool Enhancements
 
 ### Fixed
-- **Sprite pet ghosting (叠影) in animation** — The cross-correlation alignment in `_align_frames` used `alpha_composite` which blends, not replaces, causing residual semi-transparent pixels to accumulate and create a double-image "ghost" effect. Fixed by properly clearing the canvas before compositing each aligned frame.
+- **Sprite pet ghosting in animation** — The cross-correlation alignment in `_align_frames` used `alpha_composite` which blends, not replaces, causing residual semi-transparent pixels to accumulate and create a double-image "ghost" effect. Fixed by properly clearing the canvas before compositing each aligned frame.
 - **Pet generation with reference photo for ChatGPT provider** — The `_image_edit` method now detects ChatGPT subscription provider and routes to a dedicated `_chatgpt_image_edit` that calls the Codex responses API with multimodal `input_image` + `image_generation` tool, so the reference image is truly seen by the model.
 
 ### Added
@@ -443,7 +441,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.12.5] — Desktop Pet
 
 ### Added
-- **Desktop pet (桌宠)** — A floating, always-on-top mascot window for the Electron desktop app. It shows the current agent state (idle, thinking, working, waiting, celebrating, error) via a global SSE stream, can be dragged around the screen, and provides quick access from the tray/menu.
+- **Desktop pet** — A floating, always-on-top mascot window for the Electron desktop app. It shows the current agent state (idle, thinking, working, waiting, celebrating, error) via a global SSE stream, can be dragged around the screen, and provides quick access from the tray/menu.
 - **SVG mascot character** — A cute, wide-shell crab with animated eyes, claws, and legs. Breathing, blinking, working, and celebrating animations react to agent events in real time.
 
 ### Fixed
@@ -483,7 +481,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `agent` — sub-agent lessons (only recalled via semantic search, never auto-injected)
   - Auto-classification: `team` memories default to `global`, `agent_lesson` to `agent`, `user_preference` to `global`.
 - **Workspace-scoped memory prompt injection** — `build_memory_prompt()` now fetches both global (`scope=global, recall_policy=always`) and workspace-scoped (`scope=workspace, recall_policy=always`) team memories, providing contextually relevant knowledge per project.
-- **Memory migration script** (`scripts/migrate_memory_scope.py`) — One-time migration that backfills `scope`, `workspace_path`, and `recall_policy` for existing memories using conversation JOIN + curated key lists.
 
 ### Changed
 - **Memory API** (`/api/memory`) — List endpoint now supports `scope`, `recall_policy`, and `workspace_path` filters directly on the column (previously used a JOIN through conversations). Response includes the three new fields.
@@ -503,7 +500,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CompressMiddleware silently skipped for ChatGPT subscription** — the compression middleware would skip processing when a ChatGPT subscription model was detected, potentially exhausting context window on long sessions.
 
 ### Changed
-- **Reset Card button now shows confirmation dialog** — clicking "⚡ 立即使用重置" opens a confirmation modal before consuming the reset credit, preventing accidental clicks.
+- **Reset Card button now shows confirmation dialog** — clicking "⚡ Reset Now" opens a confirmation modal before consuming the reset credit, preventing accidental clicks.
 - Upgrade Kimi/Moonshot model list and context window limits.
 
 ### Improved
@@ -561,14 +558,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### How to Use
 1. Go to **Settings → Providers → Add**
-2. Select **"ChatGPT 订阅 (Plus/Pro)"** as the type
+2. Select **"ChatGPT Subscription (Plus/Pro)"** as the type
 3. Click **Add** — no API key required
-4. In the provider list, expand the ChatGPT provider and click **"登录 ChatGPT"**
+4. In the provider list, expand the ChatGPT provider and click **"Sign in to ChatGPT"**
 5. A device code appears — open the verification URL in your browser
 6. Sign in with your ChatGPT account and enter the code
 7. CrabAgent detects login automatically — done!
 8. Select a model (e.g., `gpt-5.4`) and start chatting
-9. Click **"查看额度"** anytime to see real-time usage and remaining quota
+9. Click **"View Quota"** anytime to see real-time usage and remaining quota
 
 ---
 
@@ -615,7 +612,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Pending files shown as cards with icon, name, and size
 - **LLM Retry with Live Countdown** — users now see exactly what's happening when API calls fail
   - New `LLM_RETRY` SSE event with phase, attempt number, and countdown
-  - Frontend retry card: spinner + message + "X秒后重试（第2/3次）" + progress bar
+  - Frontend retry card: spinner + message + "Retrying in X s (attempt 2/3)" + progress bar
   - Countdown ticks at 1-second intervals for real-time feedback
 
 ### Fixed
@@ -693,13 +690,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **WeChat Image Reception** — images sent by WeChat users are now correctly received, decrypted, and processed by the Agent
   - **AES key format bug**: iLink returns the key in `media.aes_key` as base64(hex_string) — a double encoding that `_normalize_key` could not parse, falling back to MD5 and producing garbage decryption. Fixed by adding a base64-of-hex decode path in `crypto.py` and preferring the top-level `aeskey` field (plain hex) in `download_media()`
   - **Image handling for non-vision models**: when the default model cannot process `image_url` content blocks, images are now saved to a local file with a text hint guiding the Agent to use any available vision tool (e.g. MCP image analysis). System prompt updated to instruct the Agent to self-discover image analysis capabilities
-  - **Image dimension display**: `[图片 0x0]` placeholder replaced with `[图片]` when width/height are unavailable (iLink does not return these fields for images)
+  - **Image dimension display**: `[Image 0x0]` placeholder replaced with `[Image]` when width/height are unavailable (iLink does not return these fields for images)
 
 ### Added
 - **WeChat Conversation Archival** — automatic rollover of long WeChat conversations to prevent unbounded context growth
   - **Date trigger**: when a conversation's creation date is before today, it is archived after the user's reply is sent
   - **Volume trigger**: when prior messages exceed 150, archived as a safety net
-  - **Summary injection**: old conversation is LLM-summarized (≤5000 chars), old conversation renamed to `(已归档 MM-DD HH:MM)`, new conversation created with the summary injected as initial context
+  - **Summary injection**: old conversation is LLM-summarized (≤5000 chars), old conversation renamed to `(Archived MM-DD HH:MM)`, new conversation created with the summary injected as initial context
   - **Zero perceived latency**: archival runs asynchronously after the reply is delivered; user never waits
   - **Graceful degradation**: if LLM summarization fails, archival is skipped and retried on the next trigger
 
@@ -785,7 +782,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Document panel layout** — default width 480→520px, dynamic max-width calculation, chat content no longer squeezed when document panel is open
-- **Univer dead code cleanup** — removed `UniverEditor.tsx`, `@univerjs/*` dependencies, orphaned i18n keys, and "在线编辑" button (open-source Univer cannot import/edit existing Office files)
+- **Univer dead code cleanup** — removed `UniverEditor.tsx`, `@univerjs/*` dependencies, orphaned i18n keys, and "Edit Online" button (open-source Univer cannot import/edit existing Office files)
 - **FileBrowser** — Git and Molts sections default to collapsed
 - **DocumentPreview** — optimized loading/error states, type-specific file icons
 - **Memory search** — `build_memory_prompt()`, `inject_agent_lessons()`, and `memory_recall` tool now use vector search with LIKE fallback
@@ -813,7 +810,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Background MCP Startup** — MCP servers now start via `asyncio.create_task` in `lifespan`, no longer blocking app startup; graceful cancellation on shutdown
 - **Compression Timing Moved** — context compression check moved from before-LLM to after-LLM response, simplifying DB persistence and agent_switch message handling
 - **Token Accumulation** — `AgentContext` now tracks accumulated prompt/completion/cached/reasoning tokens across all iterations; token usage persisted per-iteration
-- **Agent Switch Messages Filtered** — `[Agent Switch]` / `[Agent 切换]` messages are filtered out from frontend display when loaded from DB
+- **Agent Switch Messages Filtered** — `[Agent Switch]` messages are filtered out from frontend display when loaded from DB
 - **MCP Settings Removed** — SearXNG settings/test tab removed from MCP panel (moved to Settings page)
 - **Compress Prompt i18n** — compression system/user prompts moved to i18n en/zh-CN locale files
 - Version bumped to 0.9.9.post1
@@ -825,7 +822,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.9.6]
 
 ### Added
-- **i18n multi-language support** — English + Chinese (中文) with per-session language switching
+- **i18n multi-language support** — English + Chinese with per-session language switching
 - Language preference persistence across sessions
 - Locale mismatch detection and rebuild prompt
 

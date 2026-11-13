@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { useTranslation } from "react-i18next";
 import {
   Bold, Italic, Underline, Type, Palette, Sparkles,
   TableCellsMerge, TableCellsSplit, Plus, FunctionSquare, Minus,
@@ -51,7 +50,6 @@ interface Props {
 const FONT_SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48];
 
 export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, fileType, onTableOp, onThemeEdit, onStructureOp }: Props) {
-  const { t } = useTranslation();
   const [showFontMenu, setShowFontMenu] = useState(false);
   const [showColorMenu, setShowColorMenu] = useState(false);
   const fontAnchorRef = useRef<HTMLDivElement>(null);
@@ -116,7 +114,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
   });
   const [themeFonts, setThemeFonts] = useState({ headingFont: "Calibri Light", bodyFont: "Calibri" });
   const [showFontPicker, setShowFontPicker] = useState(false);
-  const FONT_LIST = ["Calibri", "Calibri Light", "Arial", "Times New Roman", "Segoe UI", "微软雅黑", "宋体", "Noto Sans CJK", "Montserrat", "Open Sans"];
+  const FONT_LIST = ["Calibri", "Calibri Light", "Arial", "Times New Roman", "Segoe UI", "Microsoft YaHei", "SimSun", "Noto Sans CJK", "Montserrat", "Open Sans"];
 
   return (
     <div className={cn("flex items-center gap-0.5 px-2 py-1 border-b border-[var(--border)] bg-[var(--bg-secondary)]", className)}>
@@ -125,7 +123,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
         disabled={!active}
         onClick={() => active && onStyleChange({ bold: !style?.bold })}
         className={cn(btnBase, style?.bold && active && "bg-[var(--brand-bg)] text-[var(--brand)]")}
-        title={t("document.bold")}
+        title={"Bold"}
       >
         <Bold size={14} />
       </button>
@@ -135,7 +133,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
         disabled={!active}
         onClick={() => active && onStyleChange({ italic: !style?.italic })}
         className={cn(btnBase, style?.italic && active && "bg-[var(--brand-bg)] text-[var(--brand)]")}
-        title={t("document.italic")}
+        title={"Italic"}
       >
         <Italic size={14} />
       </button>
@@ -145,7 +143,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
         disabled={!active}
         onClick={() => active && onStyleChange({ underline: !style?.underline })}
         className={cn(btnBase, style?.underline && active && "bg-[var(--brand-bg)] text-[var(--brand)]")}
-        title={t("document.underline")}
+        title={"Underline"}
       >
         <Underline size={14} />
       </button>
@@ -158,7 +156,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
           disabled={!active}
           onClick={() => active && setShowFontMenu((v) => !v)}
           className={cn(btnBase, "gap-1 w-auto px-1.5")}
-          title={t("document.fontSize")}
+          title={"Font Size"}
         >
           <Type size={13} />
           <span className="text-[10px]">{style?.fontSize ? Math.round(parseFloat(style.fontSize)) : "—"}</span>
@@ -194,7 +192,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
           disabled={!active}
           onClick={() => active && setShowColorMenu((v) => !v)}
           className={cn(btnBase)}
-          title={t("document.color")}
+          title={"Color"}
         >
           <Palette size={14} />
         </button>
@@ -234,7 +232,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
           <button
             onClick={() => onTableOp({ operation: "merge_cells", params: { range: "A1:B1" } })}
             className={cn(btnBase, "hover:bg-[var(--bg-tertiary)]")}
-            title="合并单元格"
+            title="Merge cells"
           >
             <TableCellsMerge size={14} />
           </button>
@@ -243,7 +241,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
           <button
             onClick={() => onTableOp({ operation: "unmerge_cells", params: { range: "A1:B1" } })}
             className={cn(btnBase, "hover:bg-[var(--bg-tertiary)]")}
-            title="取消合并"
+            title="Unmerge"
           >
             <TableCellsSplit size={14} />
           </button>
@@ -252,7 +250,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
           <button
             onClick={() => onTableOp({ operation: "insert_row", params: { after_row: 1 } })}
             className={cn(btnBase, "hover:bg-[var(--bg-tertiary)]")}
-            title="插入行"
+            title="Insert row"
           >
             <Plus size={14} />
           </button>
@@ -268,7 +266,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
                   if (e.key === "Enter") handleSendFormula();
                   if (e.key === "Escape") { setShowFormulaInput(false); setFormulaText(""); }
                 }}
-                placeholder="如 SUM(A1:A10)"
+                placeholder="e.g. SUM(A1:A10)"
                 autoFocus
                 className="w-32 h-7 px-2 text-[11px] rounded bg-[var(--bg-tertiary)] border border-[var(--brand)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none mr-1"
               />
@@ -276,7 +274,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
             <button
               onClick={() => setShowFormulaInput((v) => !v)}
               className={cn(btnBase, "hover:bg-[var(--bg-tertiary)]")}
-              title="设置公式"
+              title="Set formula"
             >
               <FunctionSquare size={14} />
             </button>
@@ -286,7 +284,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
           <button
             onClick={() => onTableOp({ operation: "delete_row", params: { row: 1 } })}
             className={cn(btnBase, "hover:bg-red-500/10 hover:text-red-500")}
-            title="删除行"
+            title="Delete row"
           >
             <Minus size={13} />
           </button>
@@ -299,31 +297,31 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
           <div className="w-px h-5 bg-[var(--border)] mx-1" />
           <button
             onClick={() => onStructureOp?.({
-              label: "新增标题页",
+              label: "Add title slide",
               operations: [{ command: "add", parent: "/", type: "slide", props: { layout: "Title Slide", title: "New Slide", text: "Subtitle" } }],
             })}
             className={cn(btnBase, "hover:bg-[var(--bg-tertiary)]")}
-            title="新增标题页"
+            title="Add title slide"
           >
             <Presentation size={14} />
           </button>
           <button
             onClick={() => onStructureOp?.({
-              label: "新增内容占位符",
+              label: "Add content placeholder",
               operations: [{ command: "add", parent: "/slide[1]", type: "placeholder", props: { phType: "body", text: "Content" } }],
             })}
             className={cn(btnBase, "hover:bg-[var(--bg-tertiary)]")}
-            title="新增内容占位符"
+            title="Add content placeholder"
           >
             <Rows3 size={14} />
           </button>
           <button
             onClick={() => onStructureOp?.({
-              label: "新增图片占位框",
+              label: "Add image placeholder",
               operations: [{ command: "add", parent: "/slide[1]", type: "image", props: { x: 80, y: 120, width: 320, height: 180 } }],
             })}
             className={cn(btnBase, "hover:bg-[var(--bg-tertiary)]")}
-            title="新增图片占位框"
+            title="Add image placeholder"
           >
             <ImagePlus size={14} />
           </button>
@@ -331,10 +329,10 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
             <button
               onClick={() => setShowThemePicker((v) => !v)}
               className={cn(btnBase, "gap-1 w-auto px-1.5 hover:bg-[var(--bg-tertiary)]")}
-              title="主题配色"
+              title="Theme colors"
             >
               <Palette size={13} />
-              <span className="text-[10px]">主题</span>
+              <span className="text-[10px]">Theme</span>
             </button>
             {showThemePicker && (
               <FloatingMenu
@@ -346,7 +344,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
                 className="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-lg shadow-[var(--shadow-lg)] w-72"
               >
                 <div className="p-3" onClick={(e) => e.stopPropagation()}>
-                <div className="text-xs font-semibold text-[var(--text-primary)] mb-2">主题配色</div>
+                <div className="text-xs font-semibold text-[var(--text-primary)] mb-2">Theme colors</div>
                 <div className="grid grid-cols-6 gap-1.5 mb-3">
                   {Object.entries(themeColors).map(([key, val]) => (
                     <div key={key} className="flex flex-col items-center gap-0.5">
@@ -364,14 +362,14 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
                     </div>
                   ))}
                 </div>
-                <div className="text-xs font-semibold text-[var(--text-primary)] mb-1">字体</div>
+                <div className="text-xs font-semibold text-[var(--text-primary)] mb-1">Font</div>
                 <div className="flex flex-col gap-1.5 mb-3">
                   <select
                     value={themeFonts.headingFont}
                     onChange={(e) => setThemeFonts((prev) => ({ ...prev, headingFont: e.target.value }))}
                     className="text-[11px] px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)]"
                   >
-                    <optgroup label="标题字体">
+                    <optgroup label="Heading font">
                       {FONT_LIST.map((f) => <option key={f} value={f}>{f}</option>)}
                     </optgroup>
                   </select>
@@ -380,7 +378,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
                     onChange={(e) => setThemeFonts((prev) => ({ ...prev, bodyFont: e.target.value }))}
                     className="text-[11px] px-2 py-1 rounded bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)]"
                   >
-                    <optgroup label="正文字体">
+                    <optgroup label="Body font">
                       {FONT_LIST.map((f) => <option key={f} value={f}>{f}</option>)}
                     </optgroup>
                   </select>
@@ -390,7 +388,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
                     onClick={() => setShowThemePicker(false)}
                     className="px-2 py-1 text-[10px] rounded text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)]"
                   >
-                    取消
+                    Cancel
                   </button>
                   <button
                     onClick={() => {
@@ -399,7 +397,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
                     }}
                     className="px-3 py-1 text-[10px] rounded bg-[var(--accent)] text-white hover:opacity-90"
                   >
-                    应用主题
+                    Apply theme
                   </button>
                 </div>
                 </div>
@@ -422,7 +420,7 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
               if (e.key === "Enter") handleSendAI();
               if (e.key === "Escape") { setShowAIInput(false); setAiText(""); }
             }}
-            placeholder={t("document.aiEditPlaceholder")}
+            placeholder={"Edit instruction…"}
             autoFocus
             className="w-40 h-7 px-2 text-[11px] rounded bg-[var(--bg-tertiary)] border border-[var(--brand)] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none mr-1"
           />
@@ -436,10 +434,10 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
               ? "text-[var(--brand)] hover:bg-[var(--brand-bg)]"
               : "text-[var(--text-tertiary)] opacity-40 cursor-not-allowed",
           )}
-          title={t("document.aiEditThis")}
+          title={"AI Edit"}
         >
           <Sparkles size={12} />
-          {t("document.aiEditThis")}
+          {"AI Edit"}
         </button>
       </div>
     </div>

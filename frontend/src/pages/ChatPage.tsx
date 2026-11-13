@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { useTranslation } from "react-i18next";
 import ChatInput from "../components/ChatInput";
 import {
   Bot,
@@ -59,7 +58,6 @@ import { useChatState } from "../hooks/useChatState";
 import { useAgentRunBoard } from "../hooks/useAgentRunBoard";
 import { useModelSelector } from "../hooks/useModelSelector";
 import { cn } from "../lib/cn";
-import { sendWithLocale } from "../lib/localeSend";
 import { reasoningOptions, effectiveEffort } from "../lib/reasoningEffort";
 import { dbMessagesToChat } from "../lib/messageTransforms";
 import { DocumentPanel, DocState } from "../components/DocumentPanel";
@@ -76,14 +74,13 @@ interface Props {
 }
 
 const STARTER_PROMPTS = [
-  { icon: <Code size={14} />, labelKey: "chat.debugLabel", promptKey: "chat.debugPrompt" },
-  { icon: <Compass size={14} />, labelKey: "chat.explainLabel", promptKey: "chat.explainPrompt" },
-  { icon: <Sparkles size={14} />, labelKey: "chat.brainstormLabel", promptKey: "chat.brainstormPrompt" },
-  { icon: <MessageSquare size={14} />, labelKey: "chat.writeDocLabel", promptKey: "chat.writeDocPrompt" },
+  { icon: <Code size={14} />, label: "Debug an error", prompt: "Help me find the cause of this error:\n\n" },
+  { icon: <Compass size={14} />, label: "Explain a concept", prompt: "Explain this in simple terms, with an example: " },
+  { icon: <Sparkles size={14} />, label: "Brainstorm ideas", prompt: "Brainstorm ideas for " },
+  { icon: <MessageSquare size={14} />, label: "Write a doc", prompt: "Write a document about " },
 ];
 
 export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, enterBrowserSignal }: { onActiveSessionChange?: (sessionId: string | null) => void; onActiveBranchChange?: (branch: string) => void; enterBrowserSignal?: number }) {
-  const { t, i18n } = useTranslation();
   const [workspace, setWorkspace] = useState<string>("");
   const [goal, setGoal] = useState<GoalData | null>(null);
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
@@ -164,7 +161,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
   const [workspaceType, setWorkspaceType] = useState<WorkspaceType>("document");
   const [meetingActive, setMeetingActive] = useState(false);
   const [fileTreeRefreshKey, setFileTreeRefreshKey] = useState(0);
-  // 每次迭代结束（LLM 调用完成、token usage 落库）+1，驱动统计条刷新
+  // +1 after each finished iteration (LLM call done, token usage persisted) to drive the stats bar refresh
   const [statsTick, setStatsTick] = useState(0);
 
   const handleStartMeeting = useCallback(() => {
@@ -284,7 +281,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
 
   const wrappedOnEvent = useCallback((event: SSEEvent) => {
     if (event.type === "iteration_end" || event.type === "sub_agent_end") {
-      // 该次 LLM 调用的 token usage 刚落库，触发统计条防抖刷新
+      // That LLM call's token usage was just persisted — trigger a debounced stats bar refresh
       setStatsTick((k) => k + 1);
     }
     if (event.type.startsWith("goal_")) {
@@ -327,12 +324,6 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
     requestMessageImages,
   } = useChatState(wrappedOnEvent, workspace, onAutoLoadSession);
 
-  useEffect(() => {
-    return window.electronAPI?.onOpenSession?.((sessionId) => {
-      void selectSessionById(sessionId, selectedModel, models).then(setSelectedModel);
-    });
-  }, [selectSessionById, selectedModel, models, setSelectedModel]);
-
   // ── Open Office document from file tree ───────────────────────
   const handleOpenDoc = useCallback(async (path: string, name: string) => {
     const ws = activeSession?.workspace || workspace || "";
@@ -361,7 +352,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
         // Show install progress in preview error area
         const pct = status.progress || 0;
         const msg = status.message || "Installing...";
-        const progressMsg = `⏳ 正在自动安装 OfficeCLI... ${pct}%\n${msg}`;
+        const progressMsg = `⏳ Installing OfficeCLI automatically... ${pct}%\n${msg}`;
         setDocState((prev) => prev ? { ...prev, previewError: progressMsg, previewLoading: true } : prev);
       });
       if (installTimer) clearTimeout(installTimer);
@@ -382,7 +373,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
         busy: false,
         previewLoading: false,
         previewError: isInstallFail
-          ? "❌ OfficeCLI 安装失败。请手动安装：\nwinget install HaiYing.OfficeCLI\n或访问 https://github.com/iOfficeAI/OfficeCLI/releases"
+          ? "❌ OfficeCLI installation failed. Install it manually:\nwinget install HaiYing.OfficeCLI\nor visit https://github.com/iOfficeAI/OfficeCLI/releases"
           : (e?.message || "Failed to open document"),
         events: [...prev.events, { message: `❌ Failed: ${e?.message || "Unknown error"}`, timestamp: Date.now(), status: "error" }],
       } : prev);
@@ -436,7 +427,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
       if (!goal) {
         await sessionsApi.sendPrompt(
           activeSession.session_id,
-          `我已创建当前会话目标：${result.goal.objective}\n请先检查现状，说明执行计划，然后开始推进。`,
+          `I created the current session goal: ${result.goal.objective}\nReview the current state, outline a plan, then start making progress.`,
           execution.execution_model,
           undefined,
           execution.execution_agent,
@@ -551,16 +542,14 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
   const [agentProfiles, setAgentProfiles] = useState<AgentProfileType[]>([]);
   const [agentOpen, setAgentOpen] = useState(false);
   const [effortOpen, setEffortOpen] = useState(false);
-  // 工作模式侧栏与主聊天区各渲染一份 Agent/Effort 工具栏，分别持有锚点 ref；
-  // FloatingMenu 经 portal 渲染到 body，portal 菜单 ref 用于外点关闭判断。
+  // The work-mode sidebar and the main chat area each render an Agent/Effort toolbar with its own anchor ref;
+  // FloatingMenu renders into body via portal, so the portal menu ref is used for outside-click dismissal.
   const sidebarAgentRef = useRef<HTMLDivElement>(null);
   const mainAgentRef = useRef<HTMLDivElement>(null);
   const sidebarEffortRef = useRef<HTMLDivElement>(null);
   const mainEffortRef = useRef<HTMLDivElement>(null);
   const agentMenuRef = useRef<HTMLDivElement>(null);
   const effortMenuRef = useRef<HTMLDivElement>(null);
-  const localeSendInProgress = useRef(false);
-  const [localeMismatch, setLocaleMismatch] = useState<{ pendingText: string; pendingImages: string[]; pendingFiles: { name: string; path: string; size: number }[] } | null>(null);
   const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
   const [mcpStatus, setMcpStatus] = useState<McpServerStatus[]>([]);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -773,7 +762,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
     // Append file references to the prompt text
     if (files.length > 0) {
       const fileList = files.map((f) => `- ${f.path} (${f.name}, ${(f.size / 1024).toFixed(0)}KB)`).join("\n");
-      text = text + (text ? "\n\n" : "") + `📎 附件：\n${fileList}\n\n请先读取附件内容，然后根据我的请求处理。`;
+      text = text + (text ? "\n\n" : "") + `📎 Attachments:\n${fileList}\n\nRead the attachments first, then handle my request.`;
     }
 
     setMessages((prev) => [
@@ -838,39 +827,11 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
       return;
     }
 
-    // Check locale mismatch
-    const currentLocale = i18n.language;
-    if (activeSession.prompt_locale && activeSession.prompt_locale !== currentLocale) {
-      setLocaleMismatch({ pendingText: text, pendingImages: [...pendingImages], pendingFiles: [...pendingFiles] });
-      return;
-    }
-
     const images = [...pendingImages];
     const files = [...pendingFiles];
     setPendingImages([]);
     setPendingFiles([]);
     doSend(text, images, files);
-  };
-
-  const handleSendWithLocale = async () => {
-    if (!activeSession || !localeMismatch || localeSendInProgress.current) return;
-    localeSendInProgress.current = true;
-    const locale = i18n.language;
-    try {
-      await sendWithLocale(activeSession.session_id, locale, localeMismatch,
-        ({ pendingText, pendingImages, pendingFiles }) => doSend(pendingText, pendingImages, pendingFiles),
-        () => {
-          setActiveSession({ ...activeSession, prompt_locale: locale });
-          setPendingImages([]);
-          setPendingFiles([]);
-          setLocaleMismatch(null);
-        });
-    } catch (e) {
-      console.error("Failed to synchronize locale or reset system prompt:", e);
-      toast.error(t("localeMismatch.resetFailed"));
-    } finally {
-      localeSendInProgress.current = false;
-    }
   };
 
   const handleToolConfirm = async (confirmId: string, approved: boolean) => {
@@ -950,9 +911,9 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
   };
 
   const quickActionPrompts: Record<string, string> = {
-    digest: t("quickAction.digestPrompt"),
-    remind: t("quickAction.remindPrompt"),
-    inbox: t("quickAction.inboxPrompt"),
+    digest: "Generate and send my daily digest",
+    remind: "Check my tasks and send reminders for anything due soon",
+    inbox: "Check my email for new messages",
   };
 
   const handleQuickAction = useCallback(
@@ -987,7 +948,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
     (n: { title: string; body: string }) => {
       const textarea = document.querySelector<HTMLTextAreaElement>("textarea");
       if (textarea) {
-        const text = `${t("notification.emailAction")}\n\n${n.body}`;
+        const text = `${"Please help me handle this email:"}\n\n${n.body}`;
         const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
           window.HTMLTextAreaElement.prototype, "value"
         )?.set;
@@ -1021,7 +982,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
     // Only need to send the selected text + instruction.
     if (!activeSession) return;
     const text = selectedText
-      ? `修改这段内容（原文）：\n\n> ${selectedText}\n\n修改要求：${instruction}`
+      ? `Modify this content (original):\n\n> ${selectedText}\n\nChange request: ${instruction}`
       : instruction;
     if (text.trim() && !sending) {
       setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", content: text }]);
@@ -1059,11 +1020,249 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
       setMessages(dbMessagesToChat(refreshed));
       setShowCompression(false);
     } catch (err) {
-      setCompressionError(err instanceof Error ? err.message : t("compression.failed"));
+      setCompressionError(err instanceof Error ? err.message : "Compression failed");
     } finally {
       setCompressing(false);
     }
   };
+
+  // ── Composer pieces shared by chat mode, work mode and the start screen ──
+
+  const agentLabel = selectedAgent === "default"
+    ? "🦀 default"
+    : (() => {
+        const p = agentProfiles.find((a) => a.name === selectedAgent);
+        return `${p?.icon || "🤖"} ${p?.display_name || selectedAgent}`;
+      })();
+
+  const renderComposerControls = (
+    agentRef: React.RefObject<HTMLDivElement | null>,
+    effortRef: React.RefObject<HTMLDivElement | null>,
+  ) => (
+    <>
+      {agentProfiles.length > 0 && (
+        <div ref={agentRef} className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setAgentOpen((v) => !v)}
+            aria-expanded={agentOpen}
+            title={"Agent"}
+            className="composer-chip"
+          >
+            <span className="truncate max-w-[120px]">{agentLabel}</span>
+            <ChevronDown size={13} className={cn("shrink-0 opacity-60 transition-transform", agentOpen && "rotate-180")} />
+          </button>
+          {agentOpen && (
+            <FloatingMenu
+              open={agentOpen}
+              anchorRef={agentRef}
+              menuRef={agentMenuRef}
+              placement="top-end"
+              gap={6}
+              className="min-w-[180px] rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-lg)] p-1"
+            >
+              {[{ name: "default", icon: "🦀", display_name: "default" as const }, ...agentProfiles].map((a) => {
+                const isSelected = a.name === selectedAgent;
+                return (
+                  <button
+                    key={a.name}
+                    onClick={async () => {
+                      setSelectedAgent(a.name);
+                      setAgentOpen(false);
+                      if (activeSession) {
+                        try { await sessionsApi.switchAgent(activeSession.session_id, a.name); } catch {}
+                      }
+                    }}
+                    className={cn(
+                      "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[13px] text-left transition-colors",
+                      isSelected ? "bg-[var(--bg-tertiary)] text-[var(--text-primary)]" : "text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]",
+                    )}
+                  >
+                    <span>{a.icon || "🤖"}</span>
+                    <span className="flex-1 truncate">{a.display_name}</span>
+                    {isSelected && <Check size={14} className="shrink-0 text-[var(--brand)]" />}
+                  </button>
+                );
+              })}
+            </FloatingMenu>
+          )}
+        </div>
+      )}
+      {modelsLoading ? (
+        <span className="composer-chip pointer-events-none shrink-0">
+          <Loader2 size={12} className="animate-spin" />
+          {"Loading models…"}
+        </span>
+      ) : providerModels.length > 0 ? (
+        <ModelSelector
+          variant="chip"
+          className="shrink-0"
+          providerModels={providerModels}
+          selectedModel={selectedModel}
+          selectedProvider={selectedProvider}
+          onChange={handleModelChange}
+          disabled={modelsLoading}
+        />
+      ) : (
+        <span className="flex shrink-0 items-center gap-1">
+          <input
+            type="text"
+            value={selectedModel}
+            onChange={(e) => handleModelInput(e.target.value)}
+            placeholder={"type model id…"}
+            title={"Model"}
+            aria-label={"Model"}
+            className="h-8 w-28 sm:w-36 rounded-lg bg-transparent px-2 text-xs font-mono text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] focus:bg-[var(--bg-tertiary)] focus:outline-none"
+          />
+          {modelsError && (
+            <button
+              type="button"
+              className="text-[11px] text-[var(--danger)] hover:underline"
+              title={modelsError}
+              onClick={() => window.location.reload()}
+            >
+              {"Retry"}
+            </button>
+          )}
+        </span>
+      )}
+      {effortOptions.length > 0 && (
+        <div ref={effortRef} className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setEffortOpen((v) => !v)}
+            aria-expanded={effortOpen}
+            title={"Reasoning effort"}
+            className="composer-chip"
+          >
+            <span>{activeEffort || "effort"}</span>
+            <ChevronDown size={13} className={cn("shrink-0 opacity-60 transition-transform", effortOpen && "rotate-180")} />
+          </button>
+          {effortOpen && (
+            <FloatingMenu
+              open={effortOpen}
+              anchorRef={effortRef}
+              menuRef={effortMenuRef}
+              placement="top-end"
+              gap={6}
+              className="min-w-[140px] rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-lg)] p-1"
+            >
+              <div className="px-2.5 pt-1 pb-1.5 text-[11px] text-[var(--text-tertiary)]">{"Reasoning effort"}</div>
+              {effortOptions.map((effort) => {
+                const isSelected = effort === activeEffort;
+                return (
+                  <button
+                    key={effort}
+                    onClick={() => {
+                      handleEffortChange(effort);
+                      setEffortOpen(false);
+                    }}
+                    className={cn(
+                      "w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[13px] text-left transition-colors",
+                      isSelected ? "bg-[var(--bg-tertiary)] text-[var(--text-primary)]" : "text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]",
+                    )}
+                  >
+                    <span className="flex-1">{effort}</span>
+                    {isSelected && <Check size={14} className="shrink-0 text-[var(--brand)]" />}
+                  </button>
+                );
+              })}
+            </FloatingMenu>
+          )}
+        </div>
+      )}
+    </>
+  );
+
+  const hasAttachments = pendingImages.length > 0 || pendingFiles.length > 0;
+  const composerAttachments = hasAttachments ? (
+    <div className="flex flex-wrap gap-2 px-3 pt-3">
+      {pendingImages.map((img, i) => (
+        <div key={`img-${i}`} className="relative">
+          <img
+            src={img}
+            className="h-14 w-14 object-cover rounded-lg border border-[var(--border)]"
+            alt=""
+          />
+          <button
+            type="button"
+            onClick={() => setPendingImages((prev) => prev.filter((_, idx) => idx !== i))}
+            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[var(--text-primary)] text-[var(--bg-primary)] shadow-[var(--shadow-sm)] hover:opacity-80 transition-opacity"
+            aria-label={"Remove image"}
+          >
+            <X size={11} />
+          </button>
+        </div>
+      ))}
+      {pendingFiles.map((f, i) => (
+        <div key={`file-${i}`} className="relative flex items-center gap-2 h-14 pl-2.5 pr-3 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] max-w-[220px]">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--bg-tertiary)] text-[var(--text-secondary)]">
+            <FileText size={15} />
+          </span>
+          <div className="min-w-0">
+            <div className="text-xs text-[var(--text-primary)] truncate">{f.name}</div>
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-tertiary)]">
+              {f.name.includes(".") ? f.name.split(".").pop() : "file"} · {(f.size / 1024).toFixed(0)} KB
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
+            className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[var(--text-primary)] text-[var(--bg-primary)] shadow-[var(--shadow-sm)] hover:opacity-80 transition-opacity"
+            aria-label="Remove file"
+          >
+            <X size={11} />
+          </button>
+        </div>
+      ))}
+    </div>
+  ) : null;
+
+  // ── Start screen: the first message creates the session, then is sent
+  // once the new session's event stream is connected (so no reply is missed).
+  const [firstMessage, setFirstMessage] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [starterSeed, setStarterSeed] = useState<{ text: string; key: number } | undefined>();
+
+  const startConversation = async (text: string) => {
+    if (starting) return;
+    setStarting(true);
+    try {
+      // Keep the agent picked on the start screen (onNewSession resets it).
+      const model = await newSession(selectedModel, models);
+      setSelectedModel(model);
+      clearAgentRunBoard();
+      setFirstMessage(text);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not start a conversation");
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (firstMessage === null || !activeSession) return;
+    const send = () => {
+      setFirstMessage(null);
+      void handleSend(firstMessage);
+    };
+    if (connected) {
+      send();
+      return;
+    }
+    // Fall back after a few seconds; the server keeps the reply in the session.
+    const timer = setTimeout(send, 4000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firstMessage, activeSession?.session_id, connected]);
+
+  const greeting = (() => {
+    const hour = new Date().getHours();
+    if (hour < 5) return "Up late?";
+    if (hour < 12) return "Good morning";
+    if (hour < 18) return "Good afternoon";
+    return "Good evening";
+  })();
 
   return (
     <div className="chat-page-background relative flex h-full overflow-hidden bg-[var(--bg-primary)]">
@@ -1094,11 +1293,11 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
           <button
             onClick={() => setMode("chat")}
             className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
-            title={t("session.sessions")}
+            title={"Sessions"}
           >
             <MessageSquare size={16} />
           </button>
-          <button onClick={() => setMobileWorkChat((value) => !value)} className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)]" aria-label={mobileWorkChat ? t("document.workMode") : t("document.chatMode")} title={mobileWorkChat ? t("document.workMode") : t("document.chatMode")}>
+          <button onClick={() => setMobileWorkChat((value) => !value)} className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)]" aria-label={mobileWorkChat ? "Work Mode" : "Chat Mode"} title={mobileWorkChat ? "Work Mode" : "Chat Mode"}>
             <LayoutPanelLeft size={16} />
           </button>
         </div>
@@ -1117,7 +1316,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-xs text-[var(--success)] flex items-center gap-1.5">
                           <Sparkles size={11} className="animate-pulse" />
-                          {t("chat.replayingBranch")}
+                          {"Replaying branch"}
                         </span>
                         <span className="text-xs text-[var(--text-tertiary)] font-mono">
                           {replayProgress.current} / {replayProgress.total}
@@ -1161,228 +1360,31 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                       refreshKey={messages.length * 100 + (sending ? 1 : 0) + statsTick}
                     />
 
-                    {/* Agent + Model selectors */}
-                    <div className="mb-1 flex items-center gap-2 flex-wrap">
-                      {agentProfiles.length > 0 && (
-                        <div ref={sidebarAgentRef} className="flex items-center gap-1.5 relative">
-                          <span className="text-[11px] text-[var(--text-tertiary)]">
-                            Agent
-                          </span>
-                          <button
-                            onClick={() => setAgentOpen((v) => !v)}
-                            className="flex items-center gap-1.5 text-xs h-7 pl-2.5 pr-1.5 rounded-md bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/30 transition-colors"
-                          >
-                            <span className="truncate max-w-[80px]">
-                              {selectedAgent === "default"
-                                ? "🦀 default"
-                                : (() => {
-                                    const p = agentProfiles.find((a) => a.name === selectedAgent);
-                                    return `${p?.icon || "🤖"} ${p?.display_name || selectedAgent}`;
-                                  })()}
-                            </span>
-                            <ChevronDown size={13} className={cn("text-[var(--text-tertiary)] transition-transform shrink-0", agentOpen && "rotate-180")} />
-                          </button>
-                          {agentOpen && (
-                            <FloatingMenu
-                              open={agentOpen}
-                              anchorRef={sidebarAgentRef}
-                              menuRef={agentMenuRef}
-                              placement="top-end"
-                              gap={6}
-                              className="min-w-[160px] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-lg)] py-1.5"
-                            >
-                              {[{ name: "default", icon: "🦀", display_name: "default" as const }, ...agentProfiles].map((a) => {
-                                const isSelected = a.name === selectedAgent;
-                                return (
-                                  <button
-                                    key={a.name}
-                                    onClick={async () => {
-                                      setSelectedAgent(a.name);
-                                      setAgentOpen(false);
-                                      if (activeSession) {
-                                        try { await sessionsApi.switchAgent(activeSession.session_id, a.name); } catch {}
-                                      }
-                                    }}
-                                    className={cn(
-                                      "w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors",
-                                      isSelected ? "bg-[var(--brand-bg)] text-[var(--brand)]" : "text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]",
-                                    )}
-                                  >
-                                    <span>{a.icon || "🤖"}</span>
-                                    <span className="flex-1 truncate">{a.display_name}</span>
-                                    {isSelected && <Check size={13} className="shrink-0 text-[var(--brand)]" />}
-                                  </button>
-                                );
-                              })}
-                            </FloatingMenu>
-                          )}
-                        </div>
-                      )}
-                      {modelsLoading ? (
-                        <div className="flex items-center gap-1.5">
-                          <Loader2 size={12} className="animate-spin text-[var(--text-tertiary)]" />
-                          <span className="text-[11px] text-[var(--text-tertiary)]">Loading…</span>
-                        </div>
-                      ) : providerModels.length > 0 ? (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] text-[var(--text-tertiary)]">
-                            {t("chatPage.model")}
-                          </span>
-                          <ModelSelector
-                            providerModels={providerModels}
-                            selectedModel={selectedModel}
-                            selectedProvider={selectedProvider}
-                            onChange={handleModelChange}
-                            disabled={modelsLoading}
-                          />
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] text-[var(--text-tertiary)]">
-                            {t("chatPage.model")}
-                          </span>
-                          <input
-                            type="text"
-                            value={selectedModel}
-                            onChange={(e) => handleModelInput(e.target.value)}
-                            placeholder={t("chatPage.modelPlaceholder")}
-                            className="text-xs h-7 px-2 rounded-md bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/30 w-24 placeholder:text-[var(--text-tertiary)]"
-                          />
-                          {modelsError && (
-                            <span
-                              className="text-[10px] text-[var(--danger)] cursor-pointer"
-                              title={modelsError}
-                              onClick={() => window.location.reload()}
-                            >
-                              {t("chatPage.retry")}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      <div ref={sidebarEffortRef} className="flex items-center gap-1.5 relative">
-                        <span className="text-[11px] text-[var(--text-tertiary)]">
-                          {t("chatPage.effort")}
-                        </span>
-                        <button
-                          disabled={!effortOptions.length}
-                          onClick={() => setEffortOpen((v) => !v)}
-                          className="flex items-center gap-1.5 text-xs h-7 pl-2.5 pr-1.5 rounded-md bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/30 transition-colors"
-                        >
-                          <span>{activeEffort ? t(`chatPage.reasoning${activeEffort.charAt(0).toUpperCase() + activeEffort.slice(1)}`, { defaultValue: activeEffort }) : t("chatPage.reasoningUnavailable")}</span>
-                          <ChevronDown size={13} className={cn("text-[var(--text-tertiary)] transition-transform shrink-0", effortOpen && "rotate-180")} />
-                        </button>
-                        {effortOpen && (
-                          <FloatingMenu
-                            open={effortOpen}
-                            anchorRef={sidebarEffortRef}
-                            menuRef={effortMenuRef}
-                            placement="top-end"
-                            gap={6}
-                            className="min-w-[120px] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-lg)] py-1.5"
-                          >
-                            {effortOptions.map((effort) => {
-                              const label = t(`chatPage.reasoning${effort.charAt(0).toUpperCase() + effort.slice(1)}`, { defaultValue: effort });
-                              const isSelected = effort === activeEffort;
-                              return (
-                                <button
-                                  key={effort}
-                                  onClick={() => {
-                                    handleEffortChange(effort);
-                                    setEffortOpen(false);
-                                  }}
-                                  className={cn(
-                                    "w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors",
-                                    isSelected ? "bg-[var(--brand-bg)] text-[var(--brand)]" : "text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]",
-                                  )}
-                                >
-                                  <span className="flex-1">{label}</span>
-                                  {isSelected && <Check size={13} className="shrink-0 text-[var(--brand)]" />}
-                                </button>
-                              );
-                            })}
-                          </FloatingMenu>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Pending images */}
-                    {pendingImages.length > 0 && (
-                      <div className="flex gap-2 mb-2 flex-wrap">
-                        {pendingImages.map((img, i) => (
-                          <div key={i} className="relative inline-block">
-                            <img
-                              src={img}
-                              className="h-16 w-16 object-cover rounded-lg border border-[var(--border)]"
-                              alt=""
-                            />
-                            <button
-                              onClick={() =>
-                                setPendingImages((prev) =>
-                                  prev.filter((_, idx) => idx !== i),
-                                )
-                              }
-                              className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[var(--danger)] text-white hover:bg-[var(--danger-hover)] transition-colors"
-                              aria-label={t("chatPage.removeImage")}
-                            >
-                              <X size={11} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Pending files (documents, text, etc.) */}
-                    {pendingFiles.length > 0 && (
-                      <div className="flex gap-2 mb-2 flex-wrap">
-                        {pendingFiles.map((f, i) => (
-                          <div key={i} className="relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-tertiary)] max-w-[200px]">
-                            <FileText size={14} className="shrink-0 text-[var(--accent)]" />
-                            <div className="min-w-0">
-                              <div className="text-xs text-[var(--text-primary)] truncate">{f.name}</div>
-                              <div className="text-[10px] text-[var(--text-tertiary)]">{(f.size / 1024).toFixed(0)}KB</div>
-                            </div>
-                            <button
-                              onClick={() =>
-                                setPendingFiles((prev) =>
-                                  prev.filter((_, idx) => idx !== i),
-                                )
-                              }
-                              className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[var(--danger)] text-white hover:bg-[var(--danger-hover)] transition-colors"
-                              aria-label="Remove file"
-                            >
-                              <X size={11} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Input row */}
-                    <div className="flex flex-wrap gap-1.5 items-end sm:flex-nowrap">
-                      <ChatInput
-                        sending={sending}
-                        replaying={replaying}
-                        onSend={handleSend}
-                        onAbort={handleAbort}
-                        onFileUpload={handleFileUpload}
-                        onFilePaste={handleFilePaste}
-                        onDelegateOpen={() => setShowDelegate(true)}
-                        showDelegate={true}
-                        onGoalOpen={() => setGoalComposerOpen(true)}
-                        hasGoal={!!goal}
-                      />
-                    </div>
+                    <ChatInput
+                      sending={sending}
+                      replaying={replaying}
+                      onSend={handleSend}
+                      onAbort={handleAbort}
+                      onFileUpload={handleFileUpload}
+                      onFilePaste={handleFilePaste}
+                      onDelegateOpen={() => setShowDelegate(true)}
+                      showDelegate={true}
+                      onGoalOpen={() => setGoalComposerOpen(true)}
+                      hasGoal={!!goal}
+                      toolbar={renderComposerControls(sidebarAgentRef, sidebarEffortRef)}
+                      attachments={composerAttachments}
+                      canSendEmpty={hasAttachments}
+                    />
                   </div>
                 </>
               ) : (
                 <div className="flex-1 flex items-center justify-center px-4">
                   <div className="text-center">
-                    <div className="w-12 h-12 rounded-2xl mx-auto mb-3 flex items-center justify-center text-2xl"
-                      style={{ background: "linear-gradient(135deg, var(--brand) 0%, var(--brand-active) 100%)" }}
-                    >
-                      🦀
-                    </div>
-                    <p className="text-xs text-[var(--text-tertiary)]">{t("chatPage.welcome")}</p>
+                    <div aria-hidden="true" className="mb-2 text-3xl">🦀</div>
+                    <p className="font-display text-xl text-[var(--text-primary)]">{greeting}</p>
+                    <button type="button" onClick={onNewSession} className="mt-3 text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline underline-offset-4 decoration-[var(--border-strong)]">
+                      {"Start a new conversation"}
+                    </button>
                   </div>
                 </div>
               )}
@@ -1398,26 +1400,26 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                 className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
               >
                 <MessageSquare size={13} />
-                {t("document.chatMode")}
+                {"Chat Mode"}
               </button>
               <button
                 onClick={onNewSession}
                 className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
               >
                 <Sparkles size={13} />
-                {t("chat.startNewConversation")}
+                {"Start New Conversation"}
               </button>
               <button
                 onClick={handleStartMeeting}
                 className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-[var(--text-tertiary)] hover:text-[var(--accent)] hover:bg-[var(--accent-bg)] transition-colors"
               >
-                📝 {t("chat.startMeeting")}
+                📝 {"📝 Start Meeting"}
               </button>
               <button
                 onClick={handleEnterBrowserMode}
                 className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] transition-colors ${browserMode ? "text-[var(--brand)] bg-[var(--brand-bg)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]"}`}
               >
-                🌐 协作浏览器
+                🌐 Collaboration Browser
               </button>
               <div className="flex-1 min-w-0" />
               <WorkspaceSwitcher current={workspace} onChange={setWorkspace} />
@@ -1425,7 +1427,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                 size="icon"
                 variant="ghost"
                 onClick={() => setShowWorkFiles((v) => !v)}
-                title={showWorkFiles ? t("fileTree.hide") : t("fileTree.show")}
+                title={showWorkFiles ? "Hide file browser" : "Show file browser"}
                 className={cn(showWorkFiles ? "text-[var(--brand)] bg-[var(--brand-bg)]" : "")}
               >
                 {showWorkFiles ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
@@ -1449,7 +1451,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                 <>
                   <div className="w-px h-4 bg-[var(--border)]" />
                   <span className="text-sm font-medium text-[var(--text-primary)]">
-                    📝 {t("meeting.titlePlaceholder")}
+                    📝 {"Meeting title…"}
                   </span>
                   <div className="flex-1" />
                 </>
@@ -1523,7 +1525,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                         setDocState((prev) => prev ? {
                           ...prev,
                           previewLoading: false,
-                          previewError: e?.message || "刷新预览失败",
+                          previewError: e?.message || "Failed to refresh preview",
                         } : prev);
                       }
                     }}
@@ -1535,7 +1537,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                   <div className="h-full flex items-center justify-center text-[var(--text-tertiary)]">
                     <div className="text-center">
                       <LayoutPanelTop size={32} className="mx-auto mb-3 opacity-30" />
-                      <p className="text-sm">{t("document.workModeEmpty")}</p>
+                      <p className="text-sm">{"Nothing to work on. Ask AI to create or open a file."}</p>
                     </div>
                   </div>
                 )}
@@ -1560,12 +1562,12 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
         <>
         <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
           {/* Toolbar */}
-          <div className="flex items-center gap-1 px-2 sm:px-3 h-11 shrink-0 overflow-x-auto overscroll-x-contain border-b border-[var(--border)] bg-[var(--bg-secondary)]">
+          <div className="flex items-center gap-1 px-2 sm:px-3 h-12 shrink-0 overflow-x-auto overscroll-x-contain bg-transparent">
             <Button
               size="icon"
               variant="ghost"
               onClick={() => setMobileSidebarOpen(true)}
-              title={t("session.sessions")}
+              title={"Sessions"}
               className="md:hidden"
             >
               <Menu size={16} />
@@ -1586,10 +1588,10 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                     onClick={openCompression}
                     disabled={sending}
                     leftIcon={<Archive size={13} />}
-                    title={t("compression.title")}
+                    title={"Compress conversation"}
                     className="text-[var(--text-secondary)] hover:text-[var(--brand)]"
                   >
-                    {t("compression.action")}
+                    {"Compress"}
                   </Button>
                 </div>
               )}
@@ -1600,7 +1602,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                 size="icon"
                 variant="ghost"
                 onClick={() => setShowResultCompare(true)}
-                title={t("taskBoard.title")}
+                title={"Task Board"}
                 className="text-[var(--accent-2)] hover:text-[var(--accent-2)] hover:bg-[var(--accent-2-bg)]"
               >
                 <Bot size={15} />
@@ -1610,7 +1612,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
               size="icon"
               variant="ghost"
               onClick={() => setShowFiles((v) => !v)}
-              title={showFiles ? t("fileTree.hide") : t("fileTree.show")}
+              title={showFiles ? "Hide file browser" : "Show file browser"}
               className={cn(showFiles ? "text-[var(--brand)] bg-[var(--brand-bg)]" : "")}
             >
               {showFiles ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
@@ -1619,7 +1621,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
               size="icon"
               variant="ghost"
               onClick={() => setMode("work")}
-              title={t("document.workMode")}
+              title={"Work Mode"}
               className="text-[var(--text-tertiary)] hover:text-[var(--accent)] hover:bg-[var(--accent-bg)]"
             >
               <LayoutPanelLeft size={15} />
@@ -1633,7 +1635,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs text-[var(--success)] flex items-center gap-1.5">
                     <Sparkles size={11} className="animate-pulse" />
-                    {t("chat.replayingBranch")}
+                    {"Replaying branch"}
                   </span>
                   <span className="text-xs text-[var(--text-tertiary)] font-mono">
                     {replayProgress.current} / {replayProgress.total}
@@ -1669,274 +1671,78 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
             <McpStatusBar status={mcpStatus} />
 
             <div
-              className="shrink-0 px-2 sm:px-4 pt-1 sm:pt-2"
-              style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
+              className="shrink-0 px-3 sm:px-6 pt-1"
+              style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
               onDrop={handleDrop}
               onDragOver={handleDragOver}
             >
+              <div className="mx-auto w-full max-w-3xl">
               <SessionStatsBar
                 sessionId={activeSession?.session_id ?? null}
                 refreshKey={messages.length * 100 + (sending ? 1 : 0) + statsTick}
               />
 
-              {/* Agent + Model selectors */}
-              <div className="mb-1 sm:mb-2 flex items-center gap-2 flex-wrap">
-                {agentProfiles.length > 0 && (
-                  <div ref={mainAgentRef} className="flex items-center gap-1.5 relative">
-                    <span className="text-[11px] text-[var(--text-tertiary)] hidden sm:inline">
-                      Agent
-                    </span>
-                    <button
-                      onClick={() => setAgentOpen((v) => !v)}
-                      className="flex items-center gap-1.5 text-xs h-7 pl-2.5 pr-1.5 rounded-md bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/30 transition-colors"
-                    >
-                      <span className="truncate max-w-[100px]">
-                        {selectedAgent === "default"
-                          ? "🦀 default"
-                          : (() => {
-                              const p = agentProfiles.find((a) => a.name === selectedAgent);
-                              return `${p?.icon || "🤖"} ${p?.display_name || selectedAgent}`;
-                            })()}
-                      </span>
-                      <ChevronDown size={13} className={cn("text-[var(--text-tertiary)] transition-transform shrink-0", agentOpen && "rotate-180")} />
-                    </button>
-                    {agentOpen && (
-                      <FloatingMenu
-                        open={agentOpen}
-                        anchorRef={mainAgentRef}
-                        menuRef={agentMenuRef}
-                        placement="top-end"
-                        gap={6}
-                        className="min-w-[160px] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-lg)] py-1.5"
-                      >
-                        {[{ name: "default", icon: "🦀", display_name: "default" as const }, ...agentProfiles].map((a) => {
-                          const isSelected = a.name === selectedAgent;
-                          return (
-                            <button
-                              key={a.name}
-                              onClick={async () => {
-                                setSelectedAgent(a.name);
-                                setAgentOpen(false);
-                                if (activeSession) {
-                                  try { await sessionsApi.switchAgent(activeSession.session_id, a.name); } catch {}
-                                }
-                              }}
-                              className={cn(
-                                "w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors",
-                                isSelected ? "bg-[var(--brand-bg)] text-[var(--brand)]" : "text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]",
-                              )}
-                            >
-                              <span>{a.icon || "🤖"}</span>
-                              <span className="flex-1 truncate">{a.display_name}</span>
-                              {isSelected && <Check size={13} className="shrink-0 text-[var(--brand)]" />}
-                            </button>
-                          );
-                        })}
-                      </FloatingMenu>
-                    )}
-                  </div>
-                )}
-                {modelsLoading ? (
-                  <div className="flex items-center gap-1.5">
-                    <Loader2 size={12} className="animate-spin text-[var(--text-tertiary)]" />
-                    <span className="text-[11px] text-[var(--text-tertiary)]">Loading models…</span>
-                  </div>
-                ) : providerModels.length > 0 ? (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] text-[var(--text-tertiary)] hidden sm:inline">
-                      {t("chatPage.model")}
-                    </span>
-                    <ModelSelector
-                      providerModels={providerModels}
-                      selectedModel={selectedModel}
-                      selectedProvider={selectedProvider}
-                      onChange={handleModelChange}
-                      disabled={modelsLoading}
-                    />
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] text-[var(--text-tertiary)] hidden sm:inline">
-                      {t("chatPage.model")}
-                    </span>
-                    <input
-                      type="text"
-                      value={selectedModel}
-                      onChange={(e) => handleModelInput(e.target.value)}
-                      placeholder={t("chatPage.modelPlaceholder")}
-                      className="text-xs h-7 px-2 rounded-md bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/30 w-28 sm:w-40 placeholder:text-[var(--text-tertiary)]"
-                    />
-                    {modelsError && (
-                      <span
-                        className="text-[10px] text-[var(--danger)] cursor-pointer"
-                        title={modelsError}
-                        onClick={() => window.location.reload()}
-                      >
-                        {t("chatPage.retry")}
-                      </span>
-                    )}
-                  </div>
-                )}
-                <div ref={mainEffortRef} className="flex items-center gap-1.5 relative">
-                  <span className="text-[11px] text-[var(--text-tertiary)] hidden sm:inline">
-                    {t("chatPage.effort")}
-                  </span>
-                  <button
-                    disabled={!effortOptions.length}
-                          onClick={() => setEffortOpen((v) => !v)}
-                    className="flex items-center gap-1.5 text-xs h-7 pl-2.5 pr-1.5 rounded-md bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] font-mono focus:outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/30 transition-colors"
-                  >
-                    <span>{activeEffort ? t(`chatPage.reasoning${activeEffort.charAt(0).toUpperCase() + activeEffort.slice(1)}`, { defaultValue: activeEffort }) : t("chatPage.reasoningUnavailable")}</span>
-                    <ChevronDown size={13} className={cn("text-[var(--text-tertiary)] transition-transform shrink-0", effortOpen && "rotate-180")} />
-                  </button>
-                  {effortOpen && (
-                    <FloatingMenu
-                      open={effortOpen}
-                      anchorRef={mainEffortRef}
-                      menuRef={effortMenuRef}
-                      placement="top-end"
-                      gap={6}
-                      className="min-w-[120px] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-lg)] py-1.5"
-                    >
-                      {effortOptions.map((effort) => {
-                        const label = t(`chatPage.reasoning${effort.charAt(0).toUpperCase() + effort.slice(1)}`, { defaultValue: effort });
-                        const isSelected = effort === activeEffort;
-                        return (
-                          <button
-                            key={effort}
-                            onClick={() => {
-                              handleEffortChange(effort);
-                              setEffortOpen(false);
-                            }}
-                            className={cn(
-                              "w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors",
-                              isSelected ? "bg-[var(--brand-bg)] text-[var(--brand)]" : "text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]",
-                            )}
-                          >
-                            <span className="flex-1">{label}</span>
-                            {isSelected && <Check size={13} className="shrink-0 text-[var(--brand)]" />}
-                          </button>
-                        );
-                      })}
-                    </FloatingMenu>
-                  )}
-                </div>
-              </div>
-
-              {/* Pending images */}
-              {pendingImages.length > 0 && (
-                <div className="flex gap-2 mb-2 flex-wrap">
-                  {pendingImages.map((img, i) => (
-                    <div key={i} className="relative inline-block">
-                      <img
-                        src={img}
-                        className="h-16 w-16 object-cover rounded-lg border border-[var(--border)]"
-                        alt=""
-                      />
-                      <button
-                        onClick={() =>
-                          setPendingImages((prev) =>
-                            prev.filter((_, idx) => idx !== i),
-                          )
-                        }
-                        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[var(--danger)] text-white hover:bg-[var(--danger-hover)] transition-colors"
-                        aria-label={t("chatPage.removeImage")}
-                      >
-                        <X size={11} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Pending files (documents, text, etc.) */}
-              {pendingFiles.length > 0 && (
-                <div className="flex gap-2 mb-2 flex-wrap">
-                  {pendingFiles.map((f, i) => (
-                    <div key={i} className="relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-tertiary)] max-w-[200px]">
-                      <FileText size={14} className="shrink-0 text-[var(--accent)]" />
-                      <div className="min-w-0">
-                        <div className="text-xs text-[var(--text-primary)] truncate">{f.name}</div>
-                        <div className="text-[10px] text-[var(--text-tertiary)]">{(f.size / 1024).toFixed(0)}KB</div>
-                      </div>
-                      <button
-                        onClick={() =>
-                          setPendingFiles((prev) =>
-                            prev.filter((_, idx) => idx !== i),
-                          )
-                        }
-                        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[var(--danger)] text-white hover:bg-[var(--danger-hover)] transition-colors"
-                        aria-label="Remove file"
-                      >
-                        <X size={11} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Input row */}
-              <div className="flex flex-wrap gap-1.5 items-end sm:flex-nowrap sm:gap-2">
-                <ChatInput
-                  sending={sending}
-                  replaying={replaying}
-                  onSend={handleSend}
-                  onAbort={handleAbort}
-                  onFileUpload={handleFileUpload}
-                  onFilePaste={handleFilePaste}
-                  onDelegateOpen={() => setShowDelegate(true)}
-                  showDelegate={true}
-                  onGoalOpen={() => setGoalComposerOpen(true)}
-                  hasGoal={!!goal}
-                />
+              <ChatInput
+                sending={sending}
+                replaying={replaying}
+                onSend={handleSend}
+                onAbort={handleAbort}
+                onFileUpload={handleFileUpload}
+                onFilePaste={handleFilePaste}
+                onDelegateOpen={() => setShowDelegate(true)}
+                showDelegate={true}
+                onGoalOpen={() => setGoalComposerOpen(true)}
+                hasGoal={!!goal}
+                toolbar={renderComposerControls(mainAgentRef, mainEffortRef)}
+                attachments={composerAttachments}
+                canSendEmpty={hasAttachments}
+              />
               </div>
             </div>
           </>
         ) : (
-          /* Empty state */
-          <div className="flex-1 flex items-center justify-center px-4">
-            <div className="text-center max-w-md animate-fade-in">
-              <div
-                className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center text-3xl shadow-[var(--shadow-md)]"
-                style={{
-                  background:
-                    "linear-gradient(135deg, var(--brand) 0%, var(--brand-active) 100%)",
-                }}
-              >
-                🦀
+          /* Start screen: greeting and a composer; the first message creates the session */
+          <div className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6">
+            <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col justify-center pt-6 pb-[12vh] animate-fade-in">
+              <h1 className="font-display mb-7 sm:mb-9 flex items-center justify-center gap-3 text-center text-[1.9rem] sm:text-[2.5rem] leading-tight text-[var(--text-primary)]">
+                <span aria-hidden="true" className="text-[0.85em]">🦀</span>
+                <span>{greeting}</span>
+              </h1>
+              <div onDrop={handleDrop} onDragOver={handleDragOver}>
+                <ChatInput
+                  sending={false}
+                  replaying={starting}
+                  onSend={startConversation}
+                  onAbort={handleAbort}
+                  onFileUpload={handleFileUpload}
+                  onFilePaste={handleFilePaste}
+                  onDelegateOpen={() => setShowDelegate(true)}
+                  toolbar={renderComposerControls(mainAgentRef, mainEffortRef)}
+                  attachments={composerAttachments}
+                  canSendEmpty={hasAttachments}
+                  placeholder={"How can I help you today?"}
+                  autoFocus
+                  seed={starterSeed}
+                />
               </div>
-              <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-1">
-                {t("chatPage.welcome")}
-              </h2>
-              <p className="text-sm text-[var(--text-tertiary)] mb-6">
-                {t("chat.welcomeSubtitle")}
-              </p>
-              <div className="grid grid-cols-2 gap-2 mb-6">
-                {STARTER_PROMPTS.map((p, i) => (
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
+                {STARTER_PROMPTS.map((p) => (
                   <button
-                    key={i}
-                    onClick={() => {
-                      onNewSession();
-                    }}
+                    key={p.label}
+                    type="button"
+                    onClick={() => setStarterSeed({ text: p.prompt, key: Date.now() })}
                     className={cn(
-                      "flex items-center gap-2 px-3 py-2.5 rounded-xl text-left",
-                      "bg-[var(--bg-secondary)] border border-[var(--border)]",
-                      "hover:border-[var(--border-strong)] hover:bg-[var(--bg-tertiary)]",
-                      "transition-colors group",
+                      "flex items-center gap-1.5 h-8 px-3 rounded-lg text-[13px]",
+                      "border border-[var(--border)] bg-transparent text-[var(--text-secondary)]",
+                      "hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)]",
+                      "transition-colors",
                     )}
                   >
-                    <span className="text-[var(--brand)] group-hover:scale-110 transition-transform">
-                      {p.icon}
-                    </span>
-                    <span className="text-xs text-[var(--text-secondary)] group-hover:text-[var(--text-primary)]">
-                      {t(p.labelKey)}
-                    </span>
+                    <span className="text-[var(--text-tertiary)]">{p.icon}</span>
+                    {p.label}
                   </button>
                 ))}
               </div>
-              <Button variant="brand" onClick={onNewSession}>
-                <Sparkles size={14} /> {t("chat.startNewConversation")}
-              </Button>
             </div>
           </div>
         )}
@@ -2018,7 +1824,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                 setDocState((prev) => prev ? {
                   ...prev,
                   previewLoading: false,
-                  previewError: e?.message || "刷新预览失败",
+                  previewError: e?.message || "Failed to refresh preview",
                 } : prev);
               }
             }}
@@ -2043,8 +1849,8 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
         <Modal
           open={true}
           onOpenChange={() => {}}
-          title={t("chatPage.welcome")}
-          description={t("provider.addProvider")}
+          title={"Welcome to CrabAgent"}
+          description={"Add Provider"}
           size="sm"
           hideClose
           disableBackdropClose
@@ -2131,21 +1937,21 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
         <Modal
           open={true}
           onOpenChange={(open) => !open && !compressing && setShowCompression(false)}
-          title={t("compression.title")}
-          description={t("compression.description")}
+          title={"Compress conversation"}
+          description={"Create a summary with the selected model and replace the active conversation context. Original messages are kept."}
           size="sm"
           footer={
             <>
-              <Button variant="ghost" onClick={() => setShowCompression(false)} disabled={compressing}>{t("common.cancel")}</Button>
+              <Button variant="ghost" onClick={() => setShowCompression(false)} disabled={compressing}>{"Cancel"}</Button>
               <Button variant="brand" onClick={runCompression} loading={compressing} disabled={!compressionModel || !compressionProvider}>
-                {t("compression.start")}
+                {"Compress now"}
               </Button>
             </>
           }
         >
           <div className="space-y-4">
             <label className="block text-xs text-[var(--text-secondary)]">
-              {t("compression.model")}
+              {"Compression model"}
               <select
                 value={`${compressionProvider}::${compressionModel}`}
                 onChange={(event) => {
@@ -2155,7 +1961,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                 }}
                 className="mt-1.5 w-full h-9 rounded-lg border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 text-sm text-[var(--text-primary)]"
               >
-                <option value="">{t("compression.selectModel")}</option>
+                <option value="">{"Select a model"}</option>
                 {providerModels.flatMap((item) => item.models.map((model) => (
                   <option key={`${item.provider.name}-${model.id}`} value={`${item.provider.name}::${model.id}`}>
                     {item.provider.display_name || item.provider.name} / {model.id}
@@ -2163,53 +1969,12 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                 )))}
               </select>
             </label>
-            <p className="text-xs leading-relaxed text-[var(--text-tertiary)]">{t("compression.hint")}</p>
+            <p className="text-xs leading-relaxed text-[var(--text-tertiary)]">{"Uses the same prompt, message cleanup, and retry behavior as automatic compression. The message list refreshes when it finishes."}</p>
             {compressionError && <p className="text-xs text-[var(--danger)]">{compressionError}</p>}
           </div>
         </Modal>
       )}
 
-      {localeMismatch && (
-        <Modal
-          open={true}
-          onOpenChange={(o) => !o && setLocaleMismatch(null)}
-          title={t("localeMismatch.title")}
-          description={t("localeMismatch.desc")}
-          size="sm"
-          footer={
-            <div className="flex gap-2">
-              <Button
-                variant="brand"
-                onClick={async () => {
-                  await handleSendWithLocale();
-                }}
-              >
-                {t("localeMismatch.rebuild")}
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={async () => {
-                  const { pendingText, pendingImages: imgs, pendingFiles: files } = localeMismatch;
-                  setLocaleMismatch(null);
-                  setPendingImages([]);
-                  setPendingFiles([]);
-                  await doSend(pendingText, imgs, files);
-                }}
-              >
-                {t("localeMismatch.keep")}
-              </Button>
-              <Button variant="ghost" onClick={() => setLocaleMismatch(null)}>
-                {t("common.cancel")}
-              </Button>
-            </div>
-          }
-        >
-          <div className="text-sm text-[var(--text-secondary)] space-y-2">
-            <p>{t("localeMismatch.current", { locale: i18n.language })}</p>
-            <p>{t("localeMismatch.stored", { locale: activeSession?.prompt_locale || "en" })}</p>
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }

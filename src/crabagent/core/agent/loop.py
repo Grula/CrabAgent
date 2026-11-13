@@ -8,7 +8,7 @@ import uuid
 
 import litellm
 
-from crabagent.core.agent.compress import compress_context
+from crabagent.core.agent.compress import SUMMARY_PREFIX, compress_context
 from crabagent.core.agent.context import AgentContext
 from crabagent.core.agent.multimodal import (
     attach_images_from_tool_result,
@@ -17,6 +17,7 @@ from crabagent.core.agent.multimodal import (
     stringify_tool_result,
 )
 from crabagent.core.agent.token_limits import get_model_token_limit
+from crabagent.core.agent.tools.tool_search import deferred_exclusions, intercept_unloaded_call
 from crabagent.core.config import settings
 from crabagent.core.event import AgentEvent, EventType
 from crabagent.core.observability.spans import end_span, start_span
@@ -134,18 +135,12 @@ def _classify_rate_limit_error(error: Exception) -> dict[str, object]:
     compact = detail.lower().replace("_", " ")
 
     permission_markers = (
-        "暂未开放",
-        "没有权限",
-        "无权访问",
         "permission denied",
         "not authorized",
         "not available for your plan",
         "does not have access",
     )
     quota_markers = (
-        "使用上限",
-        "额度已用尽",
-        "余额不足",
         "usage limit",
         "quota exceeded",
         "insufficient quota",
@@ -155,24 +150,24 @@ def _classify_rate_limit_error(error: Exception) -> dict[str, object]:
     if any(marker in compact for marker in permission_markers):
         return {
             "code": "model_access_denied",
-            "title": "当前套餐不支持此模型",
+            "title": "This model is not available on your current plan",
             "message": _provider_error_message(detail),
-            "action": "请切换到当前套餐已开放的模型，或升级 Provider 套餐后重试。",
+            "action": "Switch to a model included in your current plan, or upgrade your Provider plan and retry.",
             "retryable": False,
         }
     if any(marker in compact for marker in quota_markers):
         return {
             "code": "quota_exhausted",
-            "title": "API 使用额度已耗尽",
+            "title": "API quota exhausted",
             "message": _provider_error_message(detail),
-            "action": "请等待额度重置、充值，或切换到其他 Provider。",
+            "action": "Wait for the quota to reset, top up, or switch to another Provider.",
             "retryable": False,
         }
     return {
         "code": "rate_limited",
-        "title": "API 请求过于频繁",
-        "message": "Provider 暂时限制了请求频率。",
-        "action": "系统将自动重试；若持续失败，请稍后再试或切换 Provider。",
+        "title": "Too many API requests",
+        "message": "The Provider is temporarily rate limiting requests.",
+        "action": "The system retries automatically; if it keeps failing, try again later or switch Provider.",
         "retryable": True,
     }
 
@@ -325,7 +320,7 @@ async def _run_agent(
     _llm_retry_count = 0
     _llm_retry_max = settings.llm_retry_max
     # Graceful degradation flag: set when the provider rejects multimodal
-    # content blocks (e.g. "content.type 取值范围 ['text']") so subsequent
+    # content blocks (e.g. "content.type must be one of ['text']") so subsequent
     # requests are rebuilt with image blocks stripped.
     _force_text_only = bool(context.metadata.get("_force_text_only", False))
     context.metadata["_llm_params"] = dict(llm)
@@ -337,7 +332,6 @@ async def _run_agent(
         context.iteration += 1
         await context.event_bus.emit(AgentEvent(type=EventType.ITERATION_START, data={"iteration": context.iteration}))
 
-        locale = context.metadata.get("locale", context.locale)
         excluded_tools: set[str] = set()
         if not _force_text_only:
             from crabagent.core.agent.token_limits import is_vision_model
@@ -345,7 +339,10 @@ async def _run_agent(
 
             if is_vision_model(context.metadata.get("_resolved_model", context.model or "")):
                 excluded_tools = direct_vision_redundant_tool_names(context.tool_registry)
-        tools = context.tool_registry.tool_defs(locale=locale, exclude_names=excluded_tools) or None
+        # On-demand loading: tool groups the conversation has not needed yet
+        # are left out of the request (see tools/tool_search.py).
+        excluded_tools = set(excluded_tools) | deferred_exclusions(context)
+        tools = context.tool_registry.tool_defs(exclude_names=excluded_tools) or None
 
         try:
             full_text = ""
@@ -523,7 +520,10 @@ async def _run_agent(
             elif not reasoning_text and reasoning_tokens > 0:
                 # ChatGPT subscription returns encrypted reasoning (no plaintext).
                 # Emit a placeholder so the user sees that thinking happened.
-                placeholder = f"🧠 模型使用了 {reasoning_tokens} tokens 进行推理（内容已加密，不公开）"
+                placeholder = (
+                    f"🧠 The model used {reasoning_tokens} tokens for reasoning "
+                    "(content is encrypted and not disclosed)"
+                )
                 assistant_msg["reasoning_content"] = placeholder
                 await context.event_bus.emit(AgentEvent(type=EventType.THINKING_DONE, data={"text": placeholder}))
 
@@ -604,7 +604,7 @@ async def _run_agent(
                             type=EventType.BUDGET_WARNING,
                             data={
                                 "type": "tool_loop",
-                                "message": f"⚠️ 工具 '{meta['name']}' 已被调用 5 次，Agent 可能在循环中",
+                                "message": f"⚠️ Tool '{meta['name']}' has been called 5 times; the agent may be looping",
                                 "tool_name": meta["name"],
                                 "count": 5,
                             },
@@ -633,9 +633,13 @@ async def _run_agent(
                     source=meta["source"],
                 )
                 try:
-                    result = await context.tool_registry.execute(meta["name"], meta["args"], context=context)
-                    if meta["source"] == "builtin":
-                        result = attach_images_from_tool_result(result, context)
+                    # A tool that was not advertised in this step is loaded
+                    # instead of run; the model retries once it has the schema.
+                    result = intercept_unloaded_call(context, meta["name"])
+                    if result is None:
+                        result = await context.tool_registry.execute(meta["name"], meta["args"], context=context)
+                        if meta["source"] == "builtin":
+                            result = attach_images_from_tool_result(result, context)
                     preview = _preview_result(result)
                     end_span(
                         _tool_span,
@@ -749,7 +753,7 @@ async def _run_agent(
                         type=EventType.LLM_RETRY,
                         data={
                             "reason": "stream_error",
-                            "message": f"🔄 流式连接中断（{err_name}）",
+                            "message": f"🔄 Streaming connection interrupted ({err_name})",
                             "attempt": _stream_retries,
                             "max_attempts": _max_stream_retries,
                             "delay_seconds": stream_delay,
@@ -782,7 +786,7 @@ async def _run_agent(
                     settings.llm_retry_base_delay * (1.5**_llm_retry_count),
                     settings.llm_retry_max_delay,
                 )
-                user_message = "⏱️ API 请求超时"
+                user_message = "⏱️ API request timed out"
 
             elif isinstance(e, litellm.exceptions.APIConnectionError):
                 retryable = True
@@ -790,7 +794,7 @@ async def _run_agent(
                     settings.llm_retry_base_delay * (2**_llm_retry_count),
                     settings.llm_retry_max_delay,
                 )
-                user_message = "🔌 网络连接失败"
+                user_message = "🔌 Network connection failed"
 
             elif isinstance(e, (litellm.exceptions.ServiceUnavailableError, litellm.exceptions.InternalServerError)):
                 retryable = True
@@ -798,7 +802,7 @@ async def _run_agent(
                     settings.llm_retry_base_delay * (2**_llm_retry_count),
                     settings.llm_retry_max_delay,
                 )
-                user_message = f"⚠️ API 服务暂时不可用（{err_name}）"
+                user_message = f"⚠️ API service temporarily unavailable ({err_name})"
 
             elif isinstance(e, (ConnectionError, OSError)):
                 retryable = True
@@ -806,12 +810,12 @@ async def _run_agent(
                     settings.llm_retry_base_delay * (2**_llm_retry_count),
                     settings.llm_retry_max_delay,
                 )
-                user_message = "🔌 网络异常"
+                user_message = "🔌 Network error"
 
             elif isinstance(e, litellm.exceptions.ContextWindowExceededError):
                 # Attempt auto-compression then retry
                 await context.event_bus.emit(
-                    AgentEvent(type=EventType.AGENT_INFO, data={"message": "📏 上下文超出模型限制，正在尝试自动压缩…"})
+                    AgentEvent(type=EventType.AGENT_INFO, data={"message": "📏 Context exceeds the model limit, attempting auto-compression..."})
                 )
                 try:
                     before_compression = context.messages
@@ -821,22 +825,25 @@ async def _run_agent(
                     _llm_retry_count = 0  # reset since context changed
                     logger.info("Context auto-compressed after ContextWindowExceededError, retrying")
                     await context.event_bus.emit(
-                        AgentEvent(type=EventType.AGENT_INFO, data={"message": "✅ 上下文压缩成功，自动重试中…"})
+                        AgentEvent(type=EventType.AGENT_INFO, data={"message": "✅ Context compression succeeded, retrying automatically..."})
                     )
                     continue
                 except Exception:
-                    user_message = "📏 上下文超出模型限制，自动压缩失败。请新建对话或缩短内容后重试。"
+                    user_message = (
+                        "📏 Context exceeds the model limit and auto-compression failed. "
+                        "Please start a new conversation or shorten the content and retry."
+                    )
                     logger.warning("Auto-compression also failed after ContextWindowExceededError")
 
             elif isinstance(e, litellm.exceptions.AuthenticationError):
-                user_message = "🔑 API 密钥无效或已过期，请在「设置」中更新 Provider 配置。"
+                user_message = "🔑 API key is invalid or expired. Update the Provider configuration in Settings."
                 logger.error("AuthenticationError - invalid or expired API key")
 
             elif isinstance(e, litellm.exceptions.BudgetExceededError):
-                user_message = "💰 API 预算已耗尽，请在 Provider 后台充值或切换模型。"
+                user_message = "💰 API budget exhausted. Top up in the Provider dashboard or switch models."
 
             elif isinstance(e, litellm.exceptions.ContentPolicyViolationError):
-                user_message = "🚫 内容被安全策略拦截，请修改输入后重试。"
+                user_message = "🚫 Content was blocked by a safety policy. Modify your input and retry."
 
             elif isinstance(e, litellm.exceptions.BadRequestError):
                 err_text = str(e)
@@ -859,7 +866,7 @@ async def _run_agent(
                 ) or "code: 1261" in _err_lower
                 if _is_prompt_too_long:
                     await context.event_bus.emit(
-                        AgentEvent(type=EventType.AGENT_INFO, data={"message": "📏 上下文超出模型限制，正在尝试自动压缩…"})
+                        AgentEvent(type=EventType.AGENT_INFO, data={"message": "📏 Context exceeds the model limit, attempting auto-compression..."})
                     )
                     try:
                         before_compression = context.messages
@@ -869,14 +876,17 @@ async def _run_agent(
                         _llm_retry_count = 0  # reset since context changed
                         logger.info("Context auto-compressed after prompt-too-long BadRequestError, retrying")
                         await context.event_bus.emit(
-                            AgentEvent(type=EventType.AGENT_INFO, data={"message": "✅ 上下文压缩成功，自动重试中…"})
+                            AgentEvent(type=EventType.AGENT_INFO, data={"message": "✅ Context compression succeeded, retrying automatically..."})
                         )
                         continue
                     except Exception:
-                        user_message = "📏 上下文超出模型限制，自动压缩失败。请新建对话或缩短内容后重试。"
+                        user_message = (
+                            "📏 Context exceeds the model limit and auto-compression failed. "
+                            "Please start a new conversation or shorten the content and retry."
+                        )
                         logger.warning("Auto-compression also failed after prompt-too-long BadRequestError")
                 # Providers running text-only models reject multimodal content
-                # blocks with e.g. "messages.content.type 参数非法，取值范围 ['text']".
+                # blocks with e.g. "messages.content.type is invalid, allowed values ['text']".
                 # Recover by stripping image blocks and retrying once in text-only mode.
                 else:
                     _err_compact = err_text.lower().replace(" ", "").replace("_", "")
@@ -887,7 +897,10 @@ async def _run_agent(
                         _force_text_only = True
                         context.metadata["_force_text_only"] = True
                         _llm_retry_count = 0
-                        user_message = "🖼️ 当前模型不支持图片输入，已自动切换为纯文本模式重试…"
+                        user_message = (
+                            "🖼️ The current model does not support image input; "
+                            "retrying in text-only mode..."
+                        )
                         await context.event_bus.emit(AgentEvent(type=EventType.AGENT_INFO, data={"message": user_message}))
                         logger.warning(
                             "Provider rejected multimodal content blocks; retrying in text-only mode: %s",
@@ -896,14 +909,14 @@ async def _run_agent(
                         retryable = True
                         backoff_delay = 0.0
                     else:
-                        user_message = f"❌ 请求参数错误：{e!s}"
+                        user_message = f"❌ Invalid request parameters: {e!s}"
                         logger.warning("BadRequestError details: %s", e)
 
             else:
                 # Generic / unknown error — still retry once for safety
                 retryable = True
                 backoff_delay = settings.llm_retry_base_delay
-                user_message = f"❌ LLM 调用异常（{err_name}）"
+                user_message = f"❌ LLM call failed ({err_name})"
 
             # ── Retry if recoverable and under limit ──
             if retryable and _llm_retry_count < _llm_retry_max:
@@ -933,7 +946,7 @@ async def _run_agent(
             # ── Non-recoverable or retries exhausted ──
             final_msg = user_message
             if retryable and _llm_retry_count >= _llm_retry_max:
-                final_msg += f"（已重试 {_llm_retry_max} 次仍失败）"
+                final_msg += f" (still failing after {_llm_retry_max} retries)"
 
             logger.error(f"Agent loop error (final): {e}", exc_info=True)
             await context.event_bus.emit(
@@ -1082,6 +1095,10 @@ def _build_messages(context: AgentContext, text_only: bool = False) -> list[dict
         if msg.get("role") in ("screenshot", "stats"):
             continue
 
+        if msg.get("role") == "compress" and isinstance(msg.get("content"), str) and msg["content"].strip():
+            # Frame the summary so the model reads it as compacted history,
+            # not as something the user just said.
+            msg = {**msg, "content": SUMMARY_PREFIX + msg["content"]}
         if msg.get("role") not in ("system", "user", "assistant", "tool"):
             # compress / agent_switch etc. → user for LLM
             msg = {**msg, "role": "user"}

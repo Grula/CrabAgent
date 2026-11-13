@@ -1,9 +1,9 @@
 /**
- * /m 移动控制台局部样式：markdown 渲染 + 底部弹层动画。
- * Tailwind 覆盖不到的细粒度排版在这里补。
+ * /m mobile console local styles: markdown rendering + bottom sheet animation.
+ * Fine-grained typography that Tailwind doesn't cover is added here.
  */
 
-/* ── markdown 渲染（assistant 消息） ── */
+/* ── markdown rendering (assistant messages) ── */
 .mc-md {
   font-size: 13.5px;
   line-height: 1.6;
@@ -75,7 +75,7 @@
 .mc-md hr { border: none; border-top: 1px solid #2d333b; margin: 0.7em 0; }
 .mc-md img { max-width: 100%; border-radius: 8px; }
 
-/* ── 底部弹层 ── */
+/* ── bottom sheet ── */
 .mc-sheet-backdrop {
   position: absolute;
   inset: 0;

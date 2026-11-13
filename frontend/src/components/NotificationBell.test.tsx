@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// 回归测试：通知面板迁移到 portal 后，点击面板内容不得被外点关闭逻辑误判。
-// 曾因 mousedown handler 只排除铃铛按钮，未排除 portal 面板，导致面板内容点不到。
+// Regression test: after the notification panel moved to a portal, clicks inside the panel must not be misread as outside clicks.
+// Previously the mousedown handler excluded only the bell button and not the portal panel, so panel contents were unclickable.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,8 +11,8 @@ vi.mock("../api/notifications", () => ({
   listNotifications: vi.fn(async () => [
     {
       id: 1,
-      title: "监控任务完成",
-      body: "任务执行完成",
+      title: "Monitoring task completed",
+      body: "Task completed",
       read: false,
       created_at: "2026-11-04T10:00:00Z",
       conversation_id: "sess-1",
@@ -25,13 +25,6 @@ vi.mock("../api/notifications", () => ({
 
 vi.mock("../hooks/useWorkStatus", () => ({
   useWorkStatus: () => ({ connected: true }),
-}));
-
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string, fallback?: string) =>
-      typeof fallback === "string" ? fallback : key,
-  }),
 }));
 
 let container: HTMLDivElement;
@@ -65,7 +58,7 @@ async function openPanel() {
   await act(async () => {
     bell.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
-  // 等待 fetchList 后的渲染
+  // Wait for the render after fetchList
   await act(async () => {
     await Promise.resolve();
   });
@@ -79,7 +72,7 @@ describe("NotificationBell portal panel", () => {
     const panel = document.querySelector("body > .fixed") as HTMLElement;
     expect(panel).toBeTruthy();
 
-    // 模拟面板内一次完整点击（mousedown → mouseup → click）
+    // Simulate one full click inside the panel (mousedown → mouseup → click)
     const card = panel.querySelector(".cursor-pointer") as HTMLElement;
     expect(card).toBeTruthy();
     await act(async () => {
@@ -89,7 +82,7 @@ describe("NotificationBell portal panel", () => {
       await Promise.resolve();
     });
 
-    // 关键断言：面板不能因为面板内的 mousedown 而被关闭
+    // Key assertion: the panel must not close on a mousedown inside the panel
     expect(document.querySelector("body > .fixed")).not.toBeNull();
   });
 

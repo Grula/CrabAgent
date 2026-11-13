@@ -63,7 +63,7 @@ async def _get_setting(factory, key: str):
 
 async def test_legacy_migration_commits_version_and_cursor_with_updated_at(session_factory):
     """Version bump must persist (with NOT NULL updated_at) instead of rolling back."""
-    await _seed_messages(session_factory, [("user", "你好世界"), ("assistant", "这是一个测试回答")])
+    await _seed_messages(session_factory, [("user", "hello world"), ("assistant", "this is a test answer")])
     # Legacy index rows from the previous format (must be purged in chunks).
     async with session_factory() as db:
         await db.execute(text("INSERT INTO messages_fts_cjk(rowid, content) VALUES (1, 'legacy junk')"))
@@ -82,16 +82,16 @@ async def test_legacy_migration_commits_version_and_cursor_with_updated_at(sessi
         rows = (await db.execute(text("SELECT content FROM messages_fts_cjk"))).fetchall()
     contents = [r[0] for r in rows]
     assert "legacy junk" not in contents
-    assert len([c for c in contents if "你好" in c or "世界" in c]) >= 1
+    assert len([c for c in contents if "hello" in c or "world" in c]) >= 1
 
 
 async def test_sync_resumes_from_cursor_after_restart(session_factory):
     """A second run (simulated restart) must only process new messages."""
-    await _seed_messages(session_factory, [("user", "第一条消息"), ("assistant", "第一条回答")])
+    await _seed_messages(session_factory, [("user", "first message"), ("assistant", "first answer")])
     first = await sync_index(batch_size=10, idle_delay=0)
     assert first == 2
 
-    await _seed_messages(session_factory, [("user", "重启后的新消息")])
+    await _seed_messages(session_factory, [("user", "new message after restart")])
     second = await sync_index(batch_size=10, idle_delay=0)
     assert second == 1
 
@@ -101,7 +101,7 @@ async def test_sync_resumes_from_cursor_after_restart(session_factory):
 
 async def test_batches_yield_to_busy_callback(session_factory):
     """The is_busy callback must be honoured between batches (lock released)."""
-    await _seed_messages(session_factory, [("user", f"消息编号 {i}") for i in range(5)])
+    await _seed_messages(session_factory, [("user", f"message number {i}") for i in range(5)])
     calls = {"n": 0}
 
     def busy():

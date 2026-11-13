@@ -19,7 +19,7 @@ export function formatTimeShort(isoStr: string | null | undefined): string {
   if (diffDays < 1 && d.getDate() === now.getDate()) {
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   } else if (diffDays < 2) {
-    return "昨天 " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return "Yesterday" + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
   return d.toLocaleDateString([], { month: "2-digit", day: "2-digit" }) + " " +
          d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });

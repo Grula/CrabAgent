@@ -276,20 +276,20 @@ def _summary_message(status: str, count: int, target: dict | None) -> str:
     if status == "waiting":
         kind = target.get("request_type") if target else ""
         if kind == "input":
-            return "需要你补充一点信息" if count == 1 else f"{count} 个会话等待你的输入"
-        return "需要你确认" if count == 1 else f"{count} 个会话等待你的确认"
+            return "Needs a bit more info from you" if count == 1 else f"{count} sessions are waiting for your input"
+        return "Needs your confirmation" if count == 1 else f"{count} sessions are waiting for your confirmation"
     if status == "error":
-        return "有 1 个任务遇到了问题" if count == 1 else f"有 {count} 个任务遇到了问题"
+        return "1 task ran into a problem" if count == 1 else f"{count} tasks ran into a problem"
     if status == "working":
         tool_name = (target or {}).get("tool_name", "")
         if count == 1 and tool_name:
-            return f"正在使用 {tool_name} 处理任务"
-        return "1 个会话正在执行任务" if count == 1 else f"{count} 个会话正在执行任务"
+            return f"Working on the task with {tool_name}"
+        return "1 session is running a task" if count == 1 else f"{count} sessions are running tasks"
     if status == "thinking":
-        return "正在整理思路" if count == 1 else f"{count} 个会话正在整理思路"
+        return "Thinking it through" if count == 1 else f"{count} sessions are thinking it through"
     if status == "completed":
-        return "任务完成，做得漂亮！"
-    return "随时可以开始"
+        return "Task complete. Nicely done!"
+    return "Ready when you are"
 
 
 @router.get("/monitor/summary")
@@ -314,20 +314,7 @@ async def monitor_summary(
         pending_confirm = get_pending_confirms_for_session(session_id)
         request_type = "input" if pending_input else "confirm" if pending_confirm else ""
         fallback_status = "working" if info.get("status") == "running" else "thinking"
-        status = "waiting" if request_type else info.get("pet_status", fallback_status)
-        # Once a short tool finishes, its visual grace period may expire before
-        # another agent event arrives. Normalize it here so the pet resumes
-        # thinking instead of remaining in a work pose indefinitely.
-        if (
-            status == "working"
-            and not info.get("pet_tool_active", False)
-            and now >= info.get("pet_tool_min_until", 0)
-        ):
-            status = "thinking"
-            info["pet_status"] = status
-            info["updated_at"] = now
-        if status == "waiting" and not request_type:
-            status = "thinking"
+        status = "waiting" if request_type else fallback_status
         if status not in _SUMMARY_PRIORITY:
             status = "thinking"
         candidates.append(
@@ -377,7 +364,7 @@ async def monitor_summary(
     row = rows.first()
     target_data = {
         "session_id": target["session_id"],
-        "title": row[1] if row and row[1] else "未命名会话",
+        "title": row[1] if row and row[1] else "Untitled session",
         "request_type": target["request_type"],
     }
     if target["tool_name"]:

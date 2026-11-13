@@ -19,7 +19,7 @@ IS_WINDOWS = sys.platform == "win32"
 
 @dataclass
 class OfficeResult:
-    """封装 OfficeCLI 命令的执行结果。"""
+    """Wraps the result of an OfficeCLI command execution."""
 
     success: bool
     data: Any = None
@@ -140,13 +140,14 @@ async def _resolve_latest_version() -> str | None:
 
 
 class OfficeManager:
-    """OfficeCLI binary 管理器。
+    """OfficeCLI binary manager.
 
-    职责：
-    1. 检测系统是否安装了 OfficeCLI
-    2. 提供类型安全的命令执行接口（异步 subprocess）
-    3. 解析 JSON 输出
-    4. 管理 resident mode 的长驻进程（预留给未来批量操作优化）
+    Responsibilities:
+    1. Detect whether OfficeCLI is installed on the system
+    2. Expose a type-safe command execution API (async subprocess)
+    3. Parse JSON output
+    4. Manage the long-lived resident-mode process (reserved for future
+       batch-operation optimizations)
     """
 
     BINARY_NAME = "officecli"
@@ -189,13 +190,13 @@ class OfficeManager:
     # ── detection ────────────────────────────────────────────────────────
 
     async def detect(self) -> bool:
-        """在系统上查找 OfficeCLI binary。
+        """Locate the OfficeCLI binary on this system.
 
-        依次检查：
-        1. PATH 中的 ``officecli``
-        2. 常见安装路径（_PROBE_LOCATIONS）
+        Checks, in order:
+        1. ``officecli`` on PATH
+        2. well-known install locations (_PROBE_LOCATIONS)
 
-        返回 True 表示找到可用 binary。
+        Returns True when a usable binary was found.
         """
         # 1) PATH lookup
         path_in_path = shutil.which(self.BINARY_NAME)
@@ -392,19 +393,19 @@ class OfficeManager:
     # ── generic command execution ───────────────────────────────────────
 
     async def exec(self, *args: str, timeout: int = 60) -> OfficeResult:
-        """执行任意 OfficeCLI 命令。
+        """Run an arbitrary OfficeCLI command.
 
         Parameters
         ----------
         *args : str
-            命令及其参数，例如 ``"view", "file.pptx", "--mode", "html"``
+            The command and its arguments, e.g. ``"view", "file.pptx", "--mode", "html"``
         timeout : int
-            超时秒数（默认 60）
+            Timeout in seconds (default 60)
 
         Returns
         -------
         OfficeResult
-            如果 binary 输出 JSON 格式（以 ``{`` 开头），自动解析。
+            If the binary emits JSON (starts with ``{``), it is parsed automatically.
         """
         cmd = [self._binary_path, *args] if self._available else []
         if not cmd:
@@ -417,7 +418,7 @@ class OfficeManager:
     # ── high-level helpers ──────────────────────────────────────────────
 
     async def view_html(self, file_path: str) -> OfficeResult:
-        """将文档渲染为 HTML 预览。"""
+        """Render the document as an HTML preview."""
         return await self.exec("view", file_path, "html")
 
     async def view_text(
@@ -428,13 +429,14 @@ class OfficeManager:
         cols: str = "",
         start: int = 0,
     ) -> OfficeResult:
-        """读取文档的纯文本内容。
+        """Read the plain-text content of a document.
 
-        注意：officecli 的 ``view text`` 没有 ``--sheet`` 选项（会报
-        unknown option），xlsx 输出自带 ``=== Sheet: X ===`` 分节，
-        sheet 过滤由调用方（office_read 工具层）完成，这里忽略 sheet。
+        Note: officecli's ``view text`` has no ``--sheet`` option (it fails
+        with "unknown option"). xlsx output already contains ``=== Sheet: X ===``
+        sections, so sheet filtering is left to the caller (the office_read
+        tool layer) and ``sheet`` is ignored here.
         """
-        del sheet  # CLI 不支持，见 docstring
+        del sheet  # not supported by the CLI, see docstring
         args = ["view", file_path, "text", "--max-lines", str(max_lines)]
         if start > 0:
             args.extend(["--start", str(start)])
@@ -443,29 +445,29 @@ class OfficeManager:
         return await self.exec(*args)
 
     async def view_outline(self, file_path: str) -> OfficeResult:
-        """查看文档大纲结构。"""
+        """Show the document outline structure."""
         return await self.exec("view", file_path, "outline")
 
     async def view_stats(self, file_path: str) -> OfficeResult:
-        """查看文档统计信息。"""
+        """Show document statistics."""
         return await self.exec("view", file_path, "stats")
 
     async def create(self, file_path: str) -> OfficeResult:
-        """创建空白文档（根据文件扩展名推断类型）。"""
+        """Create a blank document (the type is inferred from the file extension)."""
         return await self.exec("create", file_path)
 
     async def set_props(
         self, file_path: str, element_path: str, props: dict[str, Any]
     ) -> OfficeResult:
-        """修改文档中某元素的属性。
+        """Set properties on one element of a document.
 
         Parameters
         ----------
         element_path : str
-            元素路径，如 ``/slide[1]``, ``/slide[1]/shape[1]``,
+            Element path, e.g. ``/slide[1]``, ``/slide[1]/shape[1]``,
             ``/sheet[1]/cell[A1]``
         props : dict
-            要设置的键值对（text, font, size, color 等）
+            Key/value pairs to set (text, font, size, color, ...)
         """
         cmd = ["set", file_path, element_path]
         for k, v in props.items():
@@ -479,25 +481,26 @@ class OfficeManager:
         element_type: str,
         props: dict[str, Any] | None = None,
     ) -> OfficeResult:
-        """在文档中添加子元素。
+        """Add a child element to a document.
 
         Parameters
         ----------
         parent_path : str
-            父元素路径，如 ``/``（根）, ``/slide[1]``, ``/body``
+            Parent element path, e.g. ``/`` (root), ``/slide[1]``, ``/body``
         element_type : str
-            元素类型，如 ``slide``, ``shape``, ``table``, ``paragraph``,
+            Element type, e.g. ``slide``, ``shape``, ``table``, ``paragraph``,
             ``chart``, ``image``, ``sheet``, ``row``, ``cell``
         props : dict | None
-            元素的属性。支持的定位键（不会传给 CLI --prop）：
-            - ``index``: 插入位置（0-based）
-            - ``after``: 在此路径的元素之后插入
-            - ``before``: 在此路径的元素之前插入
-            - ``data``: table 专用，二维数组 JSON（通过 stdin 传递）
+            Element properties. Recognized positioning keys (never forwarded
+            to the CLI as --prop):
+            - ``index``: insertion index (0-based)
+            - ``after``: insert after the element at this path
+            - ``before``: insert before the element at this path
+            - ``data``: table only, a 2-D array as JSON (passed via stdin)
         """
         cmd = [self._binary_path, "add", file_path, parent_path, "--type", element_type]
 
-        # 分离定位参数和普通属性
+        # Separate positioning arguments from ordinary properties
         pass_props: dict[str, Any] = {}
         for k, v in (props or {}).items():
             if k == "index":
@@ -505,7 +508,7 @@ class OfficeManager:
             elif k in ("after", "before"):
                 cmd.extend([f"--{k}", str(v)])
             elif k == "data":
-                # data 转为 CSV 字符串通过 --prop 传递
+                # data is converted to a CSV string and passed via --prop
                 if isinstance(v, list):
                     v = ";".join(",".join(str(c) for c in row) for row in v)
                 pass_props[k] = v
@@ -515,11 +518,11 @@ class OfficeManager:
         for k, v in pass_props.items():
             cmd.extend(["--prop", f"{k}={v}"])
 
-        # 用 exec 执行（所有参数已在 cmd 中，无需 stdin）
+        # Run through exec (every argument is already in cmd, no stdin needed)
         return await self.exec(*cmd[1:])
 
     async def remove_element(self, file_path: str, element_path: str) -> OfficeResult:
-        """删除文档中的元素。"""
+        """Remove an element from a document."""
         return await self.exec("remove", file_path, element_path)
 
     async def move_element(
@@ -531,9 +534,10 @@ class OfficeManager:
         after: str = "",
         before: str = "",
     ) -> OfficeResult:
-        """移动元素到新的父节点或指定位置。
+        """Move an element to a new parent or to a given position.
 
-        to_parent / after / before 至少提供一个；index 为 0-based 插入位置。
+        At least one of to_parent / after / before must be given; index is a
+        0-based insertion position.
         """
         cmd = ["move", file_path, element_path]
         if to_parent:
@@ -549,7 +553,7 @@ class OfficeManager:
     async def get_element(
         self, file_path: str, element_path: str, depth: int = 1
     ) -> OfficeResult:
-        """获取元素的 JSON 结构化信息。"""
+        """Get structured JSON information for an element."""
         cmd = ["get", file_path, element_path, "--json"]
         if depth > 1:
             cmd.extend(["--depth", str(depth)])
@@ -558,23 +562,24 @@ class OfficeManager:
     async def query(
         self, file_path: str, selector: str, max_results: int = 50
     ) -> OfficeResult:
-        """使用选择器查询文档元素。
+        """Query document elements by selector.
 
         Parameters
         ----------
         selector : str
-            选择器表达式，如 ``"shape:contains(TODO)"``
+            Selector expression, e.g. ``"shape:contains(TODO)"``
         """
         cmd = ["query", file_path, selector, "--json"]
         return await self.exec(*cmd)
 
     @staticmethod
     def _normalize_batch_props(props: dict[str, Any]) -> dict[str, Any]:
-        """归一化 batch props，保证值都是 CLI 可接受的标量。
+        """Normalize batch props so every value is a CLI-acceptable scalar.
 
-        CLI 的 batch prop 值不接受数组（会报
-        ``Unexpected token StartArray for prop value 'data'``），
-        与 add_element 一致：data 二维数组转为 CSV 字符串（逗号分列、分号分行）。
+        The CLI rejects arrays as batch prop values (it reports
+        ``Unexpected token StartArray for prop value 'data'``), so, as in
+        add_element, a 2-D ``data`` array is converted to a CSV string
+        (commas between columns, semicolons between rows).
         """
         normalized = dict(props)
         for k, v in props.items():
@@ -592,7 +597,7 @@ class OfficeManager:
     async def batch(
         self, file_path: str, commands: list[dict[str, Any]]
     ) -> OfficeResult:
-        """在单次打开/保存周期内批量执行多个操作。"""
+        """Run multiple operations within a single open/save cycle."""
         safe_commands: list[dict[str, Any]] = []
         for item in commands:
             if not isinstance(item, dict):
@@ -602,8 +607,9 @@ class OfficeManager:
             props = entry.get("props")
             if isinstance(props, dict):
                 props = dict(props)
-                # add 的元素类型以命令层 type 为准；props 里误带的冗余
-                # "type" 会让 CLI 报无详情的错误，这里剥掉。
+                # For add, the element type comes from the command level; a
+                # stray "type" in props makes the CLI fail without details,
+                # so strip it here.
                 if entry.get("command") == "add" and "type" in props:
                     props.pop("type")
                 entry["props"] = self._normalize_batch_props(props)
@@ -612,10 +618,10 @@ class OfficeManager:
         return await self.exec("batch", file_path, "--commands", payload)
 
     async def help_for(self, fmt: str) -> OfficeResult:
-        """获取指定格式的帮助参考（属性列表等）。
+        """Get the help reference for a format (property lists, etc.).
 
-        officecli help 的格式是位置参数：``officecli help <format>``，
-        不支持 ``--format`` 标志。
+        officecli takes the format as a positional argument --
+        ``officecli help <format>`` -- and has no ``--format`` flag.
         """
         return await self.exec("help", fmt)
 
@@ -624,7 +630,7 @@ class OfficeManager:
     async def _exec_with_stdin(
         self, cmd: list[str], stdin_data: bytes | None = None, timeout: int = 60
     ) -> OfficeResult:
-        """执行命令，可选通过 stdin 传递数据。"""
+        """Execute a command, optionally passing data via stdin."""
         if not self._available:
             return OfficeResult(
                 success=False,
@@ -658,7 +664,7 @@ class OfficeManager:
                     raw_output=stdout_decoded,
                 )
 
-            # 尝试 JSON 解析
+            # Try to parse the output as JSON
             trimmed = stdout_decoded.strip()
             if trimmed.startswith("{"):
                 try:
@@ -699,7 +705,7 @@ _manager: OfficeManager | None = None
 
 
 def get_office_manager() -> OfficeManager:
-    """获取全局 OfficeManager 单例。"""
+    """Return the global OfficeManager singleton."""
     global _manager
     if _manager is None:
         _manager = OfficeManager()

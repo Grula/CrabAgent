@@ -100,7 +100,7 @@ class BackgroundStartCommand(Base):
     """Durable start request forwarded to whichever process owns the executor.
 
     Payloads carry only non-secret execution parameters (workspace path, model
-    and provider names, locale, agent name, task text, allowed tools); API keys
+    and provider names, agent name, task text, allowed tools); API keys
     are re-resolved from the provider store by the executing process.
     """
     __tablename__ = "background_start_commands"
@@ -140,7 +140,6 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(200), nullable=False)
     role: Mapped[str] = mapped_column(String(20), default="user")
-    locale: Mapped[str] = mapped_column(String(10), default="en")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -186,8 +185,7 @@ class Conversation(Base):
     agent: Mapped[str] = mapped_column(String(100), default="default")
     auto_titled: Mapped[bool] = mapped_column(Boolean, default=False)
     system_prompt: Mapped[str] = mapped_column(Text, default="")
-    prompt_locale: Mapped[str] = mapped_column(String(10), default="")
-    source: Mapped[str] = mapped_column(String(20), default="chat")  # chat | wechat | email | scheduled
+    source: Mapped[str] = mapped_column(String(20), default="chat")  # chat | email | scheduled
     current_file: Mapped[str] = mapped_column(Text, default="")
     workspace_type: Mapped[str] = mapped_column(Text, default="")
     history_searchable: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -462,7 +460,7 @@ class CalendarIcalSource(Base):
 
     Supports two protocols:
     - ``ical``: static ICS URL (DingTalk, Feishu)
-    - ``caldav``: CalDAV protocol (企业微信)
+    - ``caldav``: CalDAV protocol (WeCom)
     """
 
     __tablename__ = "calendar_ical_sources"
@@ -807,28 +805,6 @@ class ExecutionSpan(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
 
 
-class PetPackage(Base):
-    """A user-installed or built-in desktop pet package.
-
-    Each package maps to a folder on disk containing pet.json and
-    spritesheet.{webp,png}. Built-in packages are shipped with the app
-    and cannot be deleted by users.
-    """
-
-    __tablename__ = "pet_packages"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    pet_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    description: Mapped[str] = mapped_column(Text, default="")
-    spritesheet_filename: Mapped[str] = mapped_column(String(200), nullable=False)
-    config_json: Mapped[str] = mapped_column(Text, default="{}")
-    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
-    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
-
-
 engine = create_async_engine(
     settings.db_url,
     echo=False,
@@ -922,6 +898,20 @@ async def ensure_column(conn, table: str, column: str, definition: str) -> bool:
     return True
 
 
+async def drop_column_if_exists(conn, table: str, column: str) -> bool:
+    """Drop ``column`` from ``table`` if it exists (SQLite 3.35+).
+
+    Reconciles existing databases that still carry columns removed from the
+    ORM models. Returns True when the column was dropped.
+    """
+    result = await conn.execute(text(f"PRAGMA table_info({table})"))
+    existing = [row[1] for row in result.fetchall()]
+    if column not in existing:
+        return False
+    await conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
+    return True
+
+
 async def init_db() -> None:
     _ensure_workspace_dirs()
     _migrate_db_to_home()
@@ -938,19 +928,21 @@ async def init_db() -> None:
             "ON user_preferences(user_id, key)"
         ))
 
-        await ensure_column(conn, "users", "locale", "VARCHAR(10) DEFAULT 'en'")
-
         await ensure_column(conn, "conversations", "tokens", "INTEGER DEFAULT 0")
         await ensure_column(conn, "conversations", "active_branch", "VARCHAR(32) DEFAULT 'main'")
         await ensure_column(conn, "conversations", "agent", "VARCHAR(100) DEFAULT 'default'")
         await ensure_column(conn, "conversations", "auto_titled", "BOOLEAN DEFAULT 0")
         await ensure_column(conn, "conversations", "provider", "VARCHAR(100) DEFAULT ''")
         await ensure_column(conn, "conversations", "system_prompt", "TEXT DEFAULT ''")
-        await ensure_column(conn, "conversations", "prompt_locale", "VARCHAR(10) DEFAULT ''")
         await ensure_column(conn, "conversations", "source", "VARCHAR(20) DEFAULT 'chat'")
         await ensure_column(conn, "conversations", "current_file", "TEXT DEFAULT ''")
         await ensure_column(conn, "conversations", "workspace_type", "TEXT DEFAULT ''")
         await ensure_column(conn, "conversations", "history_searchable", "BOOLEAN DEFAULT 1")
+
+        # Removed features: drop columns older databases still carry so ORM
+        # inserts don't trip NOT NULL constraints on orphaned columns.
+        await drop_column_if_exists(conn, "conversations", "prompt_locale")
+        await drop_column_if_exists(conn, "users", "locale")
 
         # Goals are created by metadata for new databases. The tables below are
         # intentionally independent so existing user databases only gain data.
@@ -1025,10 +1017,8 @@ async def init_db() -> None:
         await ensure_column(conn, "agent_profiles", "tools", "TEXT DEFAULT ''")
         await ensure_column(conn, "agent_profiles", "tool_permissions", "TEXT DEFAULT '{}'")
 
-        await ensure_column(conn, "pet_packages", "config_json", "TEXT DEFAULT '{}'")
-
-        # tasks 表由 create_all 自动创建；以下列供旧库升级
-        # ── Trusted work system: tasks 扩展列 ──
+        # The tasks table is created by create_all; the columns below upgrade older databases
+        # ── Trusted work system: extra tasks columns ──
         await ensure_column(conn, "tasks", "source_session", "VARCHAR(32) DEFAULT ''")
         await ensure_column(conn, "tasks", "owner_type", "VARCHAR(20) DEFAULT 'human'")
         await ensure_column(conn, "tasks", "owner_name", "VARCHAR(100) DEFAULT ''")
@@ -1049,7 +1039,7 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_tasks_goal_id ON tasks(goal_id)"
         ))
 
-        # ── Trusted work system: agent_runs 扩展列 ──
+        # ── Trusted work system: extra agent_runs columns ──
         await ensure_column(conn, "agent_runs", "task_id", "INTEGER DEFAULT NULL")
         await ensure_column(conn, "agent_runs", "workspace", "TEXT DEFAULT ''")
         await ensure_column(conn, "agent_runs", "phase", "VARCHAR(200) DEFAULT ''")
@@ -1060,7 +1050,7 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_agent_runs_task_id ON agent_runs(task_id)"
         ))
 
-        # ── Trusted work system: task_requests 表（create_all 建表 + 索引） ──
+        # ── Trusted work system: task_requests table (created by create_all; indexes here) ──
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ux_task_requests_key ON task_requests(request_key)"
         ))
@@ -1071,7 +1061,7 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_task_requests_task_status ON task_requests(task_id, status)"
         ))
 
-        # ── Trusted work system: task_artifacts / task_checks 索引 ──
+        # ── Trusted work system: task_artifacts / task_checks indexes ──
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_task_artifacts_task_run ON task_artifacts(task_id, run_id)"
         ))
@@ -1079,7 +1069,7 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_task_checks_task_position ON task_checks(task_id, position)"
         ))
 
-        # ── Trusted work system: run_molts 索引 + browser_tasks 关联列 ──
+        # ── Trusted work system: run_molts indexes + browser_tasks link columns ──
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_run_molts_run_id ON run_molts(run_id)"
         ))
@@ -1089,12 +1079,12 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_browser_tasks_trusted_task_id ON browser_tasks(trusted_task_id)"
         ))
 
-        # ── Trusted work system: task_events 时间线 ──
+        # ── Trusted work system: task_events timeline ──
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_task_events_task_created ON task_events(task_id, created_at)"
         ))
 
-        # ── Trusted work system: notifications 导航信封列 ──
+        # ── Trusted work system: notifications navigation envelope columns ──
         await ensure_column(conn, "notifications", "category", "VARCHAR(50) DEFAULT ''")
         await ensure_column(conn, "notifications", "severity", "VARCHAR(20) DEFAULT 'info'")
         await ensure_column(conn, "notifications", "target_type", "VARCHAR(30) DEFAULT ''")
@@ -1198,10 +1188,12 @@ DEFAULT_AGENTS = [
         "display_name": "Web Researcher",
         "role": "Web Researcher",
         "goal": (
-            "Find, collect, and summarize information from the web using browser and search tools. Always cite sources."
+            "Find, verify, and summarize information from the web. Cross-check important claims "
+            "across independent sources and cite every source with its URL."
         ),
         "backstory": (
-            "You are an experienced web researcher with expertise in finding accurate and relevant information quickly."
+            "You are an experienced researcher who prefers primary sources, notes where sources "
+            "disagree, and never presents a guess as a fact."
         ),
         "icon": "🔍",
         "tool_permissions": {
@@ -1221,9 +1213,10 @@ DEFAULT_AGENTS = [
         "display_name": "Data Analyst",
         "role": "Data Analyst",
         "goal": (
-            "Analyze data, compare findings, identify patterns, and generate structured reports with clear conclusions."
+            "Analyze data with code, compare findings, and identify patterns. Check data quality first "
+            "and back every conclusion with the numbers and their caveats."
         ),
-        "backstory": "You are a meticulous data analyst who excels at turning raw data into actionable insights.",
+        "backstory": "You are a meticulous data analyst who turns raw data into clear, well-supported conclusions.",
         "icon": "📊",
         "tool_permissions": {
             "bash": "auto",
@@ -1241,10 +1234,13 @@ DEFAULT_AGENTS = [
         "name": "coder",
         "display_name": "Code Expert",
         "role": "Code Expert",
-        "goal": "Write, review, debug, optimize, and refactor code. Generate clean, well-documented solutions.",
+        "goal": (
+            "Write, review, debug, and refactor code with minimal changes that follow the project's "
+            "conventions, and run the relevant tests before reporting."
+        ),
         "backstory": (
-            "You are a senior software engineer with deep expertise "
-            "across multiple programming languages and frameworks."
+            "You are a senior software engineer with deep experience across languages and "
+            "frameworks, careful about correctness and about staying within scope."
         ),
         "icon": "💻",
         "tool_permissions": {
@@ -1263,9 +1259,13 @@ DEFAULT_AGENTS = [
         "name": "writer",
         "display_name": "Content Writer",
         "role": "Content Writer",
-        "goal": "Write, edit, translate, and format content. Produce clear, engaging, and well-structured documents.",
+        "goal": (
+            "Write, edit, translate, and format content for its intended audience, with clear "
+            "structure, plain language, and a consistent tone."
+        ),
         "backstory": (
-            "You are a professional writer skilled at transforming complex information into clear, readable content."
+            "You are a professional writer and editor who makes complex material easy to read "
+            "without losing accuracy."
         ),
         "icon": "📝",
         "tool_permissions": {

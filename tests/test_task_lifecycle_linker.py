@@ -53,7 +53,7 @@ async def test_task_created_event_starts_linked_run(linker, monkeypatch: pytest.
     linked: list[int] = []
     unlinked: list[int] = []
     await linker.handle_event(
-        AgentEvent(type=EventType.TASK_CREATED, data={"task_id": 9, "title": "生成报告"}),
+        AgentEvent(type=EventType.TASK_CREATED, data={"task_id": 9, "title": "Generate report"}),
         link_run=linked.append,
         unlink_run=unlinked.append,
     )
@@ -64,7 +64,7 @@ async def test_task_created_event_starts_linked_run(linker, monkeypatch: pytest.
             "user_id": 1,
             "agent_name": "main",
             "session_id": "sess-1",
-            "task_summary": "生成报告",
+            "task_summary": "Generate report",
         }
     ]
     assert linker.run_ids == [101]
@@ -87,7 +87,7 @@ async def test_reopened_task_event_starts_fresh_linked_run(linker, monkeypatch: 
     await linker.handle_event(
         AgentEvent(
             type=EventType.TASK_UPDATED,
-            data={"task_id": 9, "title": "生成报告", "status": "in_progress"},
+            data={"task_id": 9, "title": "Generate report", "status": "in_progress"},
         ),
         link_run=linked.append,
     )
@@ -98,7 +98,7 @@ async def test_reopened_task_event_starts_fresh_linked_run(linker, monkeypatch: 
             "user_id": 1,
             "agent_name": "main",
             "session_id": "sess-1",
-            "task_summary": "生成报告",
+            "task_summary": "Generate report",
         }
     ]
     assert linker.run_ids == [202]
@@ -206,9 +206,9 @@ async def test_agent_error_finishes_runs_as_failed(linker, monkeypatch: pytest.M
     monkeypatch.setattr("crabagent.core.database.async_session_factory", lambda: _FakeDB())
 
     linker.run_ids = [5]
-    await linker.handle_event(AgentEvent(type=EventType.AGENT_ERROR, data={"error": "超时"}))
+    await linker.handle_event(AgentEvent(type=EventType.AGENT_ERROR, data={"error": "timeout"}))
 
-    assert finished == [{"run_id": 5, "run_status": "failed", "error": "超时"}]
+    assert finished == [{"run_id": 5, "run_status": "failed", "error": "timeout"}]
     assert linker.run_ids == []
 
 
@@ -226,14 +226,14 @@ async def test_text_done_captured_as_result_summary(linker, monkeypatch: pytest.
     monkeypatch.setattr("crabagent.core.database.async_session_factory", lambda: _FakeDB())
 
     linker.run_ids = [11]
-    await linker.handle_event(AgentEvent(type=EventType.TEXT_DONE, data={"text": "已推送 GitHub 并发布 PyPI 0.15.3"}))
+    await linker.handle_event(AgentEvent(type=EventType.TEXT_DONE, data={"text": "Pushed to GitHub and released PyPI 0.15.3"}))
     await linker.handle_event(AgentEvent(type=EventType.AGENT_END, data={}))
 
     assert finished == [
         {
             "run_id": 11,
             "run_status": "completed",
-            "result_summary": "已推送 GitHub 并发布 PyPI 0.15.3",
+            "result_summary": "Pushed to GitHub and released PyPI 0.15.3",
         }
     ]
     # The captured reply is cleared for the next run.

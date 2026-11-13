@@ -3,8 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { BackgroundTask, BackgroundGroup, cancelBackgroundTask, getBackgroundTask, listBackgroundTasks, listBackgroundGroups, getBackgroundGroup, cancelBackgroundGroup, SemanticSummary, getSemanticSummary, startSemanticSummary, cancelSemanticSummary, deleteSemanticSummary, getSummaryProvider, SummaryProvider } from "../api/backgroundTasks";
 
 const labels: Record<string, string> = {
-  queued: "排队中", running: "运行中", succeeded: "已完成", failed: "失败",
-  cancelled: "已取消", cancelling: "取消中", interrupted: "已中断", skipped: "已跳过", pending: "等待中",
+  queued: "Queued", running: "Running", succeeded: "Completed", failed: "Failed",
+  cancelled: "Cancelled", cancelling: "Cancelling", interrupted: "Interrupted", skipped: "Skipped", pending: "Pending",
 };
 
 export function BackgroundTasks({ sessionId, activeBranch, mobile = false }: { sessionId: string; activeBranch?: string; mobile?: boolean }) {
@@ -40,7 +40,7 @@ export function BackgroundTasks({ sessionId, activeBranch, mobile = false }: { s
         if (inbox.branch !== data.branch || groupData.branch !== data.branch || (activeBranch && data.branch !== activeBranch)) {
           branch.current = ""; generation.current++;
           setDeliveries([]); setTasks([]); setGroups([]); setGroupDetail(null); setDetail(null); setSemantic(null); setDeleteOpen(false); setConsentOpen(false); setPassword(""); setConsent(false); setBusy(false);
-          setError("活动分支已变更，正在等待同步。");
+          setError("The active branch changed; waiting for it to sync.");
           return;
         }
         if (branch.current !== data.branch) {
@@ -52,7 +52,7 @@ export function BackgroundTasks({ sessionId, activeBranch, mobile = false }: { s
       } catch {
         if (alive && sequence === requestSequence.current) {
           branch.current = ""; generation.current++;
-          setDeliveries([]); setTasks([]); setGroups([]); setGroupDetail(null); setDetail(null); setSemantic(null); setDeleteOpen(false); setConsentOpen(false); setPassword(""); setConsent(false); setBusy(false); setError("无法获取后台任务，请稍后重试。");
+          setDeliveries([]); setTasks([]); setGroups([]); setGroupDetail(null); setDetail(null); setSemantic(null); setDeleteOpen(false); setConsentOpen(false); setPassword(""); setConsent(false); setBusy(false); setError("Could not load background tasks. Try again later.");
         }
       }
     };
@@ -73,7 +73,7 @@ export function BackgroundTasks({ sessionId, activeBranch, mobile = false }: { s
       setDetail(result);
       setTasks((items) => items.map((item) => item.id === id ? result : item));
     } catch {
-      if (current === generation.current) { setDetail(null); setError("操作失败，任务可能已变更或会话分支已切换。"); }
+      if (current === generation.current) { setDetail(null); setError("Operation failed. The task may have changed, or the session branch switched."); }
     } finally {
       if (current === generation.current) setBusy(false);
     }
@@ -95,7 +95,7 @@ export function BackgroundTasks({ sessionId, activeBranch, mobile = false }: { s
       setSemantic(summary.summary);
       setGroups((items) => items.map((item) => item.id === id ? result : item));
     } catch {
-      if (current === generation.current) { setGroupDetail(null); setError("操作失败，任务组可能已变更或会话分支已切换。"); }
+      if (current === generation.current) { setGroupDetail(null); setError("Operation failed. The task group may have changed, or the session branch switched."); }
     } finally {
       if (current === generation.current) setBusy(false);
     }
@@ -112,7 +112,7 @@ export function BackgroundTasks({ sessionId, activeBranch, mobile = false }: { s
       if (current !== generation.current) return;
       setSemantic(result.summary); setConsentOpen(false); setPassword(""); setConsent(false);
     } catch {
-      if (current === generation.current) { setPassword(""); setError("语义汇总操作失败，请检查密码、任务状态或稍后重试。"); }
+      if (current === generation.current) { setPassword(""); setError("Semantic summary action failed. Check your password and the task status, or try again later."); }
     } finally { if (current === generation.current) setBusy(false); }
   };
 
@@ -124,7 +124,7 @@ export function BackgroundTasks({ sessionId, activeBranch, mobile = false }: { s
       await deleteSemanticSummary(sessionId, branch.current, groupDetail.id);
       if (current === generation.current) { setSemantic(null); setDeleteOpen(false); }
     } catch {
-      if (current === generation.current) setError("清理失败，摘要可能仍在运行或会话分支已切换。");
+      if (current === generation.current) setError("Cleanup failed. The summary may still be running, or the session branch switched.");
     } finally { if (current === generation.current) setBusy(false); }
   };
 
@@ -136,12 +136,12 @@ export function BackgroundTasks({ sessionId, activeBranch, mobile = false }: { s
       const identity = await getSummaryProvider(sessionId, branch.current, groupDetail.id);
       if (current === generation.current) { setProvider(identity); setConsentOpen(true); }
     } catch {
-      if (current === generation.current) setError("无法获取当前供应商信息，请稍后重试。");
+      if (current === generation.current) setError("Could not load the current provider info. Try again later.");
     } finally { if (current === generation.current) setBusy(false); }
   };
 
   const deliveryAction = async (id: string, authorize: boolean) => {
-    if (authorize && !window.confirm("授权此任务组结束后自动展示独立结果卡？结果未经验证，不会加入模型消息；可随时撤销。")) return;
+    if (authorize && !window.confirm("Let this task group show a standalone result card when it finishes? Results are unverified and are not added to model messages; you can revoke this at any time.")) return;
     const current = generation.current;
     setBusy(true); setError(""); setDeliveryNotice("");
     try {
@@ -150,76 +150,76 @@ export function BackgroundTasks({ sessionId, activeBranch, mobile = false }: { s
       if (current !== generation.current) return;
       requestSequence.current++;
       if (!authorize) setDeliveries(items => items.filter(item => item.id !== id));
-      setDeliveryNotice(authorize ? "已授权此任务组结束后展示结果卡。" : "已撤销展示授权。");
+      setDeliveryNotice(authorize ? "This task group will show a result card when it finishes." : "Display authorization revoked.");
     } catch {
-      if (current === generation.current) setError(authorize ? "授权失败，任务可能已结束或已授权。" : "撤销失败，请重试。");
+      if (current === generation.current) setError(authorize ? "Authorization failed. The task may have already finished or already be authorized." : "Revoke failed. Try again.");
     } finally {
       if (current === generation.current) setBusy(false);
     }
   };
 
-  return <section className={mobile ? "border-b border-zinc-800 bg-zinc-950 px-4 py-2 text-sm text-zinc-100" : "border-b border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-2 text-sm"}>
-    <button onClick={() => setOpen(!open)} aria-expanded={open} className={mobile ? "font-medium text-zinc-100" : "font-medium text-[var(--text-primary)]"}>
-      后台子任务 ({tasks.length}) · 任务组 ({groups.length}) {open ? "▴" : "▾"}
+  return <section className={mobile ? "border-b border-zinc-800 bg-zinc-950 px-4 py-2 text-sm text-zinc-100" : "border-b border-[var(--border-subtle)] bg-[var(--bg-sidebar)] px-4 py-1.5 text-xs text-[var(--text-secondary)]"}>
+    <button onClick={() => setOpen(!open)} aria-expanded={open} className={mobile ? "font-medium text-zinc-100" : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"}>
+      Background subtasks ({tasks.length}) · task groups ({groups.length}) {open ? "▴" : "▾"}
     </button>
-    {error && <p role="alert" className="text-red-500">{error}</p>}
+    {error && <p role="alert" className="text-[var(--danger)]">{error}</p>}
     {deliveryNotice && <p role="status">{deliveryNotice}</p>}
-    {deliveries.map((card) => <article key={card.id} className="my-2 rounded border border-[var(--border)] p-3" aria-label="后台结果卡">
-      <strong>后台结果 · {card.id} · {labels[card.status] ?? card.status}</strong>
-      <p>独立展示的未验证数据，不会发送给模型。</p>
+    {deliveries.map((card) => <article key={card.id} className="my-2 rounded border border-[var(--border)] p-3" aria-label="Background result card">
+      <strong>Background result · {card.id} · {labels[card.status] ?? card.status}</strong>
+      <p>Unverified data shown on its own; it is not sent to the model.</p>
       {card.steps.map((step) => <div key={step.step_id}><p>{step.step_id} · {labels[step.status] ?? step.status}</p><pre className="whitespace-pre-wrap break-words font-sans">{step.result}</pre></div>)}
-      <button className="underline" disabled={busy} onClick={() => void deliveryAction(card.id, false)}>撤销展示授权</button>
+      <button className="underline" disabled={busy} onClick={() => void deliveryAction(card.id, false)}>Revoke display authorization</button>
     </article>)}
     {open && <div className="mt-2 max-h-72 overflow-auto space-y-2">
-      <p className={mobile ? "text-xs text-zinc-400" : "text-xs text-[var(--text-tertiary)]"}>仅显示当前会话活动分支；结果不会自动合并到对话。</p>
-      {!error && tasks.length === 0 && groups.length === 0 && <p>暂无后台任务</p>}
+      <p className={mobile ? "text-xs text-zinc-400" : "text-xs text-[var(--text-tertiary)]"}>Only the active branch of this session is shown; results are not merged into the conversation automatically.</p>
+      {!error && tasks.length === 0 && groups.length === 0 && <p>No background tasks yet</p>}
       {groups.map((group) => <div key={group.id} className={mobile ? "rounded border border-zinc-700 p-2" : "rounded border border-[var(--border)] p-2"}>
         <div className="flex flex-wrap items-center gap-2">
-          <strong>任务组 {group.id}</strong><span>{labels[group.status] ?? group.status}</span>
-          <button disabled={busy} onClick={() => void groupAction(group.id)} className="underline">查看详情</button>
-          {(group.status === "queued" || group.status === "running") && <button disabled={busy} className="underline" onClick={() => void deliveryAction(group.id, true)}>授权自动展示</button>}
-          <button disabled={busy} className="underline" onClick={() => void deliveryAction(group.id, false)}>撤销展示授权</button>
-          {(group.status === "queued" || group.status === "running") && <button disabled={busy} onClick={() => void groupAction(group.id, true)} className="underline">取消任务组</button>}
+          <strong>Task group {group.id}</strong><span>{labels[group.status] ?? group.status}</span>
+          <button disabled={busy} onClick={() => void groupAction(group.id)} className="underline">View details</button>
+          {(group.status === "queued" || group.status === "running") && <button disabled={busy} className="underline" onClick={() => void deliveryAction(group.id, true)}>Authorize auto-display</button>}
+          <button disabled={busy} className="underline" onClick={() => void deliveryAction(group.id, false)}>Revoke display authorization</button>
+          {(group.status === "queued" || group.status === "running") && <button disabled={busy} onClick={() => void groupAction(group.id, true)} className="underline">Cancel task group</button>}
         </div>
         {groupDetail?.id === group.id && <div className="mt-2 space-y-2">
           {groupDetail.steps?.map((step) => <div key={step.step_id} className="break-words">
             <p><strong>{step.step_id}</strong> · {step.agent_name} · {labels[step.status] ?? step.status}</p>
-            <p>{step.task}</p><p>依赖：{step.depends_on.join(", ") || "无"}</p>
-            <p>子任务输出（未经验证）</p><pre className="whitespace-pre-wrap break-words font-sans">{step.result || "暂无结果"}</pre>
+            <p>{step.task}</p><p>Dependencies: {step.depends_on.join(", ") || "None"}</p>
+            <p>Subtask output (unverified)</p><pre className="whitespace-pre-wrap break-words font-sans">{step.result || "No results yet"}</pre>
           </div>)}
           <div className="border-t border-current pt-2 space-y-2">
-            <p>语义汇总（模型生成，未经验证）{semantic && ` · ${labels[semantic.status] ?? semantic.status}`}</p>
-            {semantic && <pre className="whitespace-pre-wrap break-words font-sans">{semantic.text || "暂无结果"}</pre>}
-            <button disabled={busy} onClick={() => void summaryAction("refresh")} className="underline">刷新语义汇总状态</button>{" "}
-            {semantic && ["pending", "running", "cancelling"].includes(semantic.status) && <button disabled={busy} onClick={() => void summaryAction("cancel")} className="underline">取消语义汇总</button>}
-            {semantic && ["succeeded", "failed", "interrupted", "cancelled"].includes(semantic.status) && !deleteOpen && <button disabled={busy} onClick={() => setDeleteOpen(true)} className="underline">清理本地语义汇总</button>}
+            <p>Semantic summary (model-generated, unverified){semantic && ` · ${labels[semantic.status] ?? semantic.status}`}</p>
+            {semantic && <pre className="whitespace-pre-wrap break-words font-sans">{semantic.text || "No results yet"}</pre>}
+            <button disabled={busy} onClick={() => void summaryAction("refresh")} className="underline">Refresh semantic summary status</button>{" "}
+            {semantic && ["pending", "running", "cancelling"].includes(semantic.status) && <button disabled={busy} onClick={() => void summaryAction("cancel")} className="underline">Cancel semantic summary</button>}
+            {semantic && ["succeeded", "failed", "interrupted", "cancelled"].includes(semantic.status) && !deleteOpen && <button disabled={busy} onClick={() => setDeleteOpen(true)} className="underline">Delete local semantic summary</button>}
             {deleteOpen && <div className="space-y-2">
-              <p>确认删除本地语义汇总及其步骤快照？此操作不可撤销，不会删除原任务结果、数据库备份或供应商保存的数据，也不保证从存储介质彻底擦除。</p>
-              <button disabled={busy} onClick={() => void deleteSummary()} className="underline">确认清理</button>{" "}
-              <button disabled={busy} onClick={() => setDeleteOpen(false)} className="underline">取消清理</button>
+              <p>Delete the local semantic summary and its step snapshots? This cannot be undone. It does not delete the original task results, database backups or data stored by the provider, and it does not guarantee erasure from the storage medium.</p>
+              <button disabled={busy} onClick={() => void deleteSummary()} className="underline">Confirm cleanup</button>{" "}
+              <button disabled={busy} onClick={() => setDeleteOpen(false)} className="underline">Cancel cleanup</button>
             </div>}
-            {(!semantic || ["failed", "interrupted", "cancelled"].includes(semantic.status)) && ["succeeded", "failed"].includes(group.status) && !consentOpen && <button disabled={busy} onClick={() => void openConsent()} className="underline">申请语义汇总</button>}
+            {(!semantic || ["failed", "interrupted", "cancelled"].includes(semantic.status)) && ["succeeded", "failed"].includes(group.status) && !consentOpen && <button disabled={busy} onClick={() => void openConsent()} className="underline">Request semantic summary</button>}
             {consentOpen && <div className="space-y-2">
-              <p>将发送此任务组所有步骤的状态和结果至本会话配置的模型供应商，可能包含敏感信息；供应商可能保存或处理这些数据。步骤结果快照和汇总文本将额外以明文保存在本地数据库，目前没有自动过期机制，可在汇总结束后手动清理。取消不保证远端停止。请先检查步骤结果。</p>
-              <p>供应商：{provider?.name}（{provider?.type}）；模型：{provider?.model}；端点：{provider?.endpoint}；当前代理：{provider?.proxy}</p>
-              <p>摘要请求与你日常对话使用完全相同的供应商、模型和网络路径（代理跟随全局配置）；供应商或模型配置变化后需重新确认。</p>
-              <label><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /> 我明确同意发送上述数据以生成语义汇总</label>
-              <label className="block">输入账户密码以确认 <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className="text-black" /></label>
-              <button disabled={busy || !consent || !password || !provider} onClick={() => void summaryAction("start")} className="underline">确认发送并生成</button>{" "}
-              <button onClick={() => { setConsentOpen(false); setPassword(""); setConsent(false); }} className="underline">返回</button>
+              <p>The status and results of every step in this task group will be sent to the model provider configured for this session and may contain sensitive information; the provider may store or process that data. Step-result snapshots and the summary text are also stored in plain text in the local database with no automatic expiry, and can be deleted manually once the summary finishes. Cancelling does not guarantee the remote side stops. Check the step results first.</p>
+              <p>Provider: {provider?.name} ({provider?.type}); Model: {provider?.model}; Endpoint: {provider?.endpoint}; Proxy: {provider?.proxy}</p>
+              <p>The summary request uses exactly the same provider, model and network path as your normal conversations (the proxy follows the global config); you must confirm again after the provider or model config changes.</p>
+              <label><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /> I explicitly consent to sending the data above to generate a semantic summary</label>
+              <label className="block">Enter your account password to confirm <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className="text-black" /></label>
+              <button disabled={busy || !consent || !password || !provider} onClick={() => void summaryAction("start")} className="underline">Confirm and generate</button>{" "}
+              <button onClick={() => { setConsentOpen(false); setPassword(""); setConsent(false); }} className="underline">Back</button>
             </div>}
           </div>
-          {groupDetail.summary && <div><p>汇总（未经验证） · {labels[groupDetail.summary.status] ?? groupDetail.summary.status}</p><pre className="whitespace-pre-wrap break-words font-sans">{groupDetail.summary.text || "暂无结果"}</pre></div>}
+          {groupDetail.summary && <div><p>Summary (unverified) · {labels[groupDetail.summary.status] ?? groupDetail.summary.status}</p><pre className="whitespace-pre-wrap break-words font-sans">{groupDetail.summary.text || "No results yet"}</pre></div>}
         </div>}
       </div>)}
       {tasks.map((task) => <div key={task.id} className={mobile ? "rounded border border-zinc-700 p-2" : "rounded border border-[var(--border)] p-2"}>
         <div className="flex flex-wrap items-center gap-2">
           <strong>{task.agent_name}</strong><span>{labels[task.status] ?? task.status}</span>
-          <button disabled={busy} onClick={() => void action(task.id)} className="underline">查看结果</button>
-          {(task.status === "queued" || task.status === "running") && <button disabled={busy} onClick={() => void action(task.id, true)} className="underline">取消任务</button>}
+          <button disabled={busy} onClick={() => void action(task.id)} className="underline">View results</button>
+          {(task.status === "queued" || task.status === "running") && <button disabled={busy} onClick={() => void action(task.id, true)} className="underline">Cancel task</button>}
         </div>
         <p className={mobile ? "break-words text-zinc-300" : "break-words text-[var(--text-secondary)]"}>{task.task}</p>
-        {detail?.id === task.id && <div className="mt-2"><p className={mobile ? "text-xs text-zinc-400" : "text-xs text-[var(--text-tertiary)]"}>子任务输出（未经验证）</p><pre className="whitespace-pre-wrap break-words font-sans">{detail.result || "暂无结果"}</pre></div>}
+        {detail?.id === task.id && <div className="mt-2"><p className={mobile ? "text-xs text-zinc-400" : "text-xs text-[var(--text-tertiary)]"}>Subtask output (unverified)</p><pre className="whitespace-pre-wrap break-words font-sans">{detail.result || "No results yet"}</pre></div>}
       </div>)}
     </div>}
   </section>;

@@ -37,7 +37,7 @@ async def recover_interrupted_state(db: AsyncSession) -> dict:
     for run in zombie_runs:
         run.status = "interrupted"
         run.finished_at = now.timestamp()
-        run.interrupted_reason = run.interrupted_reason or "应用重启：执行进程已不存在"
+        run.interrupted_reason = run.interrupted_reason or "Application restarted: the executing process no longer exists"
         if run.task_id:
             affected_task_ids.add(run.task_id)
     if zombie_runs:

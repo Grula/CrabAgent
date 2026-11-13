@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Plug, Plus, Trash2, Pencil } from "lucide-react";
-import { useTranslation } from "react-i18next";
 import * as mcpApi from "../api/mcpServers";
 import { McpServer, McpServerStatus } from "../api/mcpServers";
 import {
@@ -29,7 +28,6 @@ export default function McpServerPanel({
   onClose,
   onRefresh,
 }: Props) {
-  const { t } = useTranslation();
   const [mode, setMode] = useState<Mode>("list");
   const [editingName, setEditingName] = useState("");
   const [formName, setFormName] = useState("");
@@ -83,15 +81,15 @@ export default function McpServerPanel({
   } | null => {
     setError(null);
     if (mode === "add" && !formName) {
-      setError(t("mcp.nameRequired"));
+      setError("Name is required");
       return null;
     }
     if (formTransport === "stdio" && !formCommand) {
-      setError(t("mcp.commandRequired"));
+      setError("Command is required for stdio transport");
       return null;
     }
     if (formTransport === "http" && !formUrl) {
-      setError(t("mcp.urlRequired"));
+      setError("URL is required for HTTP transport");
       return null;
     }
 
@@ -100,7 +98,7 @@ export default function McpServerPanel({
       parsedArgs = formArgs.trim() ? JSON.parse(formArgs.trim()) : [];
       if (!Array.isArray(parsedArgs)) throw new Error();
     } catch {
-      setError(t("mcp.argsFormat"));
+      setError("Args must be a JSON array, e.g. [\"-y\", \"@mcp/server\"]");
       return null;
     }
     let parsedEnv: Record<string, string> = {};
@@ -108,7 +106,7 @@ export default function McpServerPanel({
       try {
         parsedEnv = JSON.parse(formEnv.trim());
       } catch {
-        setError(t("mcp.envFormat"));
+        setError("Env must be a JSON object, e.g. {\"KEY\": \"value\"}");
         return null;
       }
     }
@@ -117,7 +115,7 @@ export default function McpServerPanel({
       try {
         parsedHeaders = JSON.parse(formHeaders.trim());
       } catch {
-        setError(t("mcp.headersFormat"));
+        setError("Headers must be a JSON object");
         return null;
       }
     }
@@ -141,12 +139,12 @@ export default function McpServerPanel({
         env: parsedEnv,
         headers: parsedHeaders,
       });
-      toast.success(t("mcp.serverAdded"));
+      toast.success("MCP server added");
       onRefresh();
       setMode("list");
       resetForm();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : t("mcp.addFailed"));
+      setError(e instanceof Error ? e.message : "Failed to add MCP server");
     } finally {
       setSaving(false);
     }
@@ -168,12 +166,12 @@ export default function McpServerPanel({
         env: parsedEnv,
         headers: parsedHeaders,
       });
-      toast.success(t("mcp.saved") || "Saved");
+      toast.success("Saved");
       onRefresh();
       setMode("list");
       resetForm();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : t("mcp.addFailed"));
+      setError(e instanceof Error ? e.message : "Failed to add MCP server");
     } finally {
       setSaving(false);
     }
@@ -186,7 +184,7 @@ export default function McpServerPanel({
       await mcpApi.connectMcpServer(name);
       onRefresh();
     } catch (e: unknown) {
-      toast.error(t("mcp.error"), {
+      toast.error("Error", {
         description: e instanceof Error ? e.message : undefined,
       });
     } finally {
@@ -201,7 +199,7 @@ export default function McpServerPanel({
       await mcpApi.disconnectMcpServer(name);
       onRefresh();
     } catch (e: unknown) {
-      toast.error(t("mcp.error"), {
+      toast.error("Error", {
         description: e instanceof Error ? e.message : undefined,
       });
     } finally {
@@ -212,10 +210,10 @@ export default function McpServerPanel({
   const handleDelete = async (name: string) => {
     try {
       await mcpApi.deleteMcpServer(name);
-      toast.success(t("mcp.testSuccess"));
+      toast.success("Connection successful");
       onRefresh();
     } catch (e: unknown) {
-      toast.error(t("mcp.error"), {
+      toast.error("Error", {
         description: e instanceof Error ? e.message : undefined,
       });
     } finally {
@@ -237,8 +235,8 @@ export default function McpServerPanel({
       <Modal
         open={true}
         onOpenChange={(o) => !o && onClose()}
-        title={t("mcp.title")}
-        description={t("mcp.addServerDesc")}
+        title={"MCP Servers"}
+        description={"Add an MCP server to connect external tools."}
         size="lg"
       >
         {error && (
@@ -252,11 +250,11 @@ export default function McpServerPanel({
             {servers.length === 0 ? (
               <EmptyState
                 icon={<Plug size={28} />}
-                title={t("mcp.noServers")}
-                description={t("mcp.addServerDesc")}
+                title={"No MCP servers configured"}
+                description={"Add an MCP server to connect external tools."}
                 action={
                   <Button variant="brand" size="sm" onClick={() => setMode("add")}>
-                    <Plus size={14} /> {t("mcp.addServer")}
+                    <Plus size={14} /> {"Add Server"}
                   </Button>
                 }
               />
@@ -334,14 +332,14 @@ export default function McpServerPanel({
                             onClick={() => handleConnect(s.name)}
                             loading={isActing}
                           >
-                            {connStatus === "error" ? t("mcp.testFailed") : t("mcp.connected")}
+                            {connStatus === "error" ? "Test failed" : "Connected"}
                           </Button>
                         )}
                         <Button
                           size="xs"
                           variant="ghost"
                           onClick={() => startEdit(s)}
-                          title={t("common.edit")}
+                          title={"Edit"}
                         >
                           <Pencil size={12} />
                         </Button>
@@ -350,7 +348,7 @@ export default function McpServerPanel({
                           variant="ghost"
                           onClick={() => setDeleteTarget(s.name)}
                           className="text-[var(--danger)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)]"
-                          title={t("common.delete")}
+                          title={"Delete"}
                         >
                           <Trash2 size={12} />
                         </Button>
@@ -366,7 +364,7 @@ export default function McpServerPanel({
                     setMode("add");
                   }}
                 >
-                  <Plus size={14} /> {t("mcp.addMcpServer")}
+                  <Plus size={14} /> {"Add MCP Server"}
                 </Button>
               </>
             )}
@@ -374,21 +372,21 @@ export default function McpServerPanel({
         ) : (
           <div className="space-y-3">
             <Input
-              label={t("mcp.name")}
+              label={"Name"}
               value={formName}
               onChange={(e) => setFormName(e.target.value)}
-              placeholder={t("mcp.namePlaceholder")}
+              placeholder={"my-mcp-server"}
               disabled={mode === "edit"}
             />
             <Input
-              label={t("mcp.displayName")}
+              label={"Display name"}
               value={formDisplayName}
               onChange={(e) => setFormDisplayName(e.target.value)}
-              placeholder={t("mcp.displayNamePlaceholder")}
+              placeholder={"My MCP Server"}
             />
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-[var(--text-secondary)]">
-                {t("mcp.transport")}
+                {"Transport"}
               </label>
               <div className="flex gap-1 p-1 bg-[var(--bg-tertiary)] rounded-lg">
                 {(["stdio", "http"] as const).map((transportType) => (
@@ -402,7 +400,7 @@ export default function McpServerPanel({
                         : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]",
                     )}
                   >
-                    {transportType === "stdio" ? t("mcp.transportStdio") : t("mcp.transportHttp")}
+                    {transportType === "stdio" ? "Stdio (local)" : "HTTP (remote)"}
                   </button>
                 ))}
               </div>
@@ -411,13 +409,13 @@ export default function McpServerPanel({
             {formTransport === "stdio" ? (
               <>
                 <Input
-                  label={t("mcp.command")}
+                  label={"Command"}
                   value={formCommand}
                   onChange={(e) => setFormCommand(e.target.value)}
-                  placeholder={t("mcp.commandPlaceholder")}
+                  placeholder={"npx / uvx / python"}
                 />
                 <Input
-                  label={t("mcp.argsLabel")}
+                  label={"Args (JSON array)"}
                   value={formArgs}
                   onChange={(e) => setFormArgs(e.target.value)}
                   placeholder='["-y", "@modelcontextprotocol/server-filesystem", "/path"]'
@@ -425,15 +423,15 @@ export default function McpServerPanel({
               </>
             ) : (
               <Input
-                label={t("mcp.url")}
+                label={"URL"}
                 value={formUrl}
                 onChange={(e) => setFormUrl(e.target.value)}
-                placeholder={t("mcp.urlPlaceholder")}
+                placeholder={"https://example.com/mcp"}
               />
             )}
 
             <Textarea
-              label={t("mcp.environment")}
+              label={"Environment"}
               value={formEnv}
               onChange={(e) => setFormEnv(e.target.value)}
               placeholder='{"API_KEY": "sk-xxx"}'
@@ -442,7 +440,7 @@ export default function McpServerPanel({
 
             {formTransport === "http" && (
               <Textarea
-                label={t("mcp.headers")}
+                label={"Headers"}
                 value={formHeaders}
                 onChange={(e) => setFormHeaders(e.target.value)}
                 placeholder='{"Authorization": "Bearer xxx"}'
@@ -458,7 +456,7 @@ export default function McpServerPanel({
                   resetForm();
                 }}
               >
-                {t("common.cancel")}
+                {"Cancel"}
               </Button>
               <Button
                 variant="brand"
@@ -466,7 +464,7 @@ export default function McpServerPanel({
                 loading={saving}
                 fullWidth
               >
-                {mode === "edit" ? t("common.save") : t("common.create")}
+                {mode === "edit" ? "Save" : "Create"}
               </Button>
             </div>
           </div>
@@ -478,7 +476,7 @@ export default function McpServerPanel({
         onOpenChange={(o) => !o && setDeleteTarget(null)}
         title={`Delete MCP server "${deleteTarget}"?`}
         description=""
-        confirmText={t("common.delete")}
+        confirmText={"Delete"}
         tone="danger"
         onConfirm={() => { if (deleteTarget) handleDelete(deleteTarget); }}
       />

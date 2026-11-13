@@ -25,6 +25,27 @@ class ToolInfo:
 
 logger = logging.getLogger(__name__)
 
+# Permission keys that stand for a family of tools. The agent settings page
+# offers "browser" as one switch; it covers every ``browser_*`` tool.
+_PERMISSION_FAMILIES: dict[str, str] = {"browser": "browser_"}
+
+
+def resolve_permission(permissions: dict[str, str] | None, tool_name: str) -> str | None:
+    """Return the permission an agent profile sets for *tool_name*, if any.
+
+    An entry for the exact tool name wins. Otherwise a family key applies,
+    for example ``"browser": "deny"`` to ``browser_navigate``.
+    """
+    if not permissions:
+        return None
+    exact = permissions.get(tool_name)
+    if exact is not None:
+        return exact
+    for key, prefix in _PERMISSION_FAMILIES.items():
+        if tool_name.startswith(prefix) and key in permissions:
+            return permissions[key]
+    return None
+
 
 class ToolRegistry:
     def __init__(self):
@@ -77,15 +98,12 @@ class ToolRegistry:
             for t in self._tools.values()
         ]
 
-    def tool_defs(self, locale: str = "en", exclude_names: set[str] | None = None) -> list[dict[str, Any]]:
+    def tool_defs(self, exclude_names: set[str] | None = None) -> list[dict[str, Any]]:
         """Return tool definitions for LLM function calling.
 
-        When locale != 'en', overrides descriptions from i18n translation files.
         ``exclude_names`` supports per-request capability filtering without
         mutating the session's registry.
         """
-        from crabagent.core.i18n import translate_tool
-
         result = []
         excluded = exclude_names or set()
         for t in self._tools.values():
@@ -93,20 +111,6 @@ class ToolRegistry:
                 continue
             desc = t.description
             params = t.parameters
-
-            if locale != "en":
-                translated = translate_tool(t.name, locale)
-                if translated:
-                    desc = translated.get("description", desc)
-                    if "params" in translated and "properties" in params:
-                        # Deep copy params to avoid mutating registered defaults
-                        params = copy.deepcopy(params)
-                        for pname, ptrans in translated["params"].items():
-                            if pname in params.get("properties", {}):
-                                # ptrans can be a dict with "description" key, or a plain string
-                                desc_text = ptrans.get("description", "") if isinstance(ptrans, dict) else str(ptrans)
-                                if desc_text:
-                                    params["properties"][pname]["description"] = desc_text
 
             # Display metadata belongs to the wrapper, not the tool/MCP handler.
             # A plain "summary" key is used because models reproduce it reliably;
@@ -314,7 +318,7 @@ class ToolRegistry:
                 logger.warning("Molt snapshot failed for %s, continuing tool execution", name)
 
         if context is not None:
-            permission = context.tool_permissions.get(tool.name)
+            permission = resolve_permission(context.tool_permissions, tool.name)
             if permission is None:
                 permission = "confirm" if tool.requires_permission else "auto"
             if permission == "deny":

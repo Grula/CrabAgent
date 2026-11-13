@@ -199,7 +199,7 @@ class McpConnection:
             else:
                 blocks.append({"type": "text", "text": str(content)})
 
-        if result.isError:
+        if result.is_error:
             text = "\n".join(block.get("text", "[image]") for block in blocks)
             return f"[MCP Error] {text}"
         if all(block["type"] == "text" for block in blocks):

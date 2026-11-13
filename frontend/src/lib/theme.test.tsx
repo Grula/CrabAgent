@@ -3,7 +3,7 @@ import "fake-indexeddb/auto";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_COLORS, exportThemeJSON, LEGACY_DEFAULT_COLORS, migrateLegacyDefaultThemes, parseThemeScheme, parseThemes, ThemeProvider, useTheme, validImage, type CustomTheme } from "./theme";
+import { DEFAULT_COLORS, exportThemeJSON, LEGACY_DEFAULT_COLORS, migrateLegacyDefaultThemes, parseThemeScheme, PREVIOUS_DEFAULT_COLORS, parseThemes, ThemeProvider, useTheme, validImage, type CustomTheme } from "./theme";
 
 describe("custom themes", () => {
   let container: HTMLDivElement;
@@ -41,7 +41,7 @@ describe("custom themes", () => {
     expect(document.documentElement.style.getPropertyValue("--custom-background-overlay")).toBe("");
   });
   it("upgrades stored themes that still use the old default palette", () => {
-    const theme = { id: "mine", name: "新主题", colors: DEFAULT_COLORS, backgroundImage: "indexeddb:abc", backgroundOverlay: 40 };
+    const theme = { id: "mine", name: "New theme", colors: DEFAULT_COLORS, backgroundImage: "indexeddb:abc", backgroundOverlay: 40 };
     expect(parseThemes(JSON.stringify([{ ...theme, colors: LEGACY_DEFAULT_COLORS }]))[0].colors.light["bg-primary"]).toBe("#faf7f2");
     const upgraded = migrateLegacyDefaultThemes([{ ...theme, colors: LEGACY_DEFAULT_COLORS }]);
     expect(upgraded[0].colors.light["bg-primary"]).toBe(DEFAULT_COLORS.light["bg-primary"]);
@@ -50,10 +50,28 @@ describe("custom themes", () => {
     const untouched = migrateLegacyDefaultThemes([{ ...theme, colors: { ...DEFAULT_COLORS, light: { ...DEFAULT_COLORS.light, brand: "#123456" } } }]);
     expect(untouched[0].colors.light.brand).toBe("#123456");
   });
+  it("upgrades untouched themes from the previous teal default, but not recolored ones", () => {
+    const theme = { id: "teal", name: "New theme", colors: PREVIOUS_DEFAULT_COLORS, backgroundImage: "", backgroundOverlay: 50 } as unknown as CustomTheme;
+    const [upgraded] = migrateLegacyDefaultThemes([theme]);
+    expect(upgraded.colors.light.brand).toBe(DEFAULT_COLORS.light.brand);
+    expect(upgraded.colors.dark["bg-primary"]).toBe(DEFAULT_COLORS.dark["bg-primary"]);
+    const recolored = { ...theme, colors: { light: { ...PREVIOUS_DEFAULT_COLORS.light, brand: "#123456" }, dark: { ...PREVIOUS_DEFAULT_COLORS.dark, brand: "#654321" } } } as unknown as CustomTheme;
+    expect(migrateLegacyDefaultThemes([recolored])[0]).toBe(recolored);
+  });
+  it("applies and remembers the chat font", () => {
+    let value!: ReturnType<typeof useTheme>;
+    function Probe() { value = useTheme(); return null; }
+    act(() => root.render(<ThemeProvider><Probe /></ThemeProvider>));
+    expect(value.chatFont).toBe("serif");
+    expect(document.documentElement.getAttribute("data-chat-font")).toBe("serif");
+    act(() => value.setChatFont("sans"));
+    expect(document.documentElement.getAttribute("data-chat-font")).toBe("sans");
+    expect(localStorage.getItem("crabagent.chatFont")).toBe("sans");
+  });
   it("exports and imports theme color schemes", () => {
-    const theme: CustomTheme = { id: "t", name: "新主题", colors: DEFAULT_COLORS, backgroundImage: "indexeddb:abc", backgroundOverlay: 40 };
+    const theme: CustomTheme = { id: "t", name: "New theme", colors: DEFAULT_COLORS, backgroundImage: "indexeddb:abc", backgroundOverlay: 40 };
     const round = parseThemeScheme(exportThemeJSON(theme));
-    expect(round).toEqual({ name: "新主题", backgroundOverlay: 40, colors: DEFAULT_COLORS });
+    expect(round).toEqual({ name: "New theme", backgroundOverlay: 40, colors: DEFAULT_COLORS });
     expect(parseThemeScheme(exportThemeJSON({ ...theme, backgroundOverlay: 150 }))!.backgroundOverlay).toBe(0);
     expect(parseThemeScheme("not json")).toBeNull();
     const partial = JSON.parse(exportThemeJSON(theme));

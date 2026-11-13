@@ -1,4 +1,3 @@
-import { useTranslation } from "react-i18next";
 import { TaskInfo, TaskStatus } from "./AgentRunBoard.types";
 
 const AGENT_ICONS: Record<string, string> = {
@@ -11,11 +10,10 @@ interface Props {
 }
 
 export function TaskCard({ task, onClick }: Props) {
-  const { t } = useTranslation();
   const statusConfig: Record<TaskStatus, { border: string; bg: string; badge: string; label: string }> = {
-    running: { border: "var(--accent-2)", bg: "var(--accent-2-bg)", badge: "var(--accent-2)", label: t("taskBoard.inProgress") },
-    done: { border: "var(--success)", bg: "var(--success-bg)", badge: "var(--success)", label: t("taskBoard.completed") },
-    error: { border: "var(--danger)", bg: "var(--danger-bg)", badge: "var(--danger)", label: t("taskBoard.failed") },
+    running: { border: "var(--accent-2)", bg: "var(--accent-2-bg)", badge: "var(--accent-2)", label: "In Progress" },
+    done: { border: "var(--success)", bg: "var(--success-bg)", badge: "var(--success)", label: "Completed" },
+    error: { border: "var(--danger)", bg: "var(--danger-bg)", badge: "var(--danger)", label: "Failed" },
   };
 
   const cfg = statusConfig[task.status];

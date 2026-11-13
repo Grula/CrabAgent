@@ -125,18 +125,6 @@ HIDDEN_IMPORTS = [
     "crabagent.serve.api.session",
     "crabagent.serve.api.settings",
     "crabagent.serve.api.todo",
-    # Pets API + generation pipeline
-    "crabagent.serve.api.pets",
-    "crabagent.core.pets",
-    "crabagent.core.pets.models",
-    "crabagent.core.pets.store",
-    "crabagent.core.pets.generation",
-    # PIL/Pillow (needed for pet spritesheet generation)
-    "PIL",
-    "PIL.Image",
-    "PIL.ImageChops",
-    "PIL.ImageDraw",
-    "PIL._typing",
     # Serve services
     "crabagent.serve.services",
     "crabagent.serve.services.persistence",
@@ -175,7 +163,6 @@ HIDDEN_IMPORTS = [
     "crabagent.core.agent.tools.browser_dom",
     "crabagent.core.agent.tools.collaboration_browser",
     "crabagent.core.agent.tools.computer",
-    "crabagent.core.agent.tools.macos_computer",
     # Agent modules
     "crabagent.core.agent.context",
     "crabagent.core.agent.loop",
@@ -285,20 +272,6 @@ except Exception:
 DATAS.append((str(_VERSION_FILE), "crabagent"))
 print(f"[spec] VERSION file: {_version}")
 
-# ── crabagent: i18n JSON files (needed for agent switch / system prompt translations) ──
-# The destination MUST be "crabagent/core/i18n" (not relative_to(SRC))
-# because the runtime module uses Path(__file__).parent to find them,
-# and __file__ always resolves to crabagent/core/i18n/__init__.py in the bundle.
-_I18N_DIR = SRC / "crabagent" / "core" / "i18n"
-if not _I18N_DIR.exists():
-    # pip-installed flat layout: SRC is the package root (crabagent/)
-    _I18N_DIR = SRC / "core" / "i18n"
-_i18n_count = 0
-if _I18N_DIR.exists():
-    for _f in _I18N_DIR.glob("*.json"):
-        DATAS.append((str(_f), "crabagent/core/i18n"))
-        _i18n_count += 1
-print(f"[spec] Collected {_i18n_count} i18n translation files")
 
 # ── Analysis ───────────────────────────────────────────────────
 a = Analysis(

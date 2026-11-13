@@ -55,7 +55,7 @@ async def record_browser_event(
             if task is None:
                 return
             data = {
-                "runtime": "electron-browser",
+                "runtime": "browser",
                 "action": action[:40],
                 "decision": decision[:30],
                 "observation_id": observation_id[:64],

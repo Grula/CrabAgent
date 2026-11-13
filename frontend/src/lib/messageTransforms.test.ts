@@ -7,10 +7,10 @@ function resultCard(runId: number): ChatMessage {
   return {
     id: `result-${runId}`,
     role: "task_result",
-    content: "生成报告",
+    content: "Generate report",
     task_result: {
       task_id: 9,
-      title: "生成报告",
+      title: "Generate report",
       status: "done",
       run_id: runId,
     },
@@ -23,7 +23,7 @@ function taskEvent(runId: number, summary: string): SSEEvent {
     timestamp: Date.now(),
     data: {
       task_id: 9,
-      title: "生成报告",
+      title: "Generate report",
       status: "done",
       run_id: runId,
       result_summary: summary,

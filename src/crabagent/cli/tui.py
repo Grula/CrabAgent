@@ -671,14 +671,14 @@ class TuiSession:
 
         self.console.print(f"[bold]📊 Agent: {name}[/bold]")
         self.console.print(
-            f"  总任务: {stats['total']}    成功率: {stats['success_rate']}%    "
-            f"平均耗时: {stats['avg_elapsed']}s    平均 tokens: {stats['avg_tokens']}"
+            f"  Total tasks: {stats['total']}    Success rate: {stats['success_rate']}%    "
+            f"Avg elapsed: {stats['avg_elapsed']}s    Avg tokens: {stats['avg_tokens']}"
         )
-        self.console.print(f"  总 lessons: {len(agent_lessons)} (规则: {rule_count}, LLM: {llm_count})")
+        self.console.print(f"  Total lessons: {len(agent_lessons)} (rules: {rule_count}, LLM: {llm_count})")
         if cat_parts:
-            self.console.print(f"  常用类别: {', '.join(cat_parts)}")
+            self.console.print(f"  Top categories: {', '.join(cat_parts)}")
         if agent_lessons:
-            self.console.print("  最近 lessons:")
+            self.console.print("  Recent lessons:")
             for item in agent_lessons[:5]:
                 src = item.get("source", "")
                 tag = f"[{src}]" if src else ""
@@ -1354,9 +1354,8 @@ class TuiSession:
                 __import__(f"crabagent.core.agent.tools.{m}")
             except Exception:
                 pass
-        from datetime import UTC, datetime
-
         from crabagent.core.agent.skill.loader import discover_skills, register_skill_tool
+        from crabagent.core.agent.system_prompt import build_system_prompt
         from crabagent.core.agent.tools import registry
         from crabagent.core.molt.tools import register_molt_tools
         from crabagent.core.todo.tools import register_todo_tools
@@ -1381,50 +1380,11 @@ class TuiSession:
         register_calendar_tools(registry)
 
         discover_and_register_tools(registry, ws)
-        base_prompt = (
-            f"You are CrabAgent. Today is "
-            f"{datetime.now(UTC).strftime('%Y-%m-%d %A')}. "
-            f"Working directory: {ws}. Be concise."
+        base_prompt = await build_system_prompt(
+            ws,
+            user_id=self._user.id if self._user else 0,
+            interface="terminal",
         )
-        try:
-            from crabagent.core.agent.agents import build_team_prompt
-
-            team_prompt = await build_team_prompt()
-            if team_prompt:
-                base_prompt += "\n\n" + team_prompt
-        except Exception:
-            pass
-        try:
-            from crabagent.core.agent.agents import build_memory_prompt
-
-            mem_prompt = await build_memory_prompt(
-                self._user.id if self._user else 0,
-                workspace_path=str(ws),
-            )
-            if mem_prompt:
-                base_prompt += "\n\n" + mem_prompt
-        except Exception:
-            pass
-        # Inject project memory (zero LLM cost — built from existing lessons)
-        try:
-            from crabagent.core.project_memory import load_project_memory
-
-            pm = await load_project_memory(self._user.id if self._user else 0, ws)
-            if pm:
-                pm_prompt = pm.to_prompt()
-                if pm_prompt:
-                    base_prompt += "\n\n" + pm_prompt
-        except Exception:
-            pass
-        # Inject AGENTS.md (workspace-level project rules)
-        try:
-            from crabagent.core.project_memory import load_agents_md
-
-            agents_md = load_agents_md(ws)
-            if agents_md:
-                base_prompt += "\n\n## Project Rules (AGENTS.md)\n\n" + agents_md
-        except Exception:
-            pass
         ctx = AgentContext(
             workspace=ws,
             tool_registry=registry.clone(),

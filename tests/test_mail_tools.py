@@ -16,8 +16,8 @@ def _get_tool(registry: ToolRegistry, name: str):
 
 def test_fmt_task_list_formats_priority_assignee_and_project():
     text = mail_tools._fmt_task_list(
-        [{"title": "修复", "priority": "high", "assignee": "xcl", "deadline": "2026-07-02T00:00:00", "project": "Crab"}],
-        "待办",
+        [{"title": "Fix bug", "priority": "high", "assignee": "xcl", "deadline": "2026-07-02T00:00:00", "project": "Crab"}],
+        "To-do",
     )
 
     assert "🔴" in text
@@ -97,7 +97,7 @@ async def test_task_remind_sends_email_when_tasks_exist(monkeypatch: pytest.Monk
 
     monkeypatch.setattr("crabagent.core.database.async_session_factory", lambda: FakeSession())
     monkeypatch.setattr("crabagent.core.mail.handler.get_config", _async_return(SimpleNamespace(imap_user="me@example.com")))
-    monkeypatch.setattr("crabagent.core.task.store.list_tasks_due_soon", _async_return([{"title": "修复", "priority": "medium"}]))
+    monkeypatch.setattr("crabagent.core.task.store.list_tasks_due_soon", _async_return([{"title": "Fix bug", "priority": "medium"}]))
     monkeypatch.setattr("crabagent.core.task.store.list_tasks", _async_return([]))
 
     async def fake_send_email(**kwargs):

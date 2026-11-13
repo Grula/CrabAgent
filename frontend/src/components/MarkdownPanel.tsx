@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useTranslation } from "react-i18next";
 import { Save, FileText, Code2, Eye, Columns2, AlertTriangle } from "lucide-react";
 import { cn } from "../lib/cn";
 import ReactMarkdown from "react-markdown";
@@ -16,7 +15,6 @@ interface Props {
 }
 
 export function MarkdownPanel({ filePath, className, onClose }: Props) {
-  const { t } = useTranslation();
   const [source, setSource] = useState("");
   const [originalSource, setOriginalSource] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("split");
@@ -117,9 +115,9 @@ export function MarkdownPanel({ filePath, className, onClose }: Props) {
   const lineCount = source.split("\n").length;
 
   const VIEW_BUTTONS: { mode: ViewMode; icon: typeof Code2; label: string }[] = [
-    { mode: "source", icon: Code2, label: t("markdownPanel.source") },
-    { mode: "split", icon: Columns2, label: t("markdownPanel.split") },
-    { mode: "preview", icon: Eye, label: t("markdownPanel.preview") },
+    { mode: "source", icon: Code2, label: "Source" },
+    { mode: "split", icon: Columns2, label: "Split" },
+    { mode: "preview", icon: Eye, label: "Preview" },
   ];
 
   if (loading) {
@@ -168,7 +166,7 @@ export function MarkdownPanel({ filePath, className, onClose }: Props) {
             className="flex items-center gap-1 px-2 py-1 ml-2 rounded text-[11px] text-[var(--accent)] hover:bg-[var(--accent-bg)] transition-colors disabled:opacity-50"
           >
             <Save size={11} />
-            {saving ? "Saving..." : t("common.save")}
+            {saving ? "Saving..." : "Save"}
           </button>
         )}
 
@@ -225,7 +223,7 @@ export function MarkdownPanel({ filePath, className, onClose }: Props) {
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeHighlight]}
               >
-                {source || `*${t("markdownPanel.empty")}*`}
+                {source || `*${"Nothing to preview yet."}*`}
               </ReactMarkdown>
             </div>
           </div>
@@ -238,7 +236,7 @@ export function MarkdownPanel({ filePath, className, onClose }: Props) {
           <FileText size={10} className="text-[var(--text-tertiary)]" />
           <span className="text-[10px] font-mono text-[var(--text-tertiary)]">markdown</span>
           {dirty && (
-            <span className="text-[10px] text-[var(--warning)]">● {t("markdownPanel.modified")}</span>
+            <span className="text-[10px] text-[var(--warning)]">● {"Modified"}</span>
           )}
         </div>
         <div className="flex items-center gap-2">

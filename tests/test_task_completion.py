@@ -37,7 +37,7 @@ def report_file(tmp_path):
 
 @pytest.mark.asyncio
 async def test_register_artifact_records_available_file(db, report_file):
-    task = await task_store.add_task(db, user_id=1, title="写报告")
+    task = await task_store.add_task(db, user_id=1, title="Write report")
 
     art = await artifacts.register_artifact(
         db,
@@ -58,7 +58,7 @@ async def test_register_artifact_records_available_file(db, report_file):
 
 @pytest.mark.asyncio
 async def test_register_same_path_supersedes_and_bumps_version(db, report_file):
-    task = await task_store.add_task(db, user_id=1, title="写报告")
+    task = await task_store.add_task(db, user_id=1, title="Write report")
     await artifacts.register_artifact(
         db,
         user_id=1,
@@ -90,7 +90,7 @@ async def test_register_same_path_supersedes_and_bumps_version(db, report_file):
 
 @pytest.mark.asyncio
 async def test_register_missing_file_marks_missing(db):
-    task = await task_store.add_task(db, user_id=1, title="写报告")
+    task = await task_store.add_task(db, user_id=1, title="Write report")
 
     art = await artifacts.register_artifact(
         db,
@@ -118,9 +118,9 @@ def test_extract_tool_paths_write_and_image():
 
 
 def test_tool_result_failed_detection():
-    assert artifacts.tool_result_failed("创建失败: 磁盘满") is True
+    assert artifacts.tool_result_failed("creation failed: disk full") is True
     assert artifacts.tool_result_failed("File not found: /tmp/x") is True
-    assert artifacts.tool_result_failed("✅ 文档已创建: /tmp/a.docx") is False
+    assert artifacts.tool_result_failed("✅ Document created: /tmp/a.docx") is False
 
 
 @pytest.mark.asyncio
@@ -149,7 +149,7 @@ def test_verify_file_passes_real_file(tmp_path):
     outcome = completion.verify_file(str(f))
 
     assert outcome["status"] == "passed"
-    assert "可读取" in outcome["evidence"]
+    assert "readable" in outcome["evidence"]
 
 
 def test_verify_file_missing_fails():
@@ -165,7 +165,7 @@ def test_verify_file_empty_warns(tmp_path):
     outcome = completion.verify_file(str(f))
 
     assert outcome["status"] == "warning"
-    assert "文件为空" in outcome["evidence"]
+    assert "File is empty" in outcome["evidence"]
 
 
 def test_verify_file_workspace_boundary(tmp_path):
@@ -176,7 +176,7 @@ def test_verify_file_workspace_boundary(tmp_path):
 
     assert completion.verify_file(str(inside), workspace=str(tmp_path))["status"] == "passed"
     outcome = completion.verify_file(str(outside), workspace=str(tmp_path))
-    assert "边界之外" in outcome["evidence"]
+    assert "outside the workspace boundary" in outcome["evidence"]
     outside.unlink()
 
 
@@ -185,7 +185,7 @@ def test_verify_file_workspace_boundary(tmp_path):
 
 @pytest.mark.asyncio
 async def test_finish_run_with_verified_artifact_judges_done(db, report_file):
-    task = await task_store.add_task(db, user_id=1, title="写报告")
+    task = await task_store.add_task(db, user_id=1, title="Write report")
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
     await artifacts.register_artifact(
         db,
@@ -198,7 +198,7 @@ async def test_finish_run_with_verified_artifact_judges_done(db, report_file):
         action="created",
     )
 
-    updated = await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="报告完成")
+    updated = await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="Report completed")
 
     assert updated["status"] == "done"
     assert updated["verification_status"] == "passed"
@@ -208,7 +208,7 @@ async def test_finish_run_with_verified_artifact_judges_done(db, report_file):
 
 @pytest.mark.asyncio
 async def test_finish_run_with_missing_artifact_judges_partial(db):
-    task = await task_store.add_task(db, user_id=1, title="写报告")
+    task = await task_store.add_task(db, user_id=1, title="Write report")
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
     await artifacts.register_artifact(
         db,
@@ -221,7 +221,7 @@ async def test_finish_run_with_missing_artifact_judges_partial(db):
         action="created",
     )
 
-    updated = await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="完成")
+    updated = await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="Completed")
 
     assert updated["status"] == "partial"
     assert updated["verification_status"] == "failed"
@@ -229,7 +229,7 @@ async def test_finish_run_with_missing_artifact_judges_partial(db):
 
 @pytest.mark.asyncio
 async def test_finish_run_without_artifact_or_summary_judges_failed(db):
-    task = await task_store.add_task(db, user_id=1, title="查资料")
+    task = await task_store.add_task(db, user_id=1, title="Research")
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
 
     updated = await task_service.finish_agent_run(db, run_id, 1, "completed")
@@ -239,10 +239,10 @@ async def test_finish_run_without_artifact_or_summary_judges_failed(db):
 
 @pytest.mark.asyncio
 async def test_finish_run_summary_only_judges_done(db):
-    task = await task_store.add_task(db, user_id=1, title="回答问题")
+    task = await task_store.add_task(db, user_id=1, title="Answer the question")
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
 
-    updated = await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="答案：42")
+    updated = await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="Answer: 42")
 
     assert updated["status"] == "done"
     assert updated["verification_status"] == "unverified"  # no checks → unverified
@@ -252,17 +252,17 @@ async def test_finish_run_summary_only_judges_done(db):
 async def test_pending_request_makes_task_waiting_user(db):
     from crabagent.core.task import request_service as rs
 
-    task = await task_store.add_task(db, user_id=1, title="发邮件")
+    task = await task_store.add_task(db, user_id=1, title="Send email")
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)
     await rs.create_request(
         db,
         user_id=1,
         request_type="approval",
-        title="确认发送",
+        title="Confirm send",
         task_id=task["id"],
         run_id=run_id,
     )
 
-    updated = await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="草稿已备好")
+    updated = await task_service.finish_agent_run(db, run_id, 1, "completed", result_summary="Draft is ready")
 
     assert updated["status"] == "waiting_user"

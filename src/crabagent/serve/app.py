@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib.resources
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
@@ -52,6 +53,20 @@ async def lifespan(app: FastAPI):
 
     await init_db()
     logger.info("Database initialized")
+
+    # Platform-neutral collaboration browser bridge. Operators may publish an
+    # external bridge endpoint by exporting these two variables before launching
+    # the backend; only start our Playwright-backed bridge when they are absent.
+    # collaboration_browser.py reads these same variables and therefore keeps
+    # working unchanged.
+    if not (os.environ.get("CRAB_COLLAB_BROWSER_PORT") and os.environ.get("CRAB_COLLAB_BROWSER_TOKEN")):
+        try:
+            from crabagent.core.computer.bridge_service import start_browser_bridge
+
+            start_browser_bridge()
+            logger.info("Collaboration browser bridge started")
+        except Exception:
+            logger.exception("Failed to start collaboration browser bridge (non-fatal)")
 
     # Trusted work system: repair zombie runs and lingering tasks left by
     # a previous process. Failures must not block startup.
@@ -319,6 +334,14 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Stop the platform-neutral browser bridge if this process started it.
+    try:
+        from crabagent.core.computer.bridge_service import stop_browser_bridge
+
+        stop_browser_bridge()
+    except Exception:
+        logger.exception("Failed to stop collaboration browser bridge (non-fatal)")
+
 
 class InteractiveWriteTrackerMiddleware:
     """Pure ASGI middleware counting in-flight interactive write requests.
@@ -427,10 +450,12 @@ def create_app() -> FastAPI:
     app.state.interactive_busy = 0
     app.add_middleware(InteractiveWriteTrackerMiddleware, state_holder=app.state)
 
-    # Gzip 静态资源压缩：前端 JS bundle 约 4-6MB，经 Tailscale DERP 中继裸传
-    # 会导致手机端首屏长时间转圈；压缩后体积降 ~75%。
-    # 防御性豁免 SSE 路径（/api/events*）：流式响应经过压缩中间件存在被
-    # 缓冲/延迟的风险，SSE 追求的是逐事件即时送达，两者语义冲突，不值得赌。
+    # Gzip compression for static assets: the frontend JS bundle is ~4-6MB and,
+    # sent uncompressed over a Tailscale DERP relay, makes the mobile first paint
+    # spin for a long time; compression cuts the size by ~75%.
+    # SSE paths (/api/events*) are exempted defensively: streaming responses
+    # risk being buffered/delayed by a compression middleware, which conflicts
+    # with SSE's per-event immediacy -- not worth the gamble.
     from fastapi.middleware.gzip import GZipMiddleware
 
     class _SSEAwareGZipMiddleware:
@@ -456,6 +481,7 @@ def create_app() -> FastAPI:
     from crabagent.serve.api.browser_tasks import router as browser_tasks_router
     from crabagent.serve.api.calendar import router as calendar_router
     from crabagent.serve.api.chatgpt_auth import router as chatgpt_router
+    from crabagent.serve.api.collab_browser import router as collab_browser_router
     from crabagent.serve.api.confirm import router as confirm_router
     from crabagent.serve.api.documents import router as documents_router
     from crabagent.serve.api.email import router as email_router
@@ -470,7 +496,6 @@ def create_app() -> FastAPI:
     from crabagent.serve.api.molt import router as molt_router
     from crabagent.serve.api.notification import router as notification_router
     from crabagent.serve.api.officecli import router as officecli_router
-    from crabagent.serve.api.pets import router as pets_router
     from crabagent.serve.api.prompt import router as prompt_router
     from crabagent.serve.api.provider import router as provider_router
     from crabagent.serve.api.push import router as push_router
@@ -483,7 +508,6 @@ def create_app() -> FastAPI:
     from crabagent.serve.api.task_request import router as task_request_router
     from crabagent.serve.api.todo import router as todo_router
     from crabagent.serve.api.token_usage import router as token_usage_router
-    from crabagent.serve.api.wechat import router as wechat_router
     from crabagent.serve.api.work import router as work_router
 
     app.include_router(agent_router, prefix="/api")
@@ -510,18 +534,17 @@ def create_app() -> FastAPI:
     app.include_router(todo_router, prefix="/api")
     app.include_router(notification_router, prefix="/api")
     app.include_router(officecli_router, prefix="/api")
-    app.include_router(pets_router, prefix="/api")
     app.include_router(scheduled_task_router, prefix="/api")
     app.include_router(task_router, prefix="/api")
     app.include_router(task_request_router, prefix="/api")
     app.include_router(work_router, prefix="/api")
     app.include_router(email_router, prefix="/api")
     app.include_router(token_usage_router, prefix="/api")
-    app.include_router(wechat_router, prefix="/api")
     app.include_router(push_router, prefix="/api")
     app.include_router(chatgpt_router, prefix="/api")
     app.include_router(calendar_router, prefix="/api")
     app.include_router(execution_router, prefix="/api")
+    app.include_router(collab_browser_router, prefix="/api/collab-browser")
 
     @app.get("/health")
     async def health(request: Request):

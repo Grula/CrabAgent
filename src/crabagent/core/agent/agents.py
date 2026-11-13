@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json as _json
 import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
 from sqlalchemy import select
 
@@ -22,6 +25,131 @@ logger = logging.getLogger(__name__)
 
 _registry_cache: list[dict] = []
 _registry_loaded = False
+
+# ---------------------------------------------------------------------------
+# Hardcoded English prompt fragments
+#
+# These were previously loaded from ``core/i18n/*.json``. The i18n layer has
+# been removed: CrabAgent is English-only, so the strings live here as plain
+# module constants instead of being looked up by locale at runtime.
+# ---------------------------------------------------------------------------
+
+_SUB_AGENT_INTRO = (
+    "You are a CrabAgent sub-agent. Another agent delegated a task to you, and your final message "
+    "is returned to it as your result, so make that message complete and self-contained."
+)
+_AGENT_SYSTEM_ROLE = 'Role: {role}'
+_AGENT_SYSTEM_GOAL = 'Goal: {goal}'
+_AGENT_SYSTEM_BACKSTORY = 'Backstory: {backstory}'
+_AGENT_SYSTEM_ENVIRONMENT = 'Today is {date}. Working directory: {workspace}'
+_AGENT_EXECUTION_CONTRACT = (
+    "Working rules:\n"
+    "- You have a limited tool-iteration budget. Work in small steps and verify each one before building on it; "
+    "once about 80% of the budget is used, stop starting new work and wrap up.\n"
+    "- Confirm your working directory before editing; if it does not match the task, stop and report "
+    "instead of guessing.\n"
+    "- Follow the project's rules. If they were not given to you, read AGENTS.md in the working directory "
+    "(when it exists) before changing files.\n"
+    "- Stay within the task. Don't widen the scope, refactor unrelated code, or redo work someone else owns.\n"
+    "- Base every claim on what you actually read or ran; never invent file contents, results or sources.\n"
+    "- Call tools only through the native tool interface and never print tool-call markup as text.\n"
+    "- Don't stop to ask questions: work independently, make reasonable assumptions, and state them in "
+    "your report.\n"
+    "Finish with a short report:\n"
+    "- Outcome in one or two sentences.\n"
+    "- Files changed (paths), or key findings with their sources.\n"
+    "- Verification: the exact command you ran and its exit code, or why none applied.\n"
+    "- Assumptions you made.\n"
+    "- An explicit REMAINING list of anything unfinished or blocked (write \"REMAINING: none\" when done)."
+)
+_AGENT_SYSTEM_SHARED_INSTRUCTION = (
+    "Team scratchpad: `shared_put(key, value)` stores a note that agents started later in this session "
+    "receive automatically; `shared_get(key)` and `shared_list()` read your teammates' notes. Check it "
+    "before repeating work, and before you finish save what others will need under a short key: facts, "
+    "paths and decisions, not raw dumps."
+)
+_AGENT_SYSTEM_HELP_INSTRUCTION = (
+    "If part of the task needs expertise you lack, ask a teammate with "
+    "`request_help(agent_name, question)` instead of guessing."
+)
+_AGENT_SWITCH_HEADER = '[Agent Switch] You are now acting as {icon} **{display_name}**.'
+_AGENT_SWITCH_ROLE = 'Role: {role}'
+_AGENT_SWITCH_GOAL = 'Goal: {goal}'
+_AGENT_SWITCH_BACKSTORY = 'Background: {backstory}'
+_AGENT_SWITCH_FOOTER = "Your actually available tools are the ones provided in this session's tool list, not the wording of the role description. If a task can be accomplished with tools you actually have, do it directly; do not refuse on role grounds and do not push the work back to the user."
+_CAPABILITY_BROWSER = (
+    "You can operate the visible shared browser on the user's behalf with computer_observe / computer_act: "
+    "observe pages, click, type and navigate websites. High-risk actions automatically ask the user for "
+    "confirmation, so never refuse on the user's behalf."
+)
+_MEMORY_PROMPT_TITLE = '## Team Knowledge'
+_MEMORY_PROMPT_SAVE_INSTRUCTION = (
+    "These memories were accurate when saved; verify file names, commands and facts before relying on them. "
+    "Save new durable knowledge with `memory_save(memory_type='team', ...)`: choices the user made, options "
+    "they rejected, preferences, and project facts that will matter in later sessions. Don't save what only "
+    "matters to this conversation or what the code already records."
+)
+_SHARED_CONTEXT_TITLE = '## Shared Team Knowledge'
+_TEAM_PROMPT_TITLE = '## Agent Team'
+_TEAM_PROMPT_INTRO = (
+    'You can delegate work to specialized sub-agents. Use them for parallel work or when a task needs '
+    'a specialist; delegation costs time and tokens, so do small or tightly coupled work yourself.'
+)
+_TEAM_PROMPT_AVAILABLE_AGENTS = '### Available Agents'
+_TEAM_PROMPT_DELEGATION_TOOLS = '### Delegation Tools'
+_TEAM_PROMPT_SHARED_WORKSPACE = '### Shared Workspace'
+_TEAM_PROMPT_WHEN_TO_DELEGATE = '### When to Delegate'
+_TEAM_PROMPT_BRIEFING = '### Writing the Task'
+_TEAM_PROMPT_RESTRICTED = '(disabled tools: {tools})'
+_PIPELINE_GRANULARITY = 'One pipeline step = one file or one concern. If a step has more than ~5 deliverables, split it into separate steps.'
+
+# Delegation-tool bullet lines, in display order.
+_TEAM_PROMPT_TOOL_LINES: tuple[str, ...] = (
+    '`list_agents`: List all available agents with details',
+    '`plan_task(task)`: Analyze a complex task and produce an execution plan (does not execute)',
+    '`delegate_task(agent_name, task)`: Delegate a task to a specific agent and wait for its result',
+    '`delegate_parallel(tasks)`: Run multiple independent agent tasks simultaneously (no ordering)',
+    '`handoff_to(agent_name, context_summary)`: Hand off work to another agent with context',
+    '`run_pipeline(steps)`: Multi-step workflow with dependencies. Steps without depends_on run in parallel. Prefer for complex workflows.',
+    '`delegate_background(agent_name, task)`: Start a sub-agent in the background and keep working; collect it '
+    'with `background_status` / `background_wait`. Background agents get no tools except an optional `read` and '
+    'stop after 5 minutes, so use them for drafting or reasoning, not research or edits.',
+)
+
+# Shared-workspace bullet lines, in display order.
+_TEAM_PROMPT_SHARED_LINES: tuple[str, ...] = (
+    '`shared_put(key, value)`: Save findings to shared workspace; agents started later receive them',
+    '`shared_get(key)`: Read findings from other agents',
+    '`shared_list()`: List all shared notes',
+)
+
+# Routing hints for the built-in agents. A hint is shown only while its agent is
+# enabled; otherwise the main agent would be sent to an agent that does not exist.
+_TEAM_PROMPT_AGENT_ROUTES: tuple[tuple[str, str], ...] = (
+    ('researcher', 'Web research, searching, browsing -> `researcher`'),
+    ('analyst', 'Data analysis, comparison, report generation -> `analyst`'),
+    ('coder', 'Code writing, debugging, refactoring -> `coder`'),
+    ('writer', 'Content writing, editing, translation -> `writer`'),
+)
+
+# 'When to delegate' bullet lines, in display order.
+_TEAM_PROMPT_WHEN_LINES: tuple[str, ...] = (
+    'For any other work, pick the agent whose role and goal above fit it best',
+    'Multiple independent subtasks (no ordering needed) -> `delegate_parallel`',
+    'Multi-step workflow with ordering or data flow (e.g., research -> analyze -> write) -> `run_pipeline`',
+    'User asks for multiple sub-agents or parallel execution -> use `delegate_parallel` or `run_pipeline`, not sequential `delegate_task`',
+    "Check each agent's disabled tools above before assigning work it cannot do",
+    'A lookup you can do in a few tool calls, or a small edit -> do it yourself',
+)
+
+# 'Writing the task' bullet lines, in display order.
+_TEAM_PROMPT_BRIEFING_LINES: tuple[str, ...] = (
+    'Sub-agents do not see this conversation (only `handoff_to` passes a short excerpt). Make every task '
+    'self-contained: the goal, relevant file paths or URLs, constraints, what is already ruled out, and '
+    'exactly what to return.',
+    'Results can be wrong or incomplete. Check important claims and code changes before you rely on them or '
+    'pass them on to the user.',
+)
 
 
 async def load_agent_registry() -> list[dict]:
@@ -146,6 +274,8 @@ _SHARED_TOOLS = {"shared_get", "shared_put", "shared_list"}
 _DELEGATION_TOOLS = {
     "delegate_task",
     "delegate_parallel",
+    "run_pipeline",
+    "plan_task",
     "list_agents",
     "handoff_to",
     "ask_question",
@@ -165,67 +295,46 @@ def get_delegation_tools() -> set[str]:
     return _DELEGATION_TOOLS
 
 
-def _translate_agent_field(agent_name: str, field: str, original: str, locale: str) -> str:
-    """Return translated agent field if available, otherwise the original."""
-    from crabagent.core.i18n import t
-
-    key = f"agents.{agent_name}.{field}"
-    translated = t(key, locale)
-    # t() returns the key itself when translation is not found.
-    # In that case, fall back to the original value from agent_def.
-    if translated == key:
-        return original
-    return translated or original
-
-
-def build_agent_switch_msg(
-    agent_def: dict, locale: str = "en", extra_lines: list[str] | None = None
-) -> dict:
-    from crabagent.core.i18n import t
-
+def build_agent_switch_msg(agent_def: dict, extra_lines: list[str] | None = None) -> dict:
+    """Build the "[Agent Switch]" message describing *agent_def*."""
     agent_name = agent_def["name"]
     icon = agent_def.get("icon", "")
-    _d = _translate_agent_field(agent_name, "display_name", agent_def["display_name"], locale)
-    _r = _translate_agent_field(agent_name, "role", agent_def.get("role", ""), locale)
-    _g = _translate_agent_field(agent_name, "goal", agent_def["goal"], locale)
-    _b = _translate_agent_field(agent_name, "backstory", agent_def.get("backstory", ""), locale)
+    display_name = agent_def["display_name"]
+    role = agent_def.get("role", "")
+    goal = agent_def["goal"]
+    backstory = agent_def.get("backstory", "")
     lines = [
-        t("agent_switch.header", locale, icon=icon, display_name=_d),
-        t("agent_switch.role", locale, role=_r),
-        t("agent_switch.goal", locale, goal=_g),
+        _AGENT_SWITCH_HEADER.format(icon=icon, display_name=display_name),
+        _AGENT_SWITCH_ROLE.format(role=role),
+        _AGENT_SWITCH_GOAL.format(goal=goal),
     ]
-    if _b:
-        lines.append(t("agent_switch.backstory", locale, backstory=_b))
-    # Dynamic capability hints (desktop control, browser control) so the model
-    # knows its real toolset instead of inferring it from the role wording.
+    if backstory:
+        lines.append(_AGENT_SWITCH_BACKSTORY.format(backstory=backstory))
+    # Dynamic capability hints (browser control) so the model knows its real
+    # toolset instead of inferring it from the role wording.
     lines.extend(extra_lines or [])
-    lines.append(t("agent_switch.footer", locale))
+    lines.append(_AGENT_EXECUTION_CONTRACT)
+    lines.append(_AGENT_SWITCH_FOOTER)
     return {"role": "user", "content": "\n".join(lines), "agent": agent_name}
 
 
-# Tool-name prefixes that indicate desktop/GUI control capability.
-_MACOS_TOOL_PREFIX = "macos_"
+# Tool sets that indicate GUI control capability.
 _BROWSER_COMPUTER_TOOLS = {"computer_observe", "computer_act"}
 
 
-def capability_hint_lines(tool_names, locale: str = "en") -> list[str]:
-    """Return localized capability hints for the desktop-control tools present
-    in ``tool_names``.
+def capability_hint_lines(tool_names) -> list[str]:
+    """Return capability hints for the GUI-control tools present in ``tool_names``.
 
     Injected into agent-switch messages and sub-agent system prompts so the
-    model is told what it can actually do (e.g. operate local app windows),
+    model is told what it can actually do (e.g. operate the shared browser),
     instead of having to guess from a long tool list plus a narrow role text.
     Without this, models tend to refuse GUI tasks ("not my role") even when
     the tools are available.
     """
-    from crabagent.core.i18n import t
-
     names = set(tool_names or [])
     lines: list[str] = []
-    if any(n.startswith(_MACOS_TOOL_PREFIX) for n in names):
-        lines.append(t("agent_switch.capability_macos", locale))
     if _BROWSER_COMPUTER_TOOLS & names:
-        lines.append(t("agent_switch.capability_browser", locale))
+        lines.append(_CAPABILITY_BROWSER)
     return lines
 
 
@@ -233,118 +342,126 @@ def _build_system_prompt(
     agent_def: dict,
     has_shared: bool = False,
     can_request_help: bool = False,
-    locale: str = "en",
     extra_lines: list[str] | None = None,
+    workspace: Path | str | None = None,
 ) -> str:
-    from crabagent.core.i18n import t
-
-    agent_name = agent_def["name"]
-    _r = _translate_agent_field(agent_name, "role", agent_def.get("role", ""), locale)
-    _g = _translate_agent_field(agent_name, "goal", agent_def.get("goal", ""), locale)
-    _b = _translate_agent_field(agent_name, "backstory", agent_def.get("backstory", ""), locale)
+    """Build the system prompt for a sub-agent."""
+    role = agent_def.get("role", "")
+    goal = agent_def.get("goal", "")
+    backstory = agent_def.get("backstory", "")
     parts = [
-        t("agent_system.role", locale, role=_r),
-        t("agent_system.goal", locale, goal=_g),
+        _SUB_AGENT_INTRO,
+        _AGENT_SYSTEM_ROLE.format(role=role),
+        _AGENT_SYSTEM_GOAL.format(goal=goal),
     ]
-    if _b:
-        parts.append(t("agent_system.backstory", locale, backstory=_b))
+    if backstory:
+        parts.append(_AGENT_SYSTEM_BACKSTORY.format(backstory=backstory))
+    if workspace:
+        # Sub-agents get no base system prompt, so tell them the date and where they are.
+        today = datetime.now().astimezone().strftime("%Y-%m-%d (%A)")
+        parts.append(_AGENT_SYSTEM_ENVIRONMENT.format(date=today, workspace=workspace))
     # Capability hints keep the model aligned with its real toolset.
     parts.extend(extra_lines or [])
-    parts.append(t("agent_system.task_instruction", locale))
+    parts.append(_AGENT_EXECUTION_CONTRACT)
     if has_shared:
-        parts.append(t("agent_system.shared_instruction", locale))
+        parts.append(_AGENT_SYSTEM_SHARED_INSTRUCTION)
     if can_request_help:
-        parts.append(t("agent_system.help_instruction", locale))
+        parts.append(_AGENT_SYSTEM_HELP_INSTRUCTION)
     return "\n".join(parts)
 
 
-def _load_list(locale: str, key: str) -> list[str]:
-    """Load a list translation by dot-notation key, falling back to English."""
-    from crabagent.core.i18n import _load
-
-    for loc in (locale, "en"):
-        data = _load(loc)
-        parts = key.split(".")
-        node = data
-        for p in parts:
-            if isinstance(node, dict):
-                node = node.get(p)
-            else:
-                node = None
-                break
-        if isinstance(node, list):
-            return node
-    return []
+def is_internal_profile(name: str) -> bool:
+    """Profiles such as ``__default__`` only hold settings; they are not agents to delegate to."""
+    return name.startswith("__")
 
 
-async def build_team_prompt(locale: str = "en") -> str:
-    from crabagent.core.i18n import t
+_MULTIWORD_TOOL_FAMILIES = ("collab_browser", "scheduled_task", "background_group")
 
-    agents = await load_agent_registry()
+
+def _tool_family(name: str) -> str:
+    for family in _MULTIWORD_TOOL_FAMILIES:
+        if name.startswith(family + "_"):
+            return family
+    return name.split("_", 1)[0] if "_" in name else ""
+
+
+def summarize_denied_tools(denied: list[str]) -> str:
+    """Render a denied-tool list compactly for prompts.
+
+    Three or more tools of one family are shown as ``family_* (n)`` so that a
+    long permission list does not swamp the description of what an agent does.
+    """
+    families: dict[str, list[str]] = {}
+    for name in denied:
+        family = _tool_family(name)
+        if family:
+            families.setdefault(family, []).append(name)
+    collapsed = {family for family, names in families.items() if len(names) >= 3}
+    parts: list[str] = []
+    shown: set[str] = set()
+    for name in denied:
+        family = _tool_family(name)
+        if family in collapsed:
+            if family not in shown:
+                shown.add(family)
+                parts.append(f"{family}_* ({len(families[family])})")
+        else:
+            parts.append(name)
+    return ", ".join(parts)
+
+
+async def build_team_prompt() -> str:
+    """Render the "## Agent Team" delegation prompt."""
+    agents = [a for a in await load_agent_registry() if not is_internal_profile(a["name"])]
     if not agents:
         return ""
     lines = [
-        t("team_prompt.title", locale),
+        _TEAM_PROMPT_TITLE,
         "",
-        t("team_prompt.intro", locale),
+        _TEAM_PROMPT_INTRO,
         "",
-        t("team_prompt.available_agents", locale),
+        _TEAM_PROMPT_AVAILABLE_AGENTS,
         "",
     ]
+    # A tool that every agent is denied says nothing about whom to pick, so
+    # only the differences between agents are listed.
+    denied_by_agent = {
+        a["name"]: [k for k, v in (a.get("tool_permissions") or {}).items() if v == "deny"] for a in agents
+    }
+    denied_everywhere: set[str] = set()
+    if len(agents) > 1:
+        denied_everywhere = set.intersection(*(set(names) for names in denied_by_agent.values()))
     for a in agents:
-        perms = a.get("tool_permissions", {})
-        denied = [k for k, v in perms.items() if v == "deny"]
+        denied = [k for k in denied_by_agent[a["name"]] if k not in denied_everywhere]
         perm_info = ""
         if denied:
-            denied_str = ", ".join(denied)
-            perm_info = " " + t("team_prompt.restricted", locale, tools=denied_str)
-        # Use translated agent fields when available (fall back to original if no i18n entry)
-        agent_name = a["name"]
-        _dk = f"agents.{agent_name}.display_name"
-        _rk = f"agents.{agent_name}.role"
-        _gk = f"agents.{agent_name}.goal"
-        _dt = t(_dk, locale)
-        _rt = t(_rk, locale)
-        _gt = t(_gk, locale)
-        display_name = _dt if _dt != _dk else a["display_name"]
-        role = _rt if _rt != _rk else a["role"]
-        goal = _gt if _gt != _gk else a["goal"]
-        lines.append(f"- **{display_name}** (`{agent_name}`): {role}. {goal}{perm_info}")
-    lines.extend(
-        [
-            "",
-            t("team_prompt.delegation_tools", locale),
-            "",
-        ]
-    )
-    for key in ("list_agents", "plan_task", "delegate_task", "delegate_parallel", "handoff_to", "run_pipeline"):
-        lines.append(f"- {t(f'team_prompt.tools.{key}', locale)}")
-    lines.extend(
-        [
-            "",
-            t("team_prompt.shared_workspace", locale),
-            "",
-        ]
-    )
-    for key in ("shared_put", "shared_get", "shared_list"):
-        lines.append(f"- {t(f'team_prompt.shared.{key}', locale)}")
-    lines.extend(
-        [
-            "",
-            t("team_prompt.when_to_delegate", locale),
-            "",
-        ]
-    )
-    when_list = _load_list(locale, "team_prompt.when")
-    for item in when_list:
-        lines.append(f"- {item}")
+            perm_info = " " + _TEAM_PROMPT_RESTRICTED.format(tools=summarize_denied_tools(denied))
+        lines.append(
+            f"- **{a['display_name']}** (`{a['name']}`): {a['role']}. {a['goal']}{perm_info}"
+        )
+    lines.extend(["", _TEAM_PROMPT_DELEGATION_TOOLS, ""])
+    for line in _TEAM_PROMPT_TOOL_LINES:
+        lines.append(f"- {line}")
+    lines.extend(["", _TEAM_PROMPT_SHARED_WORKSPACE, ""])
+    for line in _TEAM_PROMPT_SHARED_LINES:
+        lines.append(f"- {line}")
+    lines.extend(["", _TEAM_PROMPT_WHEN_TO_DELEGATE, ""])
+    available = {a["name"] for a in agents}
+    for agent_name, line in _TEAM_PROMPT_AGENT_ROUTES:
+        if agent_name in available:
+            lines.append(f"- {line}")
+    for line in _TEAM_PROMPT_WHEN_LINES:
+        lines.append(f"- {line}")
+    lines.extend(["", _TEAM_PROMPT_BRIEFING, ""])
+    for line in _TEAM_PROMPT_BRIEFING_LINES:
+        lines.append(f"- {line}")
+    lines.extend(["", _PIPELINE_GRANULARITY])
     lines.append("")
     return "\n".join(lines)
 
 
-async def _load_shared_context(session_id: str, locale: str = "en") -> str:
-    from crabagent.core.i18n import t
-
+async def _load_shared_context(session_id: str) -> str:
+    """Render the "## Shared Team Knowledge" block for *session_id*."""
     if not session_id:
         return ""
     from crabagent.core.database import shared_memory_get_all
@@ -352,7 +469,7 @@ async def _load_shared_context(session_id: str, locale: str = "en") -> str:
     items = await shared_memory_get_all(session_id)
     if not items:
         return ""
-    lines = [t("shared_context.title", locale), ""]
+    lines = [_SHARED_CONTEXT_TITLE, ""]
     for item in items:
         author_tag = f" (by {item['author']})" if item["author"] else ""
         lines.append(f"### {item['key']}{author_tag}")
@@ -364,7 +481,6 @@ async def _load_shared_context(session_id: str, locale: str = "en") -> str:
 async def build_memory_prompt(
     user_id: int,
     query: str = "",
-    locale: str = "en",
     workspace_path: str = "",
 ) -> str:
     if not user_id:
@@ -374,7 +490,6 @@ async def build_memory_prompt(
         agent_memory_get_by_type,
         agent_memory_search_vector,
     )
-    from crabagent.core.i18n import t
 
     parts: list[str] = []
 
@@ -400,12 +515,12 @@ async def build_memory_prompt(
         total_chars = sum(len(m["content"]) for m in team_memories)
         if total_chars > 3000:
             team_memories = team_memories[:5]
-        lines = [t("memory_prompt.team_knowledge_title", locale), ""]
+        lines = [_MEMORY_PROMPT_TITLE, ""]
         for m in team_memories:
             cat = m["category"]
             lines.append(f"- **{m['key']}** ({cat}): {m['content']}")
         lines.append("")
-        lines.append(t("memory_prompt.save_instruction", locale))
+        lines.append(_MEMORY_PROMPT_SAVE_INSTRUCTION)
         lines.append("")
         parts.append("\n".join(lines))
 
@@ -614,9 +729,10 @@ class BackgroundAgentResult:
     result: str
 
 async def spawn_sub_agent(
-    agent_name: str,
-    task: str,
     parent_context,
+    agent_name: str = "",
+    task: str = "",
+    agent_def: dict | None = None,
     include_history: bool = False,
     max_depth: int = 1,
     pipeline_run_id: int | None = None,
@@ -626,10 +742,15 @@ async def spawn_sub_agent(
 ) -> str | BackgroundAgentResult:
     from crabagent.core.agent.context import AgentContext
     from crabagent.core.agent.loop import run_agent
-    from crabagent.core.agent.tools.registry import ToolRegistry
+    from crabagent.core.agent.tools.registry import ToolRegistry, resolve_permission
     from crabagent.core.event import AgentEvent, EventType
 
-    agent_def = await get_agent(agent_name)
+    # Legacy positional form: spawn_sub_agent(agent_name, task, parent_context)
+    if isinstance(parent_context, str):
+        parent_context, agent_name, task = task, parent_context, agent_name
+
+    if agent_def is None and not is_internal_profile(agent_name):
+        agent_def = await get_agent(agent_name)
     if not agent_def:
         error = f"Error: agent '{agent_name}' not found"
         return BackgroundAgentResult("failed", error) if background or structured_result else error
@@ -651,12 +772,12 @@ async def spawn_sub_agent(
             continue
         # Background jobs cannot request interactive confirmation. Recheck the
         # current profile here in case it changed after the job was queued.
-        if background and (agent_tool_perms.get(name, "auto") != "auto" or tool.requires_permission):
+        if background and ((resolve_permission(agent_tool_perms, name) or "auto") != "auto" or tool.requires_permission):
             continue
         if name in _MEMORY_TOOLS:
             sub_registry._tools[name] = tool
             continue
-        if agent_tool_perms.get(name) == "deny":
+        if resolve_permission(agent_tool_perms, name) == "deny":
             continue
         sub_registry._tools[name] = tool
 
@@ -668,7 +789,6 @@ async def spawn_sub_agent(
             sub_registry._tools["request_help"] = parent_tools["request_help"]
             can_request_help = True
 
-    sub_locale = parent_context.metadata.get("locale", parent_context.locale or "en")
     # Resolve sub-agent model+provider via the cost-control map
     # (parent provider|model → child provider|model), then fall back to the
     # sub-agent's own profile, then to the parent.
@@ -682,8 +802,9 @@ async def spawn_sub_agent(
         parent_provider=parent_context.provider_name or "",
         agent_def_model=agent_def.get("model") or "",
     )
+    shared_workspace = Path(parent_context.workspace).resolve()
     sub_context = AgentContext(
-        workspace=parent_context.workspace,
+        workspace=shared_workspace,
         tool_registry=sub_registry,
         max_iterations=min(parent_context.max_iterations, 50),
         model=_sub_model,
@@ -693,21 +814,39 @@ async def spawn_sub_agent(
             agent_def,
             has_shared=has_shared,
             can_request_help=can_request_help,
-            locale=sub_locale,
-            extra_lines=capability_hint_lines(set(sub_registry._tools.keys()), sub_locale),
+            extra_lines=capability_hint_lines(set(sub_registry._tools.keys())),
+            workspace=shared_workspace,
         ),
     )
 
-    sub_context.confirm_callback = None
+    # A tool the profile marks "confirm" asks the user through the parent's
+    # confirmation channel, one request at a time, and an approval then holds
+    # for the rest of this run (shared with the parent). Unattended parents
+    # (scheduled tasks, background jobs) have no channel, so their sub-agents
+    # run such tools without asking, as before.
+    parent_confirm = None if background else parent_context.confirm_callback
+    if parent_confirm is not None:
+        confirm_lock = parent_context.metadata.setdefault("_confirm_lock", asyncio.Lock())
+
+        async def _confirm_through_parent(tool_name: str, args: dict) -> bool:
+            async with confirm_lock:
+                return await parent_confirm(tool_name, {"agent": agent_name, **args})
+
+        sub_context.confirm_callback = _confirm_through_parent
+        sub_context.approved_tools = parent_context.approved_tools
+    else:
+        sub_context.confirm_callback = None
     sub_context.tool_permissions = agent_tool_perms
     # Carry the unpruned pool forward so a second-level delegation is not limited
     # by this sub-agent's own deny list either.
     sub_context.base_tool_registry = base_registry
     sub_context.metadata["_sub_agent_name"] = agent_name
+    # Read by on-demand tool loading: tools the agent's own description calls
+    # for are loaded before its first step.
+    sub_context.metadata["_agent_profile_text"] = "\n".join(
+        str(agent_def.get(field) or "") for field in ("role", "goal", "backstory")
+    )
     sub_context.metadata["_sub_agent_depth"] = current_depth + 1
-    sub_context.locale = sub_locale
-    sub_context.metadata["locale"] = sub_locale
-
     parent_user_id = parent_context.metadata.get("user_id", 0)
     if parent_user_id:
         sub_context.metadata["user_id"] = parent_user_id
@@ -728,7 +867,7 @@ async def spawn_sub_agent(
         except Exception:
             logger.debug("Failed to inject lessons for sub-agent %s", agent_name, exc_info=True)
 
-    shared_context = await _load_shared_context(session_id, locale=sub_locale)
+    shared_context = await _load_shared_context(session_id)
 
     if include_history and parent_context.messages:
         recent = parent_context.messages[-20:]
@@ -994,7 +1133,7 @@ async def spawn_sub_agent(
                     user_id=parent_user_id,
                     agent_name=agent_name,
                     task_summary=task[:200],
-                    success=True,
+                    success=not sub_context.budget_exhausted,
                     elapsed=elapsed,
                     tokens=sub_context.accumulated_total,
                     iterations=sub_context.iteration,
@@ -1015,6 +1154,7 @@ async def spawn_sub_agent(
                     "result": last_text,
                     "task": task[:200],
                     "model": sub_context.model or parent_context.model or "",
+                    "budget_exhausted": sub_context.budget_exhausted,
                 },
             )
         )
@@ -1026,6 +1166,7 @@ async def spawn_sub_agent(
                     "elapsed": elapsed,
                     "tokens": sub_context.accumulated_total,
                     "iterations": sub_context.iteration,
+                    "budget_exhausted": sub_context.budget_exhausted,
                 }
             )
 
@@ -1044,6 +1185,7 @@ async def spawn_sub_agent(
                 "iterations": sub_context.iteration,
                 "task": task[:200],
                 "model": sub_context.model or parent_context.model or "",
+                "budget_exhausted": sub_context.budget_exhausted,
             },
             ensure_ascii=False,
         )

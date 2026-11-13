@@ -26,7 +26,7 @@ export function connectSSE(
 
   // The backend sends keepalives as a NAMED SSE event (`event: keepalive`),
   // which never fires `onmessage`. Without this listener the useSSE heartbeat
-  // starved on idle sessions and forced a reconnect every 40s ("重新连接中").
+  // starved on idle sessions and forced a reconnect every 40s ("reconnecting").
   es.addEventListener("keepalive", () => {
     onEvent({ type: "keepalive", data: {}, timestamp: Date.now() });
   });

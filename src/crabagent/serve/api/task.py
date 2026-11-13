@@ -289,11 +289,11 @@ async def open_task_artifact(
             match = artifact
             break
     if match is None or not match.path:
-        raise HTTPException(status_code=404, detail="成果文件不存在或未登记")
+        raise HTTPException(status_code=404, detail="Artifact does not exist or is not registered")
 
     p = Path(match.path)
     if not p.is_file():
-        raise HTTPException(status_code=404, detail="文件已不存在")
+        raise HTTPException(status_code=404, detail="File no longer exists")
 
     try:
         if sys.platform == "darwin":
@@ -303,7 +303,7 @@ async def open_task_artifact(
         else:
             subprocess.Popen(["xdg-open", str(p)])
     except Exception as exc:  # pragma: no cover - environment specific
-        raise HTTPException(status_code=500, detail=f"无法打开文件: {exc}")
+        raise HTTPException(status_code=500, detail=f"Could not open file: {exc}")
     return {"status": "ok", "path": str(p)}
 
 

@@ -12,14 +12,8 @@ from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 # ── Package-relative paths ────────────────────────────────────
 import crabagent as _crabagent
-_CRABAGENT_ROOT = Path(os.path.dirname(_crabagent.__file__))
-_ICON_DIR = _CRABAGENT_ROOT / "electron" / "build"
-if sys.platform == "win32":
-    _icon = str(_ICON_DIR / "icon.ico") if (_ICON_DIR / "icon.ico").exists() else None
-elif sys.platform == "darwin":
-    _icon = str(_ICON_DIR / "icon.png") if (_ICON_DIR / "icon.png").exists() else None
-else:
-    _icon = None
+# No app icon bundled (the electron/build assets were removed).
+_icon = None
 
 block_cipher = None
 
@@ -195,13 +189,6 @@ HIDDEN_IMPORTS = [
     "tiktoken_ext.openai_public",
     "pydantic",
     "pydantic_settings",
-    # WeChat (needed in cli mode for message polling)
-    "crabagent.core.wechat",
-    "crabagent.core.wechat.client",
-    "crabagent.core.wechat.auth",
-    "crabagent.core.wechat.message",
-    "crabagent.core.wechat.config",
-    "crabagent.core.wechat.crypto",
 ]
 
 # ── Data files: static frontend assets ─────────────────────────
@@ -217,14 +204,6 @@ _litellm_datas = collect_data_files('litellm', include_py_files=False)
 DATAS.extend(_litellm_datas)
 print(f"[spec] Collected {len(_litellm_datas)} litellm data files")
 
-# ── crabagent: i18n JSON files for agent switch / system prompt translations ──
-_I18N_DIR = _CRABAGENT_ROOT / "core" / "i18n"
-_i18n_count = 0
-if _I18N_DIR.exists():
-    for _f in _I18N_DIR.glob("*.json"):
-        DATAS.append((str(_f), "crabagent/core/i18n"))
-        _i18n_count += 1
-print(f"[spec] Collected {_i18n_count} i18n translation files")
 
 # ── Analysis ───────────────────────────────────────────────────
 a = Analysis(
@@ -277,7 +256,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="CrabAgent CLI.app",
-    icon=str(_ICON_DIR / "icon.png") if sys.platform == "darwin" and (_ICON_DIR / "icon.png").exists() else None,
+    icon=_icon,
     bundle_identifier="com.crabagent.cli",
     info_plist={
         "CFBundleShortVersionString": _crabagent.__version__,

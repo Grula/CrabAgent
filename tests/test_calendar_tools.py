@@ -21,9 +21,9 @@ async def test_calendar_add_rejects_bad_time(monkeypatch: pytest.MonkeyPatch):
     calendar_tools.register_calendar_tools(registry)
     handler = _get_tool(registry, "calendar_add")
 
-    result = await handler(title="会议", start_time="bad-time")
+    result = await handler(title="Meeting", start_time="bad-time")
 
-    assert "无法解析时间" in result
+    assert "Could not parse the time" in result
 
 
 @pytest.mark.asyncio
@@ -47,10 +47,10 @@ async def test_calendar_add_marks_date_only_as_all_day(monkeypatch: pytest.Monke
     monkeypatch.setattr("crabagent.core.calendar.store.add_event", fake_add_event)
     monkeypatch.setattr("crabagent.core.database.async_session_factory", lambda: FakeSession())
 
-    result = await handler(title="放假", start_time="2026-07-01")
+    result = await handler(title="Day off", start_time="2026-07-01")
 
     assert captured["all_day"] is True
-    assert "事件已创建" in result
+    assert "Event created" in result
 
 
 @pytest.mark.asyncio
@@ -63,8 +63,8 @@ async def test_calendar_today_formats_events_and_free_slots(monkeypatch: pytest.
         "date": "2026-07-01",
         "summary": "2 events",
         "events": [
-            {"title": "晨会", "start_time": "2026-07-01T09:00:00", "end_time": "2026-07-01T10:00:00", "all_day": False, "type": "manual", "location": "A1"},
-            {"title": "截止", "start_time": "2026-07-01T00:00:00", "end_time": None, "all_day": True, "type": "task", "location": ""},
+            {"title": "Standup", "start_time": "2026-07-01T09:00:00", "end_time": "2026-07-01T10:00:00", "all_day": False, "type": "manual", "location": "A1"},
+            {"title": "Deadline", "start_time": "2026-07-01T00:00:00", "end_time": None, "all_day": True, "type": "task", "location": ""},
         ],
         "free_slots": [{"start": "2026-07-01T13:00:00", "end": "2026-07-01T15:30:00", "duration_min": 150}],
     }
@@ -81,9 +81,9 @@ async def test_calendar_today_formats_events_and_free_slots(monkeypatch: pytest.
 
     result = await handler()
 
-    assert "晨会" in result
+    assert "Standup" in result
     assert "13:00-15:30 (2h30m)" in result
-    assert "全天/截止" in result
+    assert "All-day / due" in result
 
 
 @pytest.mark.asyncio
@@ -94,7 +94,7 @@ async def test_calendar_update_requires_changed_fields(monkeypatch: pytest.Monke
 
     result = await handler(id=1)
 
-    assert result == "⚠️ 没有需要更新的字段。"
+    assert result == "⚠️ No fields to update."
 
 
 @pytest.mark.asyncio
@@ -115,7 +115,7 @@ async def test_calendar_delete_returns_missing_message(monkeypatch: pytest.Monke
 
     result = await handler(id=4)
 
-    assert result == "❌ 事件 4 不存在。"
+    assert result == "❌ Event 4 not found."
 
 
 def test_parse_helpers_cover_valid_and_invalid_inputs():

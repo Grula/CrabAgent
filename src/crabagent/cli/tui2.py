@@ -1552,11 +1552,8 @@ class DualPanelTui(TuiSession):
 
                 from crabagent.core.agent.agents import build_agent_switch_msg, capability_hint_lines
 
-                locale = self.agent_ctx.metadata.get("locale", self.agent_ctx.locale or "en")
-                cap_lines = capability_hint_lines(filtered._tools.keys(), locale)
-                self.agent_ctx.messages.append(
-                    build_agent_switch_msg(agent, locale=locale, extra_lines=cap_lines)
-                )
+                cap_lines = capability_hint_lines(filtered._tools.keys())
+                self.agent_ctx.messages.append(build_agent_switch_msg(agent, extra_lines=cap_lines))
                 icon = agent.get("icon", "")
                 tool_n = len(agent.get("tools", []))
                 extra = f" | Model: {agent['model']}" if agent.get("model") else ""

@@ -4,7 +4,6 @@ import remarkGfm from "remark-gfm";
 import { Download } from "lucide-react";
 import { TaskInfo } from "./AgentRunBoard.types";
 import { Modal, Button } from "./ui";
-import { useTranslation } from "react-i18next";
 import { cn } from "../lib/cn";
 
 interface Props {
@@ -14,7 +13,6 @@ interface Props {
 }
 
 export function ResultCompare({ tasks, onClose, onExport }: Props) {
-  const { t: tr } = useTranslation();
   const completed = tasks.filter(
     (t) => t.status === "done" || t.status === "error",
   );
@@ -90,13 +88,13 @@ export function ResultCompare({ tasks, onClose, onExport }: Props) {
                       : "bg-[var(--danger-bg)] text-[var(--danger)] border border-[var(--danger-border)]",
                   )}
                 >
-                  {active.status === "done" ? tr("resultCompare.completed") : tr("resultCompare.failed")}
+                  {active.status === "done" ? "Completed" : "Failed"}
                 </span>
               </div>
               {active.task && (
                 <p className="text-[11px] mb-3 italic text-[var(--text-tertiary)]">
                   Task: {active.task}
-                  {tr("resultCompare.task")}: {active.task}
+                  {"Task"}: {active.task}
                 </p>
               )}
               <div className="markdown-body text-sm">

@@ -4,7 +4,11 @@ from crabagent.core.agent.tools.registry import registry
 
 @registry.register(
     name="edit",
-    description="Perform exact string replacement in a file. The old_string must match exactly.",
+    description=(
+        "Perform exact string replacement in a file. old_string must match the file exactly, including "
+        "whitespace and indentation, and must be unique unless replace_all is true. Read the file first "
+        "and copy old_string from what you saw."
+    ),
     parameters={
         "type": "object",
         "properties": {
@@ -20,18 +24,36 @@ from crabagent.core.agent.tools.registry import registry
                 "type": "string",
                 "description": "Text to replace it with.",
             },
+            "replace_all": {
+                "type": "boolean",
+                "description": (
+                    "Replace every occurrence of old_string instead of requiring a unique match. "
+                    "Use for renames across a file. Default: false."
+                ),
+                "default": False,
+            },
         },
         "required": ["file_path", "old_string", "new_string"],
     },
     requires_permission=True,
 )
-def edit_file(file_path: str, old_string: str, new_string: str, context=None) -> str:
+def edit_file(
+    file_path: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
+    context=None,
+) -> str:
     path, error = resolve_tool_path(file_path, context)
     if error:
         return error
     assert path is not None
     if not path.exists():
         return f"Error: file does not exist: {file_path}"
+    if not old_string:
+        return "Error: old_string must not be empty. Use write to create a file or replace its whole content."
+    if old_string == new_string:
+        return "Error: old_string and new_string are identical; nothing to change."
 
     try:
         content = path.read_text(encoding="utf-8")
@@ -42,13 +64,21 @@ def edit_file(file_path: str, old_string: str, new_string: str, context=None) ->
     count = content.count(old_string)
     if count == 0:
         return f"Error: old_string not found in {file_path}"
-    if count > 1:
-        return f"Error: old_string found {count} times in {file_path}. Provide more context to make it unique."
+    if count > 1 and not replace_all:
+        return (
+            f"Error: old_string found {count} times in {file_path}. Provide more context to make it unique, "
+            "or set replace_all=true to replace every occurrence."
+        )
 
     # Now safe to compute line number
     index = content.index(old_string)
     line_num = content[:index].count("\n") + 1
 
-    new_content = content.replace(old_string, new_string, 1)
+    if replace_all:
+        new_content = content.replace(old_string, new_string)
+    else:
+        new_content = content.replace(old_string, new_string, 1)
     path.write_text(new_content, encoding="utf-8")
-    return f"Successfully replaced 1 occurrence in {file_path} @ L{line_num}"
+    if count == 1:
+        return f"Successfully replaced 1 occurrence in {file_path} @ L{line_num}"
+    return f"Successfully replaced {count} occurrences in {file_path} (first @ L{line_num})"
