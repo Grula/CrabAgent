@@ -67,6 +67,10 @@ MJPEG_BOUNDARY = "crabagent-frame"
 FRAME_INTERVAL_SECONDS = 1.0 / 10.0  # ~10 fps
 FRAME_JPEG_QUALITY = 70
 
+# Dark stand-in for the white about:blank page, so a freshly launched (or
+# deliberately blank) browser never captures/displays a white canvas.
+BLANK_PAGE_HTML = "<html><body style='background:#0d1117;margin:0'></body></html>"
+
 # The envelope regex is deliberately loose (36 hex/dash characters); the
 # action_id regex is a strict UUID v1-8.
 TASK_ID_RE = re.compile(r"^[0-9a-f-]{36}$", re.IGNORECASE)
@@ -510,6 +514,8 @@ class BrowserBridgeService:
         else:
             self._page = await self._context.new_page()
         await self._page.set_viewport_size(VIEWPORT)
+        # Start on a dark blank page so the screencast never flashes white.
+        await self._page.set_content(BLANK_PAGE_HTML)
 
     async def _close_browser(self) -> None:
         try:
@@ -646,7 +652,8 @@ class BrowserBridgeService:
         # reachable for the bridge self-test; everything else goes through the
         # URL policy (http/https only, no private/loopback targets).
         try:
-            if raw_url.strip().lower() in ("about:blank", "about:blank/"):
+            blank = raw_url.strip().lower() in ("about:blank", "about:blank/")
+            if blank:
                 target = "about:blank"
             else:
                 target = await allowed_network_url(
@@ -656,7 +663,10 @@ class BrowserBridgeService:
             raise BridgeError(str(exc)) from exc
         self._invalidate("navigate")
         try:
-            await self._page.goto(target, wait_until="domcontentloaded", timeout=30_000)
+            if blank:
+                await self._page.set_content(BLANK_PAGE_HTML)
+            else:
+                await self._page.goto(target, wait_until="domcontentloaded", timeout=30_000)
         except Exception as exc:
             self._invalidate("navigate")
             raise BridgeError(f"NAVIGATION_FAILED: {exc}") from exc
