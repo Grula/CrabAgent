@@ -1575,8 +1575,19 @@ def _run_serve(args):
 
     from crabagent.serve.app import create_app
 
+    from crabagent.serve.shutdown import begin_shutdown
+
+    class _Server(uvicorn.Server):
+        def handle_exit(self, sig, frame) -> None:
+            # Tell event streams to end now; uvicorn then waits for connections to close.
+            begin_shutdown()
+            super().handle_exit(sig, frame)
+
     app = create_app()
-    uvicorn.run(app, host=args.host, port=args.port)
+    # Streams end within a second of Ctrl+C (see serve/shutdown.py). The timeout is
+    # a backstop for any other request that would otherwise keep shutdown waiting.
+    config = uvicorn.Config(app, host=args.host, port=args.port, timeout_graceful_shutdown=5)
+    _Server(config).run()
 
 
 if __name__ == "__main__":

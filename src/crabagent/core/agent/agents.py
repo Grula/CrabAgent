@@ -269,6 +269,28 @@ async def get_agent(name: str) -> dict | None:
     return None
 
 
+DEFAULT_AGENT_SETTING = "default_agent"
+
+
+async def resolve_default_agent_name() -> str:
+    """The agent a chat runs as when it has none of its own ("default").
+
+    Set by the ``default_agent`` app setting. Falls back to "default" (the plain
+    assistant) when unset, or when that agent was deleted, disabled or is internal.
+    """
+    try:
+        from crabagent.core import database as _db
+
+        async with _db.async_session_factory() as db:
+            value = await db.scalar(select(_db.AppSetting.value).where(_db.AppSetting.key == DEFAULT_AGENT_SETTING))
+        name = (value or "").strip()
+        if name and name != "default" and not is_internal_profile(name) and await get_agent(name):
+            return name
+    except Exception:
+        logger.debug("Could not resolve the default agent", exc_info=True)
+    return "default"
+
+
 _MEMORY_TOOLS = {"memory_save", "memory_recall", "memory_replace", "memory_list", "memory_forget"}
 _SHARED_TOOLS = {"shared_get", "shared_put", "shared_list"}
 _DELEGATION_TOOLS = {

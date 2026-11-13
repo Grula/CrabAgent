@@ -2,6 +2,9 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { Clock, Users, CheckCircle2, AlertCircle, Sparkles, Send, FileText, X } from "lucide-react";
 import { cn } from "../lib/cn";
 import * as sessionsApi from "../api/sessions";
+import { listAgentProfiles } from "../api/agents";
+import { buildParticipantOptions, type ParticipantOption } from "./meetingParticipants";
+import { ParticipantPicker } from "./ParticipantPicker";
 
 interface MeetingNote {
   id: string;
@@ -23,7 +26,8 @@ interface Props {
 
 export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
   const [title, setTitle] = useState("");
-  const [participants, setParticipants] = useState("");
+  const [participants, setParticipants] = useState<string[]>([]);
+  const [participantOptions, setParticipantOptions] = useState<ParticipantOption[]>([]);
   const [notes, setNotes] = useState<MeetingNote[]>([]);
   const [inputText, setInputText] = useState("");
   const [inputSpeaker, setInputSpeaker] = useState("");
@@ -32,6 +36,12 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
   const notesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { notesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [notes]);
+
+  useEffect(() => {
+    listAgentProfiles()
+      .then((list) => setParticipantOptions(buildParticipantOptions(list)))
+      .catch(() => {});
+  }, []);
 
   const addNote = useCallback(() => {
     const text = inputText.trim();
@@ -61,9 +71,13 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
   const handleEnd = useCallback(() => {
     setStatus("ended");
     const summary = notes.map((n) => `[${n.timestamp}] ${n.speaker}: ${n.content}`).join("\n");
-    const prompt = `The meeting has ended. Write the minutes from the notes below: summary, action items, open questions, and decisions.\n\n${summary}`;
+    const labels = participants
+      .map((item) => participantOptions.find((option) => option.value === item)?.label ?? item)
+      .join(", ");
+    const participantsPart = participants.length > 0 ? `Participants: ${labels}\n\n` : "";
+    const prompt = `The meeting has ended. Write the minutes from the notes below: summary, action items, open questions, and decisions.\n\n${participantsPart}${summary}`;
     onPrompt?.(prompt);
-  }, [notes, onPrompt]);
+  }, [notes, onPrompt, participants, participantOptions]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addNote(); }
@@ -90,11 +104,10 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
         <div className="flex items-center gap-2 text-[11px] text-[var(--text-tertiary)]">
           <Clock size={12} /> <span>{new Date().toLocaleString()}</span>
           <Users size={12} className="ml-2" />
-          <input
+          <ParticipantPicker
             value={participants}
-            onChange={(e) => setParticipants(e.target.value)}
-            placeholder={"Participants…"}
-            className="flex-1 bg-transparent border-0 outline-none text-[var(--text-tertiary)] placeholder:text-[var(--text-tertiary)]/50"
+            options={participantOptions}
+            onChange={setParticipants}
           />
         </div>
       </div>

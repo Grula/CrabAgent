@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
 from crabagent.core.event import AgentEvent, EventType
+from crabagent.serve.shutdown import SHUTDOWN, get_until_shutdown, is_shutting_down
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ async def event_stream(
 
         try:
             while True:
-                if await request.is_disconnected():
+                if is_shutting_down() or await request.is_disconnected():
                     break
                 # Check critical queue first (non-blocking)
                 try:
@@ -129,9 +130,10 @@ async def event_stream(
                     # tool_confirm_request) are delivered promptly.
                     event = None
                     while event is None:
-                        try:
-                            event = await asyncio.wait_for(stream_queue.get(), timeout=3.0)
-                        except TimeoutError:
+                        event = await get_until_shutdown(stream_queue, 3.0)
+                        if event is SHUTDOWN:
+                            return  # server stopping: end the stream so the connection closes cleanly
+                        if event is None:
                             # Re-check critical queue on timeout
                             try:
                                 event = critical_queue.get_nowait()
@@ -228,10 +230,12 @@ async def global_event_stream(
             while True:
                 if await request.is_disconnected():
                     break
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                event = await get_until_shutdown(queue, 30.0)
+                if event is SHUTDOWN:
+                    break  # server stopping: end the stream so the connection closes cleanly
+                if event is not None:
                     yield event.to_sse()
-                except TimeoutError:
+                else:
                     # Refresh liveness timestamp: forwarders GC global entries
                     # idle for >120s, and these keepalives never pass through
                     # them — without the refresh a live connection would be

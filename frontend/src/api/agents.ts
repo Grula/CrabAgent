@@ -255,3 +255,13 @@ export function updateMemory(key: string, content: string, importance?: number):
   if (importance !== undefined) params.set("importance", String(importance));
   return api.patch(`/memory/${encodeURIComponent(key)}?${params.toString()}`, {});
 }
+
+/** App setting naming the agent that new chats (and chats without an agent) run as. */
+export const DEFAULT_AGENT_SETTING = "default_agent";
+
+/** Fired on window when agents or the default agent change, so open views reload them. */
+export const AGENTS_CHANGED_EVENT = "crabagent:agents-changed";
+
+export function notifyAgentsChanged(): void {
+  window.dispatchEvent(new Event(AGENTS_CHANGED_EVENT));
+}

@@ -13,6 +13,7 @@ import {
   Circle,
   Clock,
   ArrowLeft,
+  Star,
 } from "lucide-react";
 import {
   AgentProfile,
@@ -34,7 +35,10 @@ import {
   listTools,
   getDefaultToolPermissions,
   setDefaultToolPermissions,
+  DEFAULT_AGENT_SETTING,
+  notifyAgentsChanged,
 } from "../api/agents";
+import { getSettings, updateSettings } from "../api/settings";
 import AgentGrowthChart from "../components/AgentGrowthChart";
 import { Button, Input, Textarea, ConfirmDialog, EmptyState } from "../components/ui";
 import { toast } from "../components/ui/Toast";
@@ -123,10 +127,30 @@ export default function AgentsPage() {
   const [recentRuns, setRecentRuns] = useState<AgentRunSummary[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(false);
 
+  const [defaultAgentName, setDefaultAgentName] = useState("");
+
   const fetchAgents = async () => {
     try {
       setAgents(await listAgentProfiles());
+      notifyAgentsChanged();
     } catch {}
+    try {
+      const values = await getSettings();
+      setDefaultAgentName((values[DEFAULT_AGENT_SETTING] || "").trim());
+    } catch {}
+  };
+
+  /** Make an agent the one new chats start with, or go back to the plain assistant. */
+  const handleSetDefault = async (a: AgentProfile) => {
+    const next = defaultAgentName === a.name ? "" : a.name;
+    try {
+      await updateSettings({ [DEFAULT_AGENT_SETTING]: next });
+      setDefaultAgentName(next);
+      notifyAgentsChanged();
+      toast.success(next ? `New chats start with ${a.display_name}` : "New chats use the plain assistant again");
+    } catch {
+      toast.error("Could not save the default agent");
+    }
   };
 
   useEffect(() => {
@@ -494,8 +518,11 @@ export default function AgentsPage() {
                     {a.icon || "🤖"}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-medium text-[var(--text-primary)] truncate">
-                      {a.display_name}
+                    <div className="text-[13px] font-medium text-[var(--text-primary)] truncate flex items-center gap-1">
+                      <span className="truncate">{a.display_name}</span>
+                      {a.name === defaultAgentName && (
+                        <Star size={11} className="shrink-0 text-[var(--brand)]" fill="currentColor" aria-label="Default for new chats" />
+                      )}
                     </div>
                     <div className="text-[10px] font-mono text-[var(--text-tertiary)] truncate">
                       {a.name}
@@ -697,16 +724,33 @@ export default function AgentsPage() {
                         )}
                         {selected.enabled ? "On" : "Off"}
                       </button>
-                      {!selected.is_default && (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          onClick={() => setDeleteTarget(selected)}
-                          className="text-[var(--danger)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)]"
-                        >
-                          <Trash2 size={12} />
-                        </Button>
-                      )}
+                      <button
+                        onClick={() => handleSetDefault(selected)}
+                        disabled={!selected.enabled && defaultAgentName !== selected.name}
+                        aria-pressed={defaultAgentName === selected.name}
+                        title={defaultAgentName === selected.name
+                          ? "New chats start with this agent. Click to use the plain assistant instead."
+                          : "Start new chats with this agent"}
+                        className={cn(
+                          "flex items-center gap-1 h-7 px-2.5 rounded-md text-[11px] font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                          defaultAgentName === selected.name
+                            ? "bg-[var(--brand-bg)] text-[var(--brand)] border-[var(--brand-border)]"
+                            : "text-[var(--text-secondary)] border-[var(--border)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)]",
+                        )}
+                      >
+                        <Star size={12} fill={defaultAgentName === selected.name ? "currentColor" : "none"} />
+                        {defaultAgentName === selected.name ? "Default" : "Set as default"}
+                      </button>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => setDeleteTarget(selected)}
+                        title="Delete agent"
+                        aria-label="Delete agent"
+                        className="text-[var(--danger)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)]"
+                      >
+                        <Trash2 size={12} />
+                      </Button>
                     </div>
                   </div>
 
@@ -879,7 +923,9 @@ export default function AgentsPage() {
         open={!!deleteTarget}
         onOpenChange={(o) => !o && setDeleteTarget(null)}
         title={`Delete agent "${deleteTarget?.display_name || ""}"?`}
-        description={"This permanently removes the agent profile and its learning data."}
+        description={deleteTarget?.is_default
+          ? "This removes the built-in agent profile. It will not be re-created when CrabAgent restarts."
+          : "This permanently removes the agent profile and its learning data."}
         confirmText={"Delete"}
         tone="danger"
         onConfirm={handleDelete}

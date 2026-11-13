@@ -31,8 +31,11 @@ import { McpServer, McpServerStatus } from "../api/mcpServers";
 import { Session } from "../api/sessions";
 import {
   AgentProfile as AgentProfileType,
+  AGENTS_CHANGED_EVENT,
+  DEFAULT_AGENT_SETTING,
   listAgentProfiles,
 } from "../api/agents";
+import { getSettings } from "../api/settings";
 import SessionList from "../components/SessionList";
 import ChatPanel from "../components/ChatPanel";
 import ProviderPanel from "../components/ProviderPanel";
@@ -89,6 +92,18 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
   const [reasoningEffort, setReasoningEffort] = useState("medium");
   const [selectedAgent, setSelectedAgent] = useState("default");
+  const [agentProfiles, setAgentProfiles] = useState<AgentProfileType[]>([]);
+  const [defaultAgentName, setDefaultAgentName] = useState("");
+  const enabledAgents = agentProfiles.filter((a) => a.enabled !== false);
+  const defaultAgent = enabledAgents.find((a) => a.name === defaultAgentName);
+  // With a default agent configured, the plain "default" assistant is not offered.
+  const agentChoices: { name: string; icon?: string; display_name: string }[] = defaultAgent
+    ? enabledAgents
+    : [{ name: "default", icon: "🦀", display_name: "default" }, ...enabledAgents];
+  // A chat's agent that was deleted or disabled falls back to the default one.
+  const effectiveAgent = agentChoices.some((a) => a.name === selectedAgent)
+    ? selectedAgent
+    : (defaultAgent?.name ?? "default");
   const { agentRunBoardRuns, handleAgentRunBoardEvent, clearAgentRunBoard } =
     useAgentRunBoard();
 
@@ -417,7 +432,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
       const execution = {
         execution_model: selectedModel,
         execution_provider: provider ?? "",
-        execution_agent: selectedAgent,
+        execution_agent: effectiveAgent,
         reasoning_effort: activeEffort,
       };
       const result = goal
@@ -444,7 +459,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
     selectedModel,
     selectedProvider,
     providerModels,
-    selectedAgent,
+    effectiveAgent,
     activeEffort,
   ]);
 
@@ -539,7 +554,6 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
   const [showWorkFiles, setShowWorkFiles] = useState(false);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [pendingFiles, setPendingFiles] = useState<{ name: string; path: string; size: number }[]>([]);
-  const [agentProfiles, setAgentProfiles] = useState<AgentProfileType[]>([]);
   const [agentOpen, setAgentOpen] = useState(false);
   const [effortOpen, setEffortOpen] = useState(false);
   // The work-mode sidebar and the main chat area each render an Agent/Effort toolbar with its own anchor ref;
@@ -557,7 +571,19 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
   useEffect(() => {
     mcpServersApi.listMcpServers().then(setMcpServers);
     mcpServersApi.getMcpStatus().then(setMcpStatus);
-    listAgentProfiles().then(setAgentProfiles).catch(() => {});
+  }, []);
+
+  // Agents and the "default agent for new chats" setting; reloaded when the Agents page changes them.
+  useEffect(() => {
+    const loadAgents = () => {
+      listAgentProfiles().then(setAgentProfiles).catch(() => {});
+      getSettings()
+        .then((values) => setDefaultAgentName((values[DEFAULT_AGENT_SETTING] || "").trim()))
+        .catch(() => {});
+    };
+    loadAgents();
+    window.addEventListener(AGENTS_CHANGED_EVENT, loadAgents);
+    return () => window.removeEventListener(AGENTS_CHANGED_EVENT, loadAgents);
   }, []);
 
   useEffect(() => {
@@ -755,9 +781,22 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
     return matches;
   };
 
+  /** Until the model-written title arrives, name a new chat after the start of its first message. */
+  const showPlaceholderTitle = (text: string) => {
+    const sid = activeSession?.session_id;
+    if (!sid || activeSession?.title) return;
+    const clean = text.replace(/(^|\s)@[\w-]+/g, " ").replace(/\s+/g, " ").trim();
+    if (!clean) return;
+    const title = clean.length > 50
+      ? clean.slice(0, 50).replace(/\s+\S*$/, "").replace(/[\s,.;:]+$/, "") + "…"
+      : clean;
+    setSessions((prev) => prev.map((s) => (s.session_id === sid && !s.title ? { ...s, title } : s)));
+  };
+
   const doSend = async (text: string, images: string[], files: { name: string; path: string; size: number }[] = []) => {
     if (!activeSession) return;
     const wasSending = sending;
+    showPlaceholderTitle(text);
 
     // Append file references to the prompt text
     if (files.length > 0) {
@@ -795,7 +834,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
         text || "Please analyze this image",
         selectedModel,
         images.length > 0 ? images : undefined,
-        selectedAgent,
+        effectiveAgent,
         activeEffort,
         selectedProvider ?? undefined,
         currentDocPath || undefined,
@@ -872,6 +911,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
       tasks.length === 1
         ? tasks[0].task
         : tasks.map((t) => `${t.agent_name}: ${t.task}`).join("; ");
+    showPlaceholderTitle(taskDesc);
     setMessages((prev) => [
       ...prev,
       {
@@ -988,7 +1028,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
       setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", content: text }]);
       setSending(true);
       sessionsApi.sendPrompt(
-        activeSession.session_id, text, selectedModel, undefined, selectedAgent,
+        activeSession.session_id, text, selectedModel, undefined, effectiveAgent,
         activeEffort, selectedProvider ?? undefined,
         currentDocPath || undefined,
         mode === "work" ? workspaceType : undefined,
@@ -996,7 +1036,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
       )
         .catch(() => setSending(false));
     }
-  }, [activeSession, selectedModel, selectedAgent, activeEffort, selectedProvider, currentDocPath, mode, workspaceType, sending, setMessages, setSending]);
+  }, [activeSession, selectedModel, effectiveAgent, activeEffort, selectedProvider, currentDocPath, mode, workspaceType, sending, setMessages, setSending]);
 
   const completedTasks = agentRunBoardRuns.filter((t) => t.status === "done");
 
@@ -1028,19 +1068,17 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
 
   // ── Composer pieces shared by chat mode, work mode and the start screen ──
 
-  const agentLabel = selectedAgent === "default"
-    ? "🦀 default"
-    : (() => {
-        const p = agentProfiles.find((a) => a.name === selectedAgent);
-        return `${p?.icon || "🤖"} ${p?.display_name || selectedAgent}`;
-      })();
+  const agentLabel = (() => {
+    const p = agentChoices.find((a) => a.name === effectiveAgent);
+    return `${p?.icon || "🤖"} ${p?.display_name || effectiveAgent}`;
+  })();
 
   const renderComposerControls = (
     agentRef: React.RefObject<HTMLDivElement | null>,
     effortRef: React.RefObject<HTMLDivElement | null>,
   ) => (
     <>
-      {agentProfiles.length > 0 && (
+      {agentChoices.length > 1 && (
         <div ref={agentRef} className="relative shrink-0">
           <button
             type="button"
@@ -1061,8 +1099,8 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
               gap={6}
               className="min-w-[180px] rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-lg)] p-1"
             >
-              {[{ name: "default", icon: "🦀", display_name: "default" as const }, ...agentProfiles].map((a) => {
-                const isSelected = a.name === selectedAgent;
+              {agentChoices.map((a) => {
+                const isSelected = a.name === effectiveAgent;
                 return (
                   <button
                     key={a.name}
@@ -1470,7 +1508,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                     onPrompt={(text) => {
                       setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", content: text }]);
                       setSending(true);
-                      sessionsApi.sendPrompt(activeSession.session_id, text, selectedModel, undefined, selectedAgent, activeEffort, selectedProvider ?? undefined, currentDocPath || undefined)
+                      sessionsApi.sendPrompt(activeSession.session_id, text, selectedModel, undefined, effectiveAgent, activeEffort, selectedProvider ?? undefined, currentDocPath || undefined)
                         .catch(() => setSending(false));
                     }}
                   />

@@ -277,3 +277,216 @@ class TestTitleMiddleware:
         msgs = [{"role": "user", "content": "x"}]
         result = await mw.before_llm_call(ctx, msgs)
         assert result is msgs
+
+
+# ── Conversation titles: placeholders, delegation cleanup, safe writes ──
+
+import asyncio as _asyncio
+
+import crabagent.core.agent.middlewares.title_middleware as title_mod
+import crabagent.core.database as _db
+
+
+class TestTitleSource:
+    def test_plain_message_is_kept(self):
+        assert title_mod.title_source_text("  Can we   do an audit\nof the project?  ") == "Can we do an audit of the project?"
+
+    def test_delegate_task_uses_the_original_request(self):
+        msg = '[delegate_task] agent_name="coder" task="fix it"\n\nOriginal request: @coder please fix the login bug'
+        assert title_mod.title_source_text(msg) == "please fix the login bug"
+
+    def test_delegate_task_from_the_team_dialog_uses_the_task(self):
+        msg = '[delegate_task] agent_name="the_reviewer" task="Review the payment module for bugs"'
+        assert title_mod.title_source_text(msg) == "Review the payment module for bugs"
+
+    def test_delegate_parallel_joins_the_tasks(self):
+        msg = '[delegate_parallel] tasks=[{"agent_name": "a", "task": "Write tests"}, {"agent_name": "b", "task": "Update docs"}]'
+        assert title_mod.title_source_text(msg) == "Write tests; Update docs"
+
+    def test_attachment_list_is_dropped(self):
+        msg = "Summarize this\n\n📎 Attachments:\n- /tmp/a.pdf (a.pdf, 10KB)\n\nRead the attachments first"
+        assert title_mod.title_source_text(msg) == "Summarize this"
+
+    def test_provisional_title_cuts_at_a_word(self):
+        title = title_mod.provisional_title("Can we do audit of the project, including structure, security and tests?")
+        assert title.endswith("…") and len(title) <= 51
+        assert not title[:-1].endswith(" ")
+        assert "[delegate" not in title_mod.provisional_title('[delegate_task] agent_name="x" task="Ship the release"')
+
+
+class TestReplaceableTitle:
+    def test_defaults_and_placeholders_are_replaceable(self):
+        first = "Hey can u review this code? Whatever you find, list it by severity please"
+        assert title_mod.is_replaceable_title("", first)
+        assert title_mod.is_replaceable_title("New", first)
+        assert title_mod.is_replaceable_title(title_mod.provisional_title(first), first)
+        # format written by earlier versions of the web UI and the TUI
+        assert title_mod.is_replaceable_title(first[:50] + "...", first)
+
+    def test_a_name_the_user_chose_is_kept(self):
+        assert not title_mod.is_replaceable_title("Code review for auth", "Hey can u review this code?")
+
+
+class TestFinalizeTitle:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("**Audit Project Security**", "Audit Project Security"),
+            ("Title: Fix flaky test.\nBecause the user asked…", "Fix flaky test"),
+            ("", ""),
+            ("x", ""),
+        ],
+    )
+    def test_finalize(self, raw, expected):
+        assert title_mod._finalize_title(raw) == expected
+
+    def test_long_output_is_cut_at_a_word(self):
+        title = title_mod._finalize_title("word " * 40)
+        assert len(title) <= 80 and not title.endswith(" ")
+
+
+@pytest.fixture
+async def titles_db(monkeypatch):
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(_db.Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(_db, "async_session_factory", factory)
+    yield factory
+    await engine.dispose()
+
+
+async def _add_conversation(factory, session_id: str, title: str, auto_titled: bool = False) -> None:
+    async with factory() as session:
+        session.add(_db.Conversation(session_id=session_id, user_id=1, title=title, auto_titled=auto_titled))
+        await session.commit()
+
+
+async def _title_of(factory, session_id: str):
+    from sqlalchemy import select
+
+    async with factory() as session:
+        row = await session.execute(
+            select(_db.Conversation.title, _db.Conversation.auto_titled).where(_db.Conversation.session_id == session_id)
+        )
+        return tuple(row.first())
+
+
+async def _wait_for_titles():
+    for _ in range(50):
+        if not title_mod._IN_FLIGHT:
+            return
+        await _asyncio.sleep(0.01)
+
+
+class TestScheduleTitle:
+    @pytest.mark.asyncio
+    async def test_writes_the_title_and_tells_the_listener(self, titles_db, monkeypatch):
+        async def fake_generate(user_text, assistant_text, model, provider_name):
+            assert user_text == "Can we do an audit of the project"
+            return "Project audit"
+
+        monkeypatch.setattr(title_mod, "generate_title", fake_generate)
+        await _add_conversation(titles_db, "s1", "Can we do an audit of the project")
+        heard: list[str] = []
+
+        async def listener(title: str) -> None:
+            heard.append(title)
+
+        assert title_mod.schedule_title(
+            session_id="s1", user_text="Can we do an audit of the project", model="m", provider_name=None,
+            expected_title="Can we do an audit of the project", on_title=listener,
+        )
+        await _wait_for_titles()
+
+        assert await _title_of(titles_db, "s1") == ("Project audit", True)
+        assert heard == ["Project audit"]
+
+    @pytest.mark.asyncio
+    async def test_a_rename_while_the_model_writes_is_kept(self, titles_db, monkeypatch):
+        async def fake_generate(*args):
+            # The user renames the chat before the model answers.
+            async with titles_db() as session:
+                conv = await session.get(_db.Conversation, 1)
+                conv.title = "My name for it"
+                await session.commit()
+            return "Model title"
+
+        monkeypatch.setattr(title_mod, "generate_title", fake_generate)
+        await _add_conversation(titles_db, "s2", "placeholder")
+        heard: list[str] = []
+
+        async def listener(title: str) -> None:
+            heard.append(title)
+
+        title_mod.schedule_title(session_id="s2", user_text="x y", model="m", provider_name=None,
+                                 expected_title="placeholder", on_title=listener)
+        await _wait_for_titles()
+
+        assert await _title_of(titles_db, "s2") == ("My name for it", False)
+        assert heard == []
+
+    @pytest.mark.asyncio
+    async def test_only_one_request_per_session_at_a_time(self, titles_db, monkeypatch):
+        release = _asyncio.Event()
+
+        async def slow_generate(*args):
+            await release.wait()
+            return "Title"
+
+        monkeypatch.setattr(title_mod, "generate_title", slow_generate)
+        await _add_conversation(titles_db, "s3", "p")
+        kwargs = dict(session_id="s3", user_text="hello there", model="m", provider_name=None, expected_title="p")
+        assert title_mod.schedule_title(**kwargs)
+        await _asyncio.sleep(0)
+        assert not title_mod.schedule_title(**kwargs)
+        release.set()
+        await _wait_for_titles()
+        assert await _title_of(titles_db, "s3") == ("Title", True)
+
+
+class TestTitleMiddlewareFallback:
+    @pytest.mark.asyncio
+    async def test_titles_a_long_tool_heavy_first_turn(self, titles_db, monkeypatch):
+        """One user turn with many tool messages used to be skipped (> 8 messages)."""
+        first = '[delegate_task] agent_name="the_reviewer" task="Review the payment module"'
+
+        async def fake_generate(user_text, assistant_text, model, provider_name):
+            assert user_text == "Review the payment module"
+            return "Payment module review"
+
+        monkeypatch.setattr(title_mod, "generate_title", fake_generate)
+        await _add_conversation(titles_db, "s4", first[:50] + "...")
+        ctx = AgentContext(workspace=Path.cwd())
+        ctx.metadata["session_id"] = "s4"
+        ctx.model = "m"
+        ctx.messages = [{"role": "user", "content": first}]
+        for i in range(12):
+            ctx.messages.append({"role": "assistant", "content": "", "tool_calls": [{"id": str(i)}]})
+            ctx.messages.append({"role": "tool", "content": "ok", "tool_call_id": str(i)})
+        ctx.messages.append({"role": "assistant", "content": "Found three issues."})
+
+        await TitleMiddleware().on_conversation_end(ctx)
+        await _wait_for_titles()
+
+        assert await _title_of(titles_db, "s4") == ("Payment module review", True)
+
+    @pytest.mark.asyncio
+    async def test_leaves_auto_titled_and_renamed_chats_alone(self, titles_db, monkeypatch):
+        async def boom(*args):
+            raise AssertionError("must not ask the model")
+
+        monkeypatch.setattr(title_mod, "generate_title", boom)
+        await _add_conversation(titles_db, "s5", "Done already", auto_titled=True)
+        await _add_conversation(titles_db, "s6", "My own name")
+        for sid in ("s5", "s6"):
+            ctx = AgentContext(workspace=Path.cwd())
+            ctx.metadata["session_id"] = sid
+            ctx.model = "m"
+            ctx.messages = [{"role": "user", "content": "hello world"}, {"role": "assistant", "content": "hi"}]
+            await TitleMiddleware().on_conversation_end(ctx)
+        await _wait_for_titles()
+        assert await _title_of(titles_db, "s5") == ("Done already", True)
+        assert await _title_of(titles_db, "s6") == ("My own name", False)

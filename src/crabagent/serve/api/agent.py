@@ -199,12 +199,42 @@ async def delete_agent_profile(
     profile = result.scalar_one_or_none()
     if not profile:
         raise HTTPException(status_code=404, detail="Agent not found")
-    if profile.is_default:
-        raise HTTPException(status_code=403, detail="Default agents cannot be deleted. Disable them instead.")
+    if agent_name.startswith("__"):
+        raise HTTPException(status_code=403, detail="Internal profiles cannot be deleted.")
+
+    import json as _json
 
     from sqlalchemy import delete
 
+    from crabagent.core.agent.agents import DEFAULT_AGENT_SETTING
+    from crabagent.core.database import (
+        DEFAULT_AGENTS,
+        REMOVED_BUILTIN_AGENTS_SETTING,
+        AppSetting,
+        parse_removed_builtin_agents,
+    )
+
     await db.execute(delete(AgentProfile).where(AgentProfile.name == agent_name))
+
+    # A deleted built-in agent must not be re-created at the next start.
+    if agent_name in {item["name"] for item in DEFAULT_AGENTS}:
+        row = (
+            await db.execute(select(AppSetting).where(AppSetting.key == REMOVED_BUILTIN_AGENTS_SETTING))
+        ).scalar_one_or_none()
+        removed = parse_removed_builtin_agents(row.value if row else None) | {agent_name}
+        value = _json.dumps(sorted(removed))
+        if row:
+            row.value = value
+        else:
+            db.add(AppSetting(key=REMOVED_BUILTIN_AGENTS_SETTING, value=value))
+
+    # New chats fall back to the plain assistant rather than a missing agent.
+    default_row = (
+        await db.execute(select(AppSetting).where(AppSetting.key == DEFAULT_AGENT_SETTING))
+    ).scalar_one_or_none()
+    if default_row and default_row.value == agent_name:
+        default_row.value = ""
+
     await db.commit()
     invalidate_cache()
     return {"status": "deleted", "name": agent_name}

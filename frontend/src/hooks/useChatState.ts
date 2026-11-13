@@ -218,6 +218,18 @@ export function useChatState(onEvent?: (event: SSEEvent) => void, workspace?: st
         setSending(event.data.running === true);
         return;
       }
+      if (event.type === "session_title") {
+        const sid = (event.data.session_id as string) || activeSessionRef.current?.session_id;
+        const title = event.data.title as string;
+        if (sid && title) {
+          setSessions((prev) => prev.map((s) => (s.session_id === sid ? { ...s, title } : s)));
+          if (activeSessionRef.current?.session_id === sid) {
+            activeSessionRef.current = { ...activeSessionRef.current, title };
+            setActiveSession(activeSessionRef.current);
+          }
+        }
+        return;
+      }
       if (event.type === "agent_start" && !event.data.replay) setSending(true);
       if (event.type === "tool_result") {
         const name = event.data.name as string;

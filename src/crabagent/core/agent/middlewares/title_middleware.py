@@ -1,41 +1,250 @@
-"""TitleMiddleware — auto-generate conversation title after first exchange.
+"""Conversation titles: a short placeholder at once, a model-written title soon after.
 
-Fires on ``on_conversation_end``. Fast synchronous checks (DB auto_titled
-query) run inline; the actual LLM title call + DB persist is dispatched as a
-background task via ``asyncio.create_task`` so it never blocks the UI.
+Flow for the web UI:
 
-When:
-- ``context.metadata["session_id"]`` is set
-- the conversation has at least 1 user / 1 assistant message
-- the conversation has not been auto-titled yet (``auto_titled`` is False)
+1. When the first message of a conversation arrives, the server stores a
+   placeholder (``provisional_title``: the start of the request, without
+   internal delegation syntax or attachment lists) and calls
+   ``schedule_title`` with that message, so the real title is written while
+   the agent is still working.
+2. ``TitleMiddleware.on_conversation_end`` is the fallback for paths that did
+   not schedule a title (CLI, TUI, a failed early attempt). It uses the first
+   user message and the first assistant reply.
 
-…issue one cheap LLM call (~50 tokens) to generate a 4-8 word title and
-persist it to the ``conversations`` table.
+A title is only ever written over a default or placeholder title, and only if
+the title did not change while the model was writing it, so a conversation
+the user renamed is never overwritten. ``auto_titled`` marks finished titles.
 
-The middleware is fail-safe: any DB or LLM error is swallowed and logged.
+Everything here is fail-safe: DB or LLM errors are logged and swallowed.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from typing import TYPE_CHECKING
+import re
+from collections.abc import Awaitable, Callable
 
 import litellm
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
 _TITLE_PROMPT = (
-    "Write a concise 4-8 word title naming the main topic or task of the conversation below. "
-    "Use the same language as the user message. "
-    "Output ONLY the title text — no quotes, no prefix, no punctuation at the end.\n\n"
-    "User: {user}\n\n"
-    "Assistant: {assistant}\n\n"
-    "Title:"
+    "Write a title of 3 to 7 words for the conversation that starts below. Name its specific topic or "
+    "task (for example \"Audit project security and structure\" or \"Fix flaky background test\"), not "
+    "generic words like \"Question\" or \"Help request\". Use the language of the user's message. "
+    "Output only the title: no quotes, no prefix, no final punctuation.\n\n"
+    "User: {user}\n"
+    "{assistant_block}"
+    "\nTitle:"
 )
+
+# Enough room for models that reason before answering.
+_TITLE_MAX_TOKENS = 400
+_MAX_TITLE_CHARS = 80
+_PROVISIONAL_CHARS = 50
+
+# Sessions with a title request in flight (one per session at a time).
+_IN_FLIGHT: set[str] = set()
+
+_DELEGATE_RE = re.compile(r"^\s*\[delegate_(task|parallel)\]", re.IGNORECASE)
+_ATTACHMENTS_MARKER = "📎 Attachments:"
+
+
+# ---------------------------------------------------------------------------
+# What to title from
+# ---------------------------------------------------------------------------
+
+
+def title_source_text(message: str) -> str:
+    """The user's actual request, without the UI's internal wrappers.
+
+    * ``[delegate_task] agent_name="x" task="..."`` → the task (or the
+      "Original request" the UI appends after it)
+    * ``[delegate_parallel] tasks=[...]`` → the tasks joined with "; "
+    * a trailing "📎 Attachments:" block → removed
+    """
+    text = (message or "").strip()
+    if not text:
+        return ""
+
+    if _DELEGATE_RE.match(text):
+        original = re.search(r"Original request:\s*(.+)", text, re.DOTALL)
+        if original:
+            text = original.group(1)
+            text = re.sub(r"(?<!\S)@[\w-]+", "", text)
+        else:
+            task = re.search(r'task="(.*?)"\s*$', text.split("\n", 1)[0])
+            tasks = re.search(r"tasks=(\[.*\])", text.split("\n", 1)[0])
+            if task:
+                text = task.group(1)
+            elif tasks:
+                try:
+                    items = json.loads(tasks.group(1))
+                    text = "; ".join(str(item.get("task", "")) for item in items if isinstance(item, dict))
+                except (ValueError, TypeError):
+                    text = ""
+
+    if _ATTACHMENTS_MARKER in text:
+        text = text.split(_ATTACHMENTS_MARKER, 1)[0]
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def provisional_title(message: str) -> str:
+    """Placeholder shown until the model-written title arrives."""
+    text = title_source_text(message)
+    if len(text) <= _PROVISIONAL_CHARS:
+        return text
+    cut = text[:_PROVISIONAL_CHARS].rsplit(" ", 1)[0] or text[:_PROVISIONAL_CHARS]
+    return cut.rstrip(" ,.;:") + "…"
+
+
+def _legacy_placeholders(message: str) -> set[str]:
+    """Placeholder formats written by earlier versions (web, CLI and TUI)."""
+    raw = (message or "").strip()
+    out = {raw[:50], raw[:50] + "...", raw[:50] + "…"}
+    return {item for item in out if item}
+
+
+def is_replaceable_title(title: str, first_user_message: str) -> bool:
+    """True when ``title`` is a default or a placeholder derived from the first message."""
+    if _is_default_title(title):
+        return True
+    title = title.strip()
+    if not first_user_message:
+        return False
+    return title == provisional_title(first_user_message) or title in _legacy_placeholders(first_user_message)
+
+
+# ---------------------------------------------------------------------------
+# Writing the title
+# ---------------------------------------------------------------------------
+
+TitleListener = Callable[[str], Awaitable[None]]
+
+
+def schedule_title(
+    *,
+    session_id: str,
+    user_text: str,
+    assistant_text: str = "",
+    model: str,
+    provider_name: str | None,
+    expected_title: str,
+    on_title: TitleListener | None = None,
+) -> bool:
+    """Start writing a title in the background. Returns False if one is already running."""
+    if not session_id or not user_text or not model or session_id in _IN_FLIGHT:
+        return False
+    _IN_FLIGHT.add(session_id)
+
+    async def _run() -> None:
+        try:
+            await _write_title(
+                session_id=session_id,
+                user_text=user_text,
+                assistant_text=assistant_text,
+                model=model,
+                provider_name=provider_name,
+                expected_title=expected_title,
+                on_title=on_title,
+            )
+        finally:
+            _IN_FLIGHT.discard(session_id)
+
+    asyncio.create_task(_run())
+    return True
+
+
+async def _write_title(
+    *,
+    session_id: str,
+    user_text: str,
+    assistant_text: str,
+    model: str,
+    provider_name: str | None,
+    expected_title: str,
+    on_title: TitleListener | None,
+) -> None:
+    try:
+        title = await generate_title(user_text, assistant_text, model, provider_name)
+        if not title:
+            return
+
+        from sqlalchemy import update
+
+        from crabagent.core.database import Conversation, async_session_factory
+
+        async with async_session_factory() as db:
+            result = await db.execute(
+                update(Conversation)
+                .where(
+                    Conversation.session_id == session_id,
+                    Conversation.auto_titled.is_not(True),
+                    # Renamed meanwhile (by the user or another writer): keep that name.
+                    Conversation.title == expected_title,
+                )
+                .values(title=title, auto_titled=True)
+            )
+            await db.commit()
+        if not result.rowcount:
+            return
+        logger.info("Auto-titled conversation %s: %r", session_id, title)
+        if on_title is not None:
+            try:
+                await on_title(title)
+            except Exception:
+                logger.debug("Title listener failed", exc_info=True)
+    except Exception:
+        logger.debug("Writing a conversation title failed", exc_info=True)
+
+
+async def generate_title(user_text: str, assistant_text: str, model: str, provider_name: str | None) -> str:
+    """Ask the model for a title; returns "" when it gives nothing usable."""
+    llm_params = await _resolve_llm_params(provider_name)
+    if llm_params is None:
+        return ""
+    try:
+        from crabagent.core.provider_store import get_default_provider, get_provider, resolve_model_for_provider
+
+        provider = await get_provider(provider_name) if provider_name else await get_default_provider()
+        if provider:
+            model = resolve_model_for_provider(provider, model)
+    except Exception:
+        pass
+
+    assistant_block = f"Assistant: {assistant_text[:400]}\n" if assistant_text else ""
+    prompt = _TITLE_PROMPT.format(user=user_text[:600], assistant_block=assistant_block)
+    response = await litellm.acompletion(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=_TITLE_MAX_TOKENS,
+        temperature=0.2,
+        **llm_params,
+    )
+    raw = ""
+    if getattr(response, "choices", None):
+        raw = (getattr(response.choices[0].message, "content", "") or "").strip()
+    # Never fall back to reasoning text: it is the model thinking, not a title.
+    return _finalize_title(raw)
+
+
+def _finalize_title(raw: str) -> str:
+    lines = [line for line in (raw or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    title = _clean_title(lines[0])
+    if len(title) < 2:
+        return ""
+    if len(title) > _MAX_TITLE_CHARS:
+        title = title[:_MAX_TITLE_CHARS].rsplit(" ", 1)[0].rstrip(" ,.;:") or title[:_MAX_TITLE_CHARS]
+    return title
+
+
+# ---------------------------------------------------------------------------
+# Middleware (fallback after the first exchange)
+# ---------------------------------------------------------------------------
 
 
 class TitleMiddleware:
@@ -49,24 +258,23 @@ class TitleMiddleware:
 
     async def on_conversation_end(self, context) -> None:
         session_id = context.metadata.get("session_id", "")
-        if not session_id:
+        if not session_id or session_id in _IN_FLIGHT:
             return
 
-        user_msg = _first_user_text(context.messages)
-        assistant_msg = _first_assistant_text(context.messages)
-        if not user_msg or not assistant_msg:
+        first_user = _first_user_text(context.messages)
+        user_text = title_source_text(first_user)
+        if not user_text:
             return
 
-        if len(context.messages) > 8:
+        # Only early in a conversation. Count user turns, not messages: a single
+        # turn with tool calls easily has dozens of messages.
+        if sum(1 for msg in context.messages if msg.get("role") == "user") > 3:
             return
 
         model = context.metadata.get("_resolved_model") or context.model or ""
         if not model:
             return
 
-        provider_name = context.provider_name
-
-        # Synchronous: check auto_titled status (fast DB query)
         try:
             from sqlalchemy import select
 
@@ -77,87 +285,39 @@ class TitleMiddleware:
                     select(Conversation.title, Conversation.auto_titled).where(Conversation.session_id == session_id)
                 )
                 existing = row.first()
-                if not existing:
-                    return
-                current_title, auto_titled = existing
-                if auto_titled:
-                    return
-                if current_title and not _is_default_title(current_title):
-                    return
+            if not existing:
+                return
+            current_title, auto_titled = existing
+            current_title = current_title or ""
+            if auto_titled or not is_replaceable_title(current_title, first_user):
+                return
         except Exception:
             logger.debug("TitleMiddleware DB check failed", exc_info=True)
             return
 
-        # Fire-and-forget: LLM call + DB update in background
-        asyncio.create_task(
-            self._title_in_background(
-                session_id=session_id,
-                user_msg=user_msg,
-                assistant_msg=assistant_msg,
-                model=model,
-                provider_name=provider_name,
-            )
+        schedule_title(
+            session_id=session_id,
+            user_text=user_text,
+            assistant_text=_first_assistant_text(context.messages),
+            model=model,
+            provider_name=context.provider_name,
+            expected_title=current_title,
+            on_title=title_event_emitter(context, session_id),
         )
 
-    async def _title_in_background(
-        self,
-        session_id: str,
-        user_msg: str,
-        assistant_msg: str,
-        model: str,
-        provider_name: str | None,
-    ):
-        """Background: generate and persist conversation title."""
-        try:
-            llm_params = await _resolve_llm_params(provider_name)
-            if not llm_params:
-                return
-            try:
-                from crabagent.core.provider_store import get_default_provider, get_provider, resolve_model_for_provider
 
-                provider = await get_provider(provider_name) if provider_name else await get_default_provider()
-                if provider:
-                    model = resolve_model_for_provider(provider, model)
-            except Exception:
-                pass
+def title_event_emitter(context, session_id: str) -> TitleListener | None:
+    """Tell connected browsers about a new title through the run's event bus."""
+    bus = getattr(context, "event_bus", None)
+    if bus is None:
+        return None
 
-            prompt = _TITLE_PROMPT.format(
-                user=user_msg[:400],
-                assistant=assistant_msg[:400],
-            )
-            response = await litellm.acompletion(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=60,
-                temperature=0.2,
-                **llm_params,
-            )
-            title = ""
-            if getattr(response, "choices", None):
-                msg = response.choices[0].message
-                title = (getattr(msg, "content", "") or "").strip()
-                if not title:
-                    reasoning = getattr(msg, "reasoning_content", None)
-                    if reasoning:
-                        title = reasoning.strip()
-            title = _clean_title(title)
-            if not title or len(title) < 2:
-                return
+    async def _emit(title: str) -> None:
+        from crabagent.core.event import AgentEvent, EventType
 
-            from sqlalchemy import update
+        await bus.emit(AgentEvent(type=EventType.SESSION_TITLE, data={"session_id": session_id, "title": title}))
 
-            from crabagent.core.database import Conversation, async_session_factory
-
-            async with async_session_factory() as db:
-                await db.execute(
-                    update(Conversation)
-                    .where(Conversation.session_id == session_id)
-                    .values(title=title[:200], auto_titled=True)
-                )
-                await db.commit()
-            logger.info("Auto-titled conversation %s: %r", session_id, title)
-        except Exception:
-            logger.debug("TitleMiddleware background task failed", exc_info=True)
+    return _emit
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +358,7 @@ def _is_default_title(title: str) -> bool:
         return True
     t = title.strip().lower()
     defaults = {
+        "new",
         "new conversation",
         "new chat",
         "untitled",
@@ -206,21 +367,18 @@ def _is_default_title(title: str) -> bool:
     if t in defaults:
         return True
     # 'conversation N' / 'chat N' patterns
-    import re
-
     if re.match(r"^(conversation|chat)\s*#?\d+$", t):
         return True
     return False
 
 
 def _clean_title(title: str) -> str:
-    import re
-
-    t = title.strip().strip("\"'`")
+    t = title.strip().strip("\"'`*#").strip()
     # Strip leading "Title:" if the model echoed it
     t = re.sub(r"^title\s*[:：]\s*", "", t, flags=re.IGNORECASE)
+    t = t.strip("\"'`*").strip()
     # Strip trailing punctuation that's just visual noise
-    t = re.sub(r"[.。!!?？]+$", "", t)
+    t = re.sub(r"[.。!！?？]+$", "", t)
     # Collapse whitespace
     t = re.sub(r"\s+", " ", t)
     return t.strip()
@@ -240,4 +398,12 @@ async def _resolve_llm_params(provider_name: str | None) -> dict | None:
     return await resolve_litellm_params(provider)
 
 
-__all__ = ["TitleMiddleware"]
+__all__ = [
+    "TitleMiddleware",
+    "generate_title",
+    "is_replaceable_title",
+    "provisional_title",
+    "schedule_title",
+    "title_event_emitter",
+    "title_source_text",
+]

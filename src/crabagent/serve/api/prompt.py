@@ -225,6 +225,11 @@ async def prompt_async(
 
     # --- Determine effective agent and whether a switch message is needed ---
     effective_agent = req.agent or getattr(conv, "agent", None) or "default"
+    if effective_agent == "default":
+        # A configured "default agent for new chats" replaces the plain assistant.
+        from crabagent.core.agent.agents import resolve_default_agent_name
+
+        effective_agent = await resolve_default_agent_name()
 
     last_agent = "default"
     for m in reversed(history_msgs):
@@ -1029,13 +1034,31 @@ Use ordinary Markdown when a visualization is not helpful.
     async def _run():
         t0 = time.time()
         try:
-            if not conv.title:
-                try:
-                    async with async_session_factory() as title_db:
-                        title = req.message[:50] + ("..." if len(req.message) > 50 else "")
-                        await conv_svc.update_conversation(title_db, session_id, title=title)
-                except Exception:
-                    pass
+            if not conv.title and not conv.auto_titled:
+                # First message: show a short placeholder now and have the model
+                # write the real title in the background while the agent works.
+                from crabagent.core.agent.middlewares.title_middleware import (
+                    provisional_title,
+                    schedule_title,
+                    title_event_emitter,
+                    title_source_text,
+                )
+
+                placeholder = provisional_title(req.message or "")
+                if placeholder:
+                    try:
+                        async with async_session_factory() as title_db:
+                            await conv_svc.update_conversation(title_db, session_id, title=placeholder)
+                        schedule_title(
+                            session_id=session_id,
+                            user_text=title_source_text(req.message or ""),
+                            model=context.model or "",
+                            provider_name=context.provider_name,
+                            expected_title=placeholder,
+                            on_title=title_event_emitter(context, session_id),
+                        )
+                    except Exception:
+                        logger.debug("Could not start titling session %s", session_id, exc_info=True)
             agent_query: str | list[dict] = content_blocks if req.images or local_images else req.message
             await run_agent(context, agent_query)
         except asyncio.CancelledError:

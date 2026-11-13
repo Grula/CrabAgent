@@ -1308,13 +1308,32 @@ def _migrate_tools_to_permissions(existing, agent_data: dict, _json) -> None:
         existing.tool_permissions = _json.dumps(merged)
 
 
+REMOVED_BUILTIN_AGENTS_SETTING = "removed_builtin_agents"
+
+
+def parse_removed_builtin_agents(value: str | None) -> set[str]:
+    """Names of built-in agents the user deleted (stored as a JSON list)."""
+    import json as _json
+
+    try:
+        names = _json.loads(value or "[]")
+    except ValueError:
+        return set()
+    return {str(name) for name in names} if isinstance(names, list) else set()
+
+
 async def _ensure_default_agents():
     import json as _json
 
     from sqlalchemy import select
 
     async with async_session_factory() as db:
+        removed = parse_removed_builtin_agents(
+            await db.scalar(select(AppSetting.value).where(AppSetting.key == REMOVED_BUILTIN_AGENTS_SETTING))
+        )
         for agent_data in DEFAULT_AGENTS:
+            if agent_data["name"] in removed:
+                continue  # deleted by the user: do not bring it back
             result = await db.execute(select(AgentProfile).where(AgentProfile.name == agent_data["name"]))
             existing = result.scalar_one_or_none()
             if existing:

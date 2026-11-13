@@ -64,6 +64,9 @@ class EventType(StrEnum):
     # LLM retry countdown
     LLM_RETRY = "llm_retry"
 
+    # The conversation got its model-written title
+    SESSION_TITLE = "session_title"
+
     # System notifications (calendar reminders, etc.)
     NOTIFICATION = "notification"
 
