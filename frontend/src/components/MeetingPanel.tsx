@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Clock, Users, CheckCircle2, AlertCircle, Sparkles, Send, FileText, X } from "lucide-react";
+import { Clock, Users, CheckCircle2, AlertCircle, Sparkles, Send, FileText, X, Lightbulb } from "lucide-react";
 import { cn } from "../lib/cn";
 import * as sessionsApi from "../api/sessions";
 import { listAgentProfiles } from "../api/agents";
@@ -7,8 +7,10 @@ import {
   getMeeting,
   saveMeeting,
   endMeeting,
+  brainstormMeeting,
   type EndMeetingResult,
   type MeetingNote,
+  type BrainstormResult,
 } from "../api/meeting";
 import { buildParticipantOptions, type ParticipantOption } from "./meetingParticipants";
 import { ParticipantPicker } from "./ParticipantPicker";
@@ -36,6 +38,9 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
   const [ending, setEnding] = useState(false);
   const [summary, setSummary] = useState("");
   const [createdTasks, setCreatedTasks] = useState<EndMeetingResult["created_tasks"]>([]);
+  const [brainstormResult, setBrainstormResult] = useState<BrainstormResult | null>(null);
+  const [brainstorming, setBrainstorming] = useState(false);
+  const [brainstormTopic, setBrainstormTopic] = useState("");
   const notesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { notesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [notes]);
@@ -111,6 +116,20 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
       .finally(() => setEnding(false));
   }, [notes, onPrompt, participants, participantOptions, sessionId, title]);
 
+  const handleBrainstorm = useCallback(() => {
+    const topic = brainstormTopic.trim();
+    setBrainstorming(true);
+    brainstormMeeting(sessionId, topic, participants)
+      .then((result) => setBrainstormResult(result))
+      .catch(() => {})
+      .finally(() => setBrainstorming(false));
+  }, [brainstormTopic, participants, sessionId]);
+
+  const agentLabel = (agent: string) => {
+    const option = participantOptions.find((item) => item.value === agent);
+    return option ? `${option.icon} ${option.label}` : agent;
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addNote(); }
   };
@@ -156,6 +175,39 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
             <span className="text-[var(--text-primary)]">{note.content}</span>
           </div>
         ))}
+        {/* Brainstorm */}
+        {brainstorming && (
+          <div className="pt-1 text-[11px] text-[var(--text-tertiary)]">{"Generating ideas…"}</div>
+        )}
+        {brainstormResult && (
+          <div className="mt-3 p-2 rounded bg-[var(--accent-bg)] border border-[var(--accent-border)] space-y-2">
+            {brainstormResult.ideas.map((entry) => (
+              <div key={`ideas-${entry.agent}`} className="text-[11px]">
+                <div className="flex items-center gap-1 font-medium text-[var(--accent)]">
+                  <Lightbulb size={11} /> {agentLabel(entry.agent)}
+                </div>
+                <ul className="list-disc pl-4 space-y-0.5">
+                  {entry.ideas.map((idea, i) => (
+                    <li key={i} className="text-[var(--text-primary)]">{idea}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+            {brainstormResult.reactions.map((entry) => (
+              <div key={`reactions-${entry.agent}`} className="text-[11px]">
+                <div className="font-medium text-[var(--text-secondary)]">{agentLabel(entry.agent)}</div>
+                <ul className="list-disc pl-4 space-y-0.5">
+                  {entry.reactions.map((reaction, i) => (
+                    <li key={i} className="text-[var(--text-primary)]">
+                      {reaction.verdict}
+                      {reaction.comment ? `: ${reaction.comment}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
         <div ref={notesEndRef} />
 
         {/* AI suggestions */}
@@ -198,6 +250,21 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
             />
             <button onClick={addNote} className="self-end p-1.5 rounded bg-[var(--brand)] text-white hover:bg-[var(--brand-hover)] transition-colors">
               <Send size={14} />
+            </button>
+          </div>
+          <div className="flex gap-2 mt-1">
+            <input
+              value={brainstormTopic}
+              onChange={(e) => setBrainstormTopic(e.target.value)}
+              placeholder={"Brainstorm topic…"}
+              className="flex-1 bg-[var(--bg-tertiary)] text-[11px] text-[var(--text-primary)] px-2 py-1 rounded border border-[var(--border)] outline-none placeholder:text-[var(--text-tertiary)]/50"
+            />
+            <button
+              onClick={handleBrainstorm}
+              disabled={!brainstormTopic.trim() || participants.length === 0}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-[var(--accent-bg)] text-[var(--accent)] border border-[var(--accent-border)] hover:bg-[var(--accent-border)] disabled:opacity-50 transition-colors"
+            >
+              <Lightbulb size={12} /> {"Brainstorm"}
             </button>
           </div>
         </div>

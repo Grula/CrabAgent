@@ -24,6 +24,11 @@ class MeetingSessionRequest(BaseModel):
     notes: list[dict] = []
 
 
+class BrainstormRequest(BaseModel):
+    topic: str = ""
+    participants: list[str] = []
+
+
 def _meeting_to_dict(row) -> dict:
     return {
         "session_id": row.session_id,
@@ -48,6 +53,21 @@ async def _owned_or_absent(db: AsyncSession, session_id: str, user_id: int) -> N
     )
     if result.scalar_one_or_none() is not None:
         raise HTTPException(status_code=404, detail="Meeting session not found")
+
+
+async def _session_model_context(db: AsyncSession, session_id: str):
+    """Context carrying the session's selected model, so meeting LLM calls use
+    the user's actual model instead of a hardcoded default. Returns None if
+    the session has no model."""
+    from types import SimpleNamespace
+
+    from crabagent.serve.services import conversation as conv_svc
+
+    conv = await conv_svc.get_conversation(db, session_id)
+    model = (conv.model or "") if conv else ""
+    if not model:
+        return None
+    return SimpleNamespace(metadata={"model": model})
 
 
 @router.get("/{session_id}")
@@ -118,6 +138,7 @@ async def end_meeting_session(
         notes_text,
         meeting_title=title,
         user_id=user.id,
+        context=await _session_model_context(db, session_id),
         session_id=session_id,
     )
     return {
@@ -125,4 +146,29 @@ async def end_meeting_session(
         "summary": result.get("summary", ""),
         "created_tasks": result.get("created_tasks", []),
         "status": "ended",
+    }
+
+
+@router.post("/{session_id}/brainstorm")
+async def brainstorm_meeting_session(
+    session_id: str,
+    req: BrainstormRequest | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from crabagent.core.meeting import brainstorm as brainstorm_module
+
+    await _owned_or_absent(db, session_id, user.id)
+    topic = req.topic if req else ""
+    participants = req.participants if req else []
+    result = await brainstorm_module.brainstorm(
+        topic,
+        participants,
+        user_id=user.id,
+        context=await _session_model_context(db, session_id),
+    )
+    return {
+        "session_id": session_id,
+        "ideas": result.get("ideas", []),
+        "reactions": result.get("reactions", []),
     }

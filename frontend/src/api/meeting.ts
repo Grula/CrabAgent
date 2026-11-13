@@ -27,6 +27,30 @@ export interface EndMeetingResult {
   status: string;
 }
 
+export interface BrainstormIdea {
+  agent: string;
+  ideas: string[];
+}
+
+export interface BrainstormReaction {
+  agent: string;
+  reactions: { idea_index: number; verdict: string; comment: string }[];
+}
+
+export interface BrainstormResult {
+  session_id: string;
+  ideas: BrainstormIdea[];
+  reactions: BrainstormReaction[];
+}
+
+export function brainstormMeeting(
+  sessionId: string,
+  topic: string,
+  participants: string[],
+): Promise<BrainstormResult> {
+  return api.post(`/meeting/${sessionId}/brainstorm`, { topic, participants });
+}
+
 export function getMeeting(sessionId: string): Promise<MeetingState> {
   return api.get(`/meeting/${sessionId}`);
 }
