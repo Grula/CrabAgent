@@ -805,6 +805,59 @@ class ExecutionSpan(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class MeetingSession(Base):
+    __tablename__ = "meeting_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(500), default="")
+    participants: Mapped[str] = mapped_column(Text, default="[]")
+    notes: Mapped[str] = mapped_column(Text, default="[]")
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+async def meeting_session_get(
+    db: AsyncSession, session_id: str, user_id: int
+) -> MeetingSession | None:
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(MeetingSession).where(
+            MeetingSession.session_id == session_id,
+            MeetingSession.user_id == user_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def meeting_session_upsert(
+    db: AsyncSession,
+    session_id: str,
+    user_id: int,
+    title: str = "",
+    participants: list[str] | None = None,
+    notes: list[dict] | None = None,
+    status: str = "active",
+) -> MeetingSession:
+    import json
+
+    row = await meeting_session_get(db, session_id, user_id)
+    if row is None:
+        row = MeetingSession(session_id=session_id, user_id=user_id)
+        db.add(row)
+    row.user_id = user_id
+    row.title = title
+    row.participants = json.dumps(participants or [])
+    row.notes = json.dumps(notes or [])
+    row.status = status
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
 engine = create_async_engine(
     settings.db_url,
     echo=False,
@@ -1135,6 +1188,13 @@ async def init_db() -> None:
         ))
         # Add provider column for existing databases
         await ensure_column(conn, "execution_spans", "provider", "VARCHAR(100) DEFAULT ''")
+
+        # meeting_sessions — table is created by create_all(); upgrade databases
+        # that already ran the pre-ownership version.
+        await ensure_column(conn, "meeting_sessions", "user_id", "INTEGER NOT NULL DEFAULT 1")
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_meeting_sessions_user_id ON meeting_sessions(user_id)"
+        ))
 
     from crabagent.core.provider_store import migrate_plaintext_keys
 

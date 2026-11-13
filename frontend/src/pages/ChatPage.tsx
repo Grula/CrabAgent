@@ -1451,7 +1451,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                 onClick={handleStartMeeting}
                 className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-[var(--text-tertiary)] hover:text-[var(--accent)] hover:bg-[var(--accent-bg)] transition-colors"
               >
-                📝 {"📝 Start Meeting"}
+                {"Meeting"}
               </button>
               <button
                 onClick={handleEnterBrowserMode}

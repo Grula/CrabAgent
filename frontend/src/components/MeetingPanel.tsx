@@ -3,15 +3,15 @@ import { Clock, Users, CheckCircle2, AlertCircle, Sparkles, Send, FileText, X } 
 import { cn } from "../lib/cn";
 import * as sessionsApi from "../api/sessions";
 import { listAgentProfiles } from "../api/agents";
+import {
+  getMeeting,
+  saveMeeting,
+  endMeeting,
+  type EndMeetingResult,
+  type MeetingNote,
+} from "../api/meeting";
 import { buildParticipantOptions, type ParticipantOption } from "./meetingParticipants";
 import { ParticipantPicker } from "./ParticipantPicker";
-
-interface MeetingNote {
-  id: string;
-  timestamp: string;
-  speaker: string;
-  content: string;
-}
 
 interface AISuggestion {
   type: "task" | "question" | "decision";
@@ -33,6 +33,9 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
   const [inputSpeaker, setInputSpeaker] = useState("");
   const [aiSuggestions, setAiSuggestions] = useState<AISuggestion[]>([]);
   const [status, setStatus] = useState<"active" | "ended">("active");
+  const [ending, setEnding] = useState(false);
+  const [summary, setSummary] = useState("");
+  const [createdTasks, setCreatedTasks] = useState<EndMeetingResult["created_tasks"]>([]);
   const notesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { notesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [notes]);
@@ -42,6 +45,26 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
       .then((list) => setParticipantOptions(buildParticipantOptions(list)))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    getMeeting(sessionId)
+      .then((state) => {
+        if (!state) return;
+        setTitle(state.title ?? "");
+        setParticipants(state.participants ?? []);
+        setNotes(state.notes ?? []);
+        setStatus(state.status === "ended" ? "ended" : "active");
+      })
+      .catch(() => {});
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (status !== "active") return;
+    const timer = setTimeout(() => {
+      saveMeeting(sessionId, { title, participants, notes }).catch(() => {});
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [sessionId, status, title, participants, notes]);
 
   const addNote = useCallback(() => {
     const text = inputText.trim();
@@ -69,15 +92,24 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
   }, [sessionId]);
 
   const handleEnd = useCallback(() => {
-    setStatus("ended");
-    const summary = notes.map((n) => `[${n.timestamp}] ${n.speaker}: ${n.content}`).join("\n");
+    const notesText = notes.map((n) => `[${n.timestamp}] ${n.speaker}: ${n.content}`).join("\n");
     const labels = participants
       .map((item) => participantOptions.find((option) => option.value === item)?.label ?? item)
       .join(", ");
     const participantsPart = participants.length > 0 ? `Participants: ${labels}\n\n` : "";
-    const prompt = `The meeting has ended. Write the minutes from the notes below: summary, action items, open questions, and decisions.\n\n${participantsPart}${summary}`;
+    const prompt = `The meeting has ended. Write the minutes from the notes below: summary, action items, open questions, and decisions.\n\n${participantsPart}${notesText}`;
     onPrompt?.(prompt);
-  }, [notes, onPrompt, participants, participantOptions]);
+
+    setEnding(true);
+    endMeeting(sessionId, { title, participants, notes })
+      .then((result) => {
+        setSummary(result.summary);
+        setCreatedTasks(result.created_tasks ?? []);
+        setStatus("ended");
+      })
+      .catch(() => setStatus("ended"))
+      .finally(() => setEnding(false));
+  }, [notes, onPrompt, participants, participantOptions, sessionId, title]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addNote(); }
@@ -99,6 +131,9 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
             <button onClick={handleEnd} className="flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-[var(--danger-bg)] text-[var(--danger)] hover:bg-[var(--danger-border)] transition-colors">
               <X size={12} /> {"End Meeting"}
             </button>
+          )}
+          {ending && (
+            <span className="text-[10px] text-[var(--text-tertiary)]">{"Generating summary…"}</span>
           )}
         </div>
         <div className="flex items-center gap-2 text-[11px] text-[var(--text-tertiary)]">
@@ -170,8 +205,24 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
 
       {/* End summary */}
       {status === "ended" && (
-        <div className="px-3 py-3 border-t border-[var(--border)] text-center text-[11px] text-[var(--text-tertiary)]">
-          {"Meeting ended. AI is generating summary…"}
+        <div className="px-3 py-3 border-t border-[var(--border)] text-[11px] text-[var(--text-secondary)] shrink-0">
+          <div className="font-medium text-[var(--text-primary)] mb-1">{"Meeting ended"}</div>
+          {summary ? (
+            <p className="whitespace-pre-wrap mb-2">{summary}</p>
+          ) : (
+            <p className="text-[var(--text-tertiary)] mb-2">{"Summary unavailable."}</p>
+          )}
+          {createdTasks.length > 0 && (
+            <ul className="space-y-1 list-disc pl-4">
+              {createdTasks.map((task) => (
+                <li key={task.id}>
+                  {task.title}
+                  {task.assignee ? ` — ${task.assignee}` : ""}
+                  {task.priority ? ` (${task.priority})` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </div>
