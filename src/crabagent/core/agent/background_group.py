@@ -243,6 +243,11 @@ async def _run(group_id, context, steps, scope):
                 except ValueError as exc:
                     if str(exc) == "Background task capacity reached":
                         break
+                    if str(exc) in ("Group is no longer running", "Group step is no longer queued"):
+                        results[sid] = {"status": "cancelled", "result": "Cancelled"}
+                        await _set_step(group_id, sid, status="cancelled", result="Cancelled")
+                        pending.remove(sid)
+                        continue
                     results[sid] = {"status": "failed", "result": str(exc)}
                     await _set_step(group_id, sid, **results[sid])
                     pending.remove(sid)
