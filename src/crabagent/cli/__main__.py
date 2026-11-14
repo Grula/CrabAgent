@@ -35,7 +35,6 @@ SLASH_COMMANDS = [
     "/todo",
     "/image",
 ]
-PROVIDER_SUB = ["add", "list", "remove", "set-default"]
 PROMPT_STYLE = Style.from_dict(
     {
         "status": "#888888",
@@ -66,7 +65,7 @@ def main():
     parser.add_argument("--old", action="store_true", help="Use legacy single-panel TUI")
 
     args = parser.parse_args()
-    subcmd_words = {"init", "provider", "skill", "models"}
+    subcmd_words = {"init", "skill", "models"}
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.WARNING,
@@ -104,20 +103,12 @@ def main():
 def _dispatch_subcommand(args):
     remaining = args.query.split()
     subcmd = remaining[0].lower()
-    if subcmd == "provider":
-        _dispatch_provider(remaining[1:])
-    elif subcmd == "skill":
+    if subcmd == "skill":
         _dispatch_skill(remaining[1:])
     elif subcmd == "models":
         asyncio.run(_cmd_models())
     elif subcmd == "init":
         asyncio.run(_cmd_init())
-
-
-def _dispatch_provider(argv: list[str]):
-    from crabagent.cli.provider import main as provider_main
-
-    provider_main(argv)
 
 
 def _dispatch_skill(argv: list[str]):
