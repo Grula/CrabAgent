@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select, update
 
 from crabagent.core import database as db
-from crabagent.core.agent import background, semantic_summary as semantic
+from crabagent.core.agent import semantic_summary as semantic
 from types import SimpleNamespace
 
 from tests.test_background_delegation import context, session_factory  # noqa: F401
@@ -339,7 +339,6 @@ async def test_forwarded_summary_executed_by_owner_process(session_factory, tmp_
     """A non-owner process forwards authorized summary starts to the owner."""
     import subprocess
     import sys
-    from pathlib import Path
     database = tmp_path / "summary-forward.db"
     owner_ready = tmp_path / "owner.ready"
 

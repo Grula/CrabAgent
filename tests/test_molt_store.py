@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from crabagent.core.database import Base, Molt
+from crabagent.core.database import Base
 from crabagent.core.molt import store as molt_store
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from crabagent.core.mail.config import MailConfig, get_config, save_config
+from crabagent.core.mail.config import get_config
 from crabagent.core.mail.imap import ImapClient
 from crabagent.core.mail.smtp import SmtpClient
 

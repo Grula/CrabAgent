@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import EmailConfig, async_session_factory
 from crabagent.core.provider_store import decrypt_api_key, encrypt_api_key

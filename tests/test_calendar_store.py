@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from crabagent.core.database import Base
 from crabagent.core.calendar import store as cal_store

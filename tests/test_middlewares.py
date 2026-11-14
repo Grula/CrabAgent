@@ -16,7 +16,6 @@ from crabagent.core.agent.middlewares.title_middleware import (
     _first_user_text,
     _is_default_title,
 )
-from crabagent.core.event import EventType
 
 
 # ── MiddlewareChain ───────────────────────────────────────────────────

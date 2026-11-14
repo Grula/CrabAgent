@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from crabagent.core.database import User, get_db
+from crabagent.core.database import User
 from crabagent.serve.deps import get_current_user
 
 router = APIRouter(prefix="/email", tags=["email"])
@@ -86,7 +85,6 @@ async def send_daily_digest(
     user: User = Depends(get_current_user),
 ):
     from crabagent.core.mail.handler import get_config as _get_mail_cfg
-    from crabagent.core.mail.tools import _fmt_task_list
     from crabagent.core.database import async_session_factory
     from crabagent.core.task.store import (
         list_tasks as _list,

@@ -314,8 +314,6 @@ def register_mail_tools(registry):
     ) -> str:
         import litellm
 
-        from crabagent.core.mail.handler import send_email as _send
-
         user_id = 1
         from crabagent.core.config import settings
 

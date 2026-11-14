@@ -313,7 +313,6 @@ async def serve_file(
     """
     from crabagent.core.config import settings
     from crabagent.serve.services.auth import decode_access_token, get_user_by_id
-    from fastapi.responses import HTMLResponse
 
     payload = decode_access_token(token)
     if not payload:

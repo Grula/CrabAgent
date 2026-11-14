@@ -9,7 +9,7 @@ import tiktoken_ext.openai_public
 
 # Patch registry so even if pkgutil.iter_modules fails, we still find our plugin
 import tiktoken.registry as _tiktoken_registry
-import tiktoken_ext
+import tiktoken_ext  # noqa: F401
 
 _orig_find = _tiktoken_registry._available_plugin_modules
 

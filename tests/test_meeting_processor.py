@@ -19,7 +19,6 @@ import pytest
 import crabagent.core.database as db_module
 import crabagent.core.task.store as task_store
 from crabagent.core.meeting import processor
-from crabagent.core.meeting.processor import process_meeting_notes
 
 
 class FakeSession:
