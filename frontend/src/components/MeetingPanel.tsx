@@ -59,6 +59,7 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
         setParticipants(state.participants ?? []);
         setNotes(state.notes ?? []);
         setStatus(state.status === "ended" ? "ended" : "active");
+        setSummary(state.minutes ?? "");
       })
       .catch(() => {});
   }, [sessionId]);

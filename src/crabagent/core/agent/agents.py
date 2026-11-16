@@ -46,6 +46,8 @@ _AGENT_EXECUTION_CONTRACT = (
     "Working rules:\n"
     "- You have a limited tool-iteration budget. Work in small steps and verify each one before building on it; "
     "once about 80% of the budget is used, stop starting new work and wrap up.\n"
+    "- Verify prompt-text changes by re-rendering the constant, grepping the new sentence, and running the "
+    "named test files only. Do not diff whole DB tables or copy the production DB.\n"
     "- Confirm your working directory before editing; if it does not match the task, stop and report "
     "instead of guessing.\n"
     "- Follow the project's rules. If they were not given to you, read AGENTS.md in the working directory "
@@ -53,6 +55,8 @@ _AGENT_EXECUTION_CONTRACT = (
     "- Stay within the task. Don't widen the scope, refactor unrelated code, or redo work someone else owns.\n"
     "- Base every claim on what you actually read or ran; never invent file contents, results or sources.\n"
     "- Call tools only through the native tool interface and never print tool-call markup as text.\n"
+    "- Submit exactly one edit per tool call. Never bundle two edits to the same file in one step — "
+    "a bundle is approved or denied as a unit.\n"
     "- Don't stop to ask questions: work independently, make reasonable assumptions, and state them in "
     "your report.\n"
     "Finish with a short report:\n"
@@ -64,8 +68,10 @@ _AGENT_EXECUTION_CONTRACT = (
 )
 _AGENT_SYSTEM_SHARED_INSTRUCTION = (
     "Team scratchpad: `shared_put(key, value)` stores a note that agents started later in this session "
-    "receive automatically; `shared_get(key)` and `shared_list()` read your teammates' notes. Check it "
-    "before repeating work, and before you finish save what others will need under a short key: facts, "
+    "receive automatically; `shared_get(key)` reads a specific teammate note — prefer it; avoid "
+    "`shared_list()` unless you must discover a key, because it loads every note preview into your context. "
+    "Check the key you need before repeating work, "
+    "and before you finish save what others will need under a short key: facts, "
     "paths and decisions, not raw dumps."
 )
 _AGENT_SYSTEM_HELP_INSTRUCTION = (
@@ -120,7 +126,7 @@ _TEAM_PROMPT_TOOL_LINES: tuple[str, ...] = (
 _TEAM_PROMPT_SHARED_LINES: tuple[str, ...] = (
     '`shared_put(key, value)`: Save findings to shared workspace; agents started later receive them',
     '`shared_get(key)`: Read findings from other agents',
-    '`shared_list()`: List all shared notes',
+    '`shared_list()`: Discover note keys only when necessary — it loads every note preview into your context',
 )
 
 # Routing hints for the built-in agents. A hint is shown only while its agent is

@@ -125,7 +125,9 @@ async def compress_session(
     model_name = req.model or conv.model or settings.default_model
     model = model_name
     if "/" not in model:
-        model = f"chatgpt/{model}" if provider.provider_type == "chatgpt" else f"openai/{model}"
+        from crabagent.core.provider_store import model_prefix_for
+
+        model = f"{model_prefix_for(provider.provider_type)}/{model}"
 
     # Manual compression must use the same context slicing, summarization,
     # persistence, and failure handling as automatic compression.

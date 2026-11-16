@@ -9,6 +9,7 @@ import crabagent.core.agent.loop as loop
 from crabagent.core.agent.context import AgentContext
 from crabagent.core.agent.tools.registry import ToolRegistry
 from crabagent.core.event import EventType
+from crabagent.core.provider_store import ProviderInfo
 
 
 @pytest.mark.asyncio
@@ -700,3 +701,40 @@ def test_visual_message_keeps_each_image_path_associated():
     blocks = loop._build_messages(context)[0]["content"]
     assert blocks[1]["text"].endswith("/tmp/one.png]")
     assert blocks[3]["text"].endswith("/tmp/two.png]")
+
+
+# --- _litellm_params routing for Gemini vs OpenAI-compatible providers (task P2) ---
+
+
+def _provider_for_type(provider_type: str, api_key: str = "k", base_url: str = "") -> ProviderInfo:
+    return ProviderInfo(
+        name=provider_type,
+        display_name=provider_type,
+        provider_type=provider_type,
+        api_key=api_key,
+        base_url=base_url,
+        is_default=False,
+        enabled=True,
+        extra={},
+    )
+
+
+def test_litellm_params_for_gemini_routes_to_native_gemini_provider():
+    provider = _provider_for_type(
+        "gemini", api_key="k", base_url="https://generativelanguage.googleapis.com/v1beta"
+    )
+
+    assert loop._litellm_params(provider) == {
+        "api_key": "k",
+        "custom_llm_provider": "gemini",
+        "api_base": "https://generativelanguage.googleapis.com/v1beta",
+    }
+
+
+def test_litellm_params_for_openai_compatible_provider_stays_openai():
+    params = loop._litellm_params(_provider_for_type("deepseek", base_url="https://api.deepseek.com/v1"))
+
+    assert params["custom_llm_provider"] == "openai"
+    assert params["api_base"] == "https://api.deepseek.com/v1"
+    assert params["api_key"] == "k"
+

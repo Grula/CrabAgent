@@ -27,6 +27,7 @@ class AgentContext:
     model: str | None = None
     provider_name: str | None = None
     current_agent: str = "default"
+    execution_mode: str = "interactive"
     system_prompt: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     total_tokens: int = 0

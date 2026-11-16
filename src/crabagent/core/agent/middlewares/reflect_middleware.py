@@ -61,8 +61,6 @@ class ReflectMiddleware:
         model = context.metadata.get("_resolved_model") or context.model or ""
         if not model:
             return
-        if "/" not in model:
-            model = f"openai/{model}"
 
         provider_name = context.provider_name
         agent_name = context.current_agent or "default"

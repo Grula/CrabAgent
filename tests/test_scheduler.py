@@ -125,7 +125,7 @@ async def test_run_agent_uses_default_model_override(monkeypatch: pytest.MonkeyP
             return None
 
     class FakeRunRecorder:
-        def __init__(self, user_id, session_id, model):
+        def __init__(self, user_id, session_id, model, session_mode="interactive"):
             recorded["run_recorder"] = (user_id, session_id, model)
 
         async def on_event(self, event):
@@ -135,6 +135,7 @@ async def test_run_agent_uses_default_model_override(monkeypatch: pytest.MonkeyP
         from crabagent.core.event import AgentEvent, EventType
 
         recorded["context_model"] = context.model
+        recorded["context_user_id"] = context.metadata.get("user_id", 0)
         recorded["prompt"] = prompt
         context.metadata.update(resolved_model="resolved", resolved_provider="provider")
         context.usage_records.append({"prompt_tokens": 10, "completion_tokens": 2})
@@ -189,6 +190,7 @@ async def test_run_agent_uses_default_model_override(monkeypatch: pytest.MonkeyP
         assert (recorded["commit"][2] is not None) == (outcome == "error")
 
     assert recorded["context_model"] == "gpt-4.1"
+    assert recorded["context_user_id"] == 1
     assert recorded["create_conversation"][3] == "gpt-4.1"
     assert [row["prompt_tokens"] for row in recorded["usage"]] == [10, 3]
     for row in recorded["usage"]:
@@ -219,7 +221,7 @@ async def test_run_agent_reports_failure_and_resets_auto_approve(monkeypatch: py
     monkeypatch.setattr("crabagent.serve.scheduler._generate_session_id", lambda: "sess-err")
     monkeypatch.setattr("crabagent.serve.scheduler._create_conversation", _async_return(99))
     monkeypatch.setattr("crabagent.serve.services.persistence.PersistenceListener", lambda conversation_id, branch_id: SimpleNamespace(on_event=_async_noop))
-    monkeypatch.setattr("crabagent.core.agent.run_recorder.RunRecorder", lambda user_id, session_id, model: SimpleNamespace(on_event=_async_noop))
+    monkeypatch.setattr("crabagent.core.agent.run_recorder.RunRecorder", lambda user_id, session_id, model, session_mode="interactive": SimpleNamespace(on_event=_async_noop))
     monkeypatch.setattr("crabagent.core.tool_loader.discover_and_register_tools", lambda registry, workspace: None)
     monkeypatch.setattr("crabagent.core.agent.skill.loader.discover_skills", lambda dirs: {})
     monkeypatch.setattr("crabagent.core.agent.skill.loader.register_skill_tool", lambda registry, skills: None)
@@ -284,7 +286,7 @@ async def test_run_agent_closes_mcp_manager_after_success(monkeypatch: pytest.Mo
     monkeypatch.setattr("crabagent.serve.scheduler._generate_session_id", lambda: "sess-clean")
     monkeypatch.setattr("crabagent.serve.scheduler._create_conversation", _async_return(55))
     monkeypatch.setattr("crabagent.serve.services.persistence.PersistenceListener", lambda conversation_id, branch_id: SimpleNamespace(on_event=_async_noop))
-    monkeypatch.setattr("crabagent.core.agent.run_recorder.RunRecorder", lambda user_id, session_id, model: SimpleNamespace(on_event=_async_noop))
+    monkeypatch.setattr("crabagent.core.agent.run_recorder.RunRecorder", lambda user_id, session_id, model, session_mode="interactive": SimpleNamespace(on_event=_async_noop))
     monkeypatch.setattr("crabagent.core.agent.loop.run_agent", _async_return([]))
     monkeypatch.setattr(service, "_commit_task_status", _async_noop)
     monkeypatch.setattr(service, "_create_notification", _async_noop)

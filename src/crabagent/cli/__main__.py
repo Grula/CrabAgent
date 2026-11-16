@@ -80,7 +80,10 @@ def main():
     configure_litellm()
 
     if args.serve:
-        _run_serve(args)
+        try:
+            _run_serve(args)
+        except KeyboardInterrupt:
+            pass
         return
 
     if args.query and args.query.split()[0].lower() in subcmd_words:

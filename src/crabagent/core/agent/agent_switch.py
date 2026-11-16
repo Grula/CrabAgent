@@ -18,6 +18,8 @@ def filter_tool_registry(
     agent_tools: list[str] | None = None,
     tool_permissions: dict[str, str] | None = None,
     allow_delegation: bool = False,
+    *,
+    execution_mode: str = "interactive",
 ) -> ToolRegistry:
     """Return a narrowed copy of ``full_registry`` for one agent profile.
 
@@ -35,11 +37,19 @@ def filter_tool_registry(
     if not allow_delegation:
         blocked = _SUB_AGENT_BLOCKED | get_delegation_tools()
 
+    session_gated: set[str] = set()
+    if execution_mode == "unattended":
+        from crabagent.core.agent.capability_manifest import REQUIRES_SESSION
+
+        session_gated = set(REQUIRES_SESSION)
+
     allowed = set(agent_tools or [])
     use_whitelist = bool(agent_tools)
 
     for name, tool in full_registry._tools.items():
         if name in blocked:
+            continue
+        if name in session_gated:
             continue
         if name in get_memory_tools():
             filtered._tools[name] = tool

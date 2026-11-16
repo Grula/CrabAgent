@@ -259,6 +259,16 @@ async def get_provider_models(name: str, user: User = Depends(get_current_user))
 
     models = []
 
+    if p.provider_type == "gemini":
+        from crabagent.core.provider_store import static_models_for
+
+        models = [{"id": m, "owned_by": "gemini"} for m in static_models_for("gemini")]
+        existing_ids = {m["id"] for m in models}
+        for mid in p.extra.get("extra_models", []):
+            if mid and mid not in existing_ids:
+                models.append({"id": mid, "owned_by": "custom"})
+        return models
+
     # Fetch from provider API
     try:
         from crabagent.core.proxy import resolve_llm_proxy

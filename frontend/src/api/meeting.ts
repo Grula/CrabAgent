@@ -12,6 +12,7 @@ export interface MeetingState {
   participants: string[];
   notes: MeetingNote[];
   status: string;
+  minutes?: string;
 }
 
 export interface EndMeetingResult {
@@ -25,6 +26,7 @@ export interface EndMeetingResult {
     deadline?: string;
   }[];
   status: string;
+  minutes?: string;
 }
 
 export interface BrainstormIdea {

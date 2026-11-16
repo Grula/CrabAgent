@@ -251,6 +251,7 @@ class SchedulerService:
             max_iterations=settings.max_iterations,
             model=model or None,
             system_prompt=system_prompt,
+            execution_mode="unattended",
         )
 
         from crabagent.core.agent.skill.loader import discover_skills, register_skill_tool
@@ -309,6 +310,7 @@ class SchedulerService:
         ctx_conv_id = _generate_session_id()
         context.metadata["session_id"] = ctx_conv_id
         context.metadata["branch_id"] = "main"
+        context.metadata["user_id"] = task.user_id
 
         conversation_id = await _create_conversation(task.user_id, task.name, str(workspace), model, ctx_conv_id)
         logger.info("[ST] conversation created, id=%d, session=%s", conversation_id, ctx_conv_id)
@@ -327,7 +329,7 @@ class SchedulerService:
 
         from crabagent.core.agent.run_recorder import RunRecorder
 
-        run_recorder = RunRecorder(user_id=task.user_id, session_id=ctx_conv_id, model=model)
+        run_recorder = RunRecorder(user_id=task.user_id, session_id=ctx_conv_id, model=model, session_mode="unattended")
         context.event_bus.subscribe(run_recorder.on_event)
 
         agent_error = None

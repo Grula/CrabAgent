@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 Interface = Literal["web", "terminal"]
 
-PROMPT_REVISION = 4
+PROMPT_REVISION = 5
 
 
 def _local_now() -> datetime:
@@ -106,6 +106,8 @@ plain text in a reply.
 data analysis and more), load that skill before you start and follow it.
 {tool_loading_note}- Use todo_add for the steps of the work in front of you. For large or parallel work, delegate to your agent team \
 instead of doing everything in one long thread.
+- Keep each turn under ~40k tokens: compress sub-agent reports into at most 5 bullets before your next call; \
+delegate raw inspection.
 
 ## Communicating
 - Reply in the language the user writes in.

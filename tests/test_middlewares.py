@@ -489,3 +489,90 @@ class TestTitleMiddlewareFallback:
         await _wait_for_titles()
         assert await _title_of(titles_db, "s5") == ("Done already", True)
         assert await _title_of(titles_db, "s6") == ("My own name", False)
+
+
+# ── ReflectMiddleware passes the BARE model to the reflect LLM helpers ──
+
+import asyncio as _reflect_asyncio
+
+import crabagent.core.agent.middlewares.reflect_middleware as reflect_mw_mod
+import crabagent.core.config as _reflect_config
+import crabagent.core.database as _reflect_db
+
+
+class TestReflectMiddlewareBareModel:
+    @pytest.mark.asyncio
+    async def test_on_conversation_end_does_not_prefix_openai_on_the_model(self, monkeypatch):
+        """A gemini run must hand "gemini-2.5-pro" to reflect.py, which prefixes it itself.
+
+        Adding "openai/" here defeats resolve_model_for_provider() ("/" short-circuit).
+        """
+        captured_models: list[str] = []
+        scheduled: list = []
+
+        async def fake_llm_reflect_lesson(**kwargs):
+            captured_models.append(kwargs["model"])
+            return None
+
+        async def fake_llm_extract_user_preferences(**kwargs):
+            captured_models.append(kwargs["model"])
+            return []
+
+        async def noop_async(*args, **kwargs):
+            return None
+
+        async def empty_rows(*args, **kwargs):
+            return []
+
+        class _FakeAsyncio:
+            """Capture the fire-and-forget task instead of running it detached."""
+
+            @staticmethod
+            def create_task(coro):
+                scheduled.append(coro)
+
+            @staticmethod
+            async def gather(*aws, **kwargs):
+                return await _reflect_asyncio.gather(*aws, **kwargs)
+
+        monkeypatch.setattr(_reflect_config.settings, "memory_auto_extract", True)
+        # _has_signal is called as a module-level function inside the method.
+        monkeypatch.setattr(reflect_mw_mod, "_has_signal", lambda context: True)
+        # These are imported into reflect_middleware's namespace: patch the import site.
+        monkeypatch.setattr(reflect_mw_mod, "llm_reflect_lesson", fake_llm_reflect_lesson)
+        monkeypatch.setattr(reflect_mw_mod, "llm_extract_user_preferences", fake_llm_extract_user_preferences)
+        monkeypatch.setattr(reflect_mw_mod, "rule_extract_lesson", lambda **kwargs: None)
+        monkeypatch.setattr(reflect_mw_mod, "persist_lesson", noop_async)
+        monkeypatch.setattr(reflect_mw_mod, "persist_preferences", noop_async)
+        monkeypatch.setattr(reflect_mw_mod, "asyncio", _FakeAsyncio)
+        # Imported inside the background coroutine from the database module.
+        monkeypatch.setattr(_reflect_db, "agent_memory_get_by_agent", empty_rows)
+        monkeypatch.setattr(_reflect_db, "agent_memory_list_all", empty_rows)
+
+        context = SimpleNamespace(
+            metadata={
+                "user_id": 1,
+                "_resolved_model": "gemini-2.5-pro",
+                "session_id": "s",
+                "workspace_path": "/tmp",
+                "_run_elapsed": 1.0,
+            },
+            provider_name="gemini",
+            current_agent="default",
+            iteration=3,
+            max_iterations=10,
+            total_tokens=500,
+            model="gemini-2.5-pro",
+            messages=[
+                {"role": "user", "content": "explain how to sort a list"},
+                {"role": "assistant", "content": "use sorted()"},
+            ],
+        )
+
+        await reflect_mw_mod.ReflectMiddleware().on_conversation_end(context)
+
+        assert len(scheduled) == 1, "expected exactly one background reflect task"
+        await scheduled[0]
+
+        assert captured_models == ["gemini-2.5-pro", "gemini-2.5-pro"]
+        assert "openai/gemini-2.5-pro" not in captured_models

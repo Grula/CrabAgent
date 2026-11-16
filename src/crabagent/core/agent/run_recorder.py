@@ -15,10 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 class RunRecorder:
-    def __init__(self, user_id: int, session_id: str, model: str = ""):
+    def __init__(self, user_id: int, session_id: str, model: str = "", session_mode: str = "interactive"):
         self._user_id = user_id
         self._session_id = session_id
         self._model = model
+        self._session_mode = session_mode
         self._main_run_id: int | None = None
         self._main_started_at: float = 0
         self._main_tool_buf: list[dict] = []
@@ -112,6 +113,8 @@ class RunRecorder:
         )
 
     def _on_tool_result(self, data: dict, buf: list) -> dict | None:
+        from crabagent.core.agent.tool_telemetry import classify_tool_outcome
+
         name = data.get("name", "")
         result = data.get("result", "")
         finished_at = _time.time()
@@ -119,8 +122,37 @@ class RunRecorder:
             if tool["name"] == name and tool["result_summary"] is None:
                 tool["result_summary"] = str(result)[:500]
                 tool["elapsed"] = round(finished_at - tool["started_at"], 3)
+                ok, reason_class = classify_tool_outcome(name, result)
+                tool["ok"] = ok
+                tool["reason_class"] = reason_class
                 return tool
         return None
+
+    async def _flush_tool_invocations(self, run_id: int | None, agent_name: str, buf: list) -> None:
+        if not run_id or not buf:
+            return
+        from crabagent.core.agent.tool_telemetry import record_tool_invocations
+        from crabagent.core.database import async_session_factory
+
+        entries = [
+            {
+                "user_id": self._user_id,
+                "session_id": self._session_id,
+                "run_id": run_id,
+                "agent_name": agent_name,
+                "tool_name": t.get("name", ""),
+                "ok": t.get("ok", True),
+                "reason_class": t.get("reason_class", "ok"),
+                "latency_ms": int(round(t.get("elapsed", 0) * 1000)),
+                "session_mode": self._session_mode,
+            }
+            for t in buf
+        ]
+        try:
+            async with async_session_factory() as db:
+                await record_tool_invocations(db, entries)
+        except Exception:
+            logger.exception("RunRecorder: failed to record tool invocations for run %s", run_id)
 
     async def _capture_artifact(self, data: dict, entry: dict | None, run_id: int | None) -> None:
         """Auto-register task artifacts from successful file-producing tools."""
@@ -151,6 +183,7 @@ class RunRecorder:
             tool_calls=self._main_tool_buf[:] if self._main_tool_buf else None,
             result_summary=data.get("result", "")[:1000],
         )
+        await self._flush_tool_invocations(self._main_run_id, "main", self._main_tool_buf)
         self._main_run_id = None
         self._main_tool_buf = []
 
@@ -191,6 +224,7 @@ class RunRecorder:
         self._sub_runs[sub_id] = {
             "tool_buf": [],
             "started_at": _time.time(),
+            "agent_name": agent_name,
             "run_id": await run_record_create(
                 user_id=self._user_id,
                 agent_name=agent_name,
@@ -211,7 +245,7 @@ class RunRecorder:
 
     async def _on_sub_end(self, data: dict) -> None:
         sub_id = data.get("sub_agent_id", "")
-        entry = self._sub_runs.pop(sub_id, None)
+        entry = self._sub_runs.get(sub_id)
         if not entry:
             return
         from crabagent.core.database import run_record_finalize
@@ -226,6 +260,8 @@ class RunRecorder:
             tool_calls=entry["tool_buf"][:] if entry["tool_buf"] else None,
             result_summary=str(data.get("result", ""))[:1000],
         )
+        await self._flush_tool_invocations(entry.get("run_id"), entry.get("agent_name", "unknown"), entry["tool_buf"])
+        self._sub_runs.pop(sub_id, None)
 
     async def _on_sub_error(self, data: dict) -> None:
         sub_id = data.get("sub_agent_id", "")

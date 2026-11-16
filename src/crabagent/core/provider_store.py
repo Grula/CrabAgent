@@ -121,6 +121,24 @@ CHATGPT_IMAGE_MODELS = [
     "chatgpt-image-latest",
 ]
 
+GEMINI_MODELS = [
+    "gemini-4-argon",
+    "gemini-3.1-pro-preview",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash-preview",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
+    "gemini-pro-latest",
+]
+
 
 PROVIDER_CATALOG: dict[str, dict] = {
     "chatgpt": {
@@ -130,6 +148,12 @@ PROVIDER_CATALOG: dict[str, dict] = {
         "models": CHATGPT_MODELS,
     },
     "opencode-go": {"base_url": "https://opencode.ai/zen/go/v1", "display_name": "OpenCode Go"},
+    "gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta",
+        "display_name": "Google Gemini",
+        "litellm_provider": "gemini",
+        "models": GEMINI_MODELS,
+    },
     "openai": {"base_url": "https://api.openai.com/v1", "display_name": "OpenAI"},
     "anthropic": {"base_url": "https://api.anthropic.com/v1", "display_name": "Anthropic"},
     "zhipu": {
@@ -177,6 +201,12 @@ PROVIDER_CATALOG: dict[str, dict] = {
             },
         ],
     },
+    "groq": {"base_url": "https://api.groq.com/openai/v1", "display_name": "Groq"},
+    "xai": {"base_url": "https://api.x.ai/v1", "display_name": "xAI (Grok)"},
+    "mistral": {"base_url": "https://api.mistral.ai/v1", "display_name": "Mistral AI"},
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "display_name": "OpenRouter"},
+    "together": {"base_url": "https://api.together.xyz/v1", "display_name": "Together AI"},
+    "cerebras": {"base_url": "https://api.cerebras.ai/v1", "display_name": "Cerebras"},
 }
 
 
@@ -188,6 +218,24 @@ def resolve_catalog_variant(provider_type: str, variant_id: str | None) -> str |
         if v["id"] == variant_id:
             return v["base_url"]
     return None
+
+
+def custom_llm_provider_for(provider_type: str) -> str | None:
+    if provider_type == "chatgpt":
+        return None
+    entry = PROVIDER_CATALOG.get(provider_type, {})
+    return entry.get("litellm_provider", "openai")
+
+
+def model_prefix_for(provider_type: str) -> str:
+    if provider_type == "chatgpt":
+        return "chatgpt"
+    return custom_llm_provider_for(provider_type) or "openai"
+
+
+def static_models_for(provider_type: str) -> list[str]:
+    entry = PROVIDER_CATALOG.get(provider_type, {})
+    return list(entry.get("models", []))
 
 
 def _to_info(row: ProviderConfig) -> ProviderInfo:
@@ -331,10 +379,12 @@ def build_litellm_params(provider: ProviderInfo, proxy: str = "", session_id: st
     if provider.provider_type == "chatgpt":
         params: dict[str, Any] = {}
     else:
-        params = {"api_key": provider.api_key}
+        params = {
+            "api_key": provider.api_key,
+            "custom_llm_provider": custom_llm_provider_for(provider.provider_type) or "openai",
+        }
         if provider.base_url:
             params["api_base"] = provider.base_url
-            params["custom_llm_provider"] = "openai"
         if provider.provider_type == "opencode-go":
             params["extra_headers"] = opencode_extra_headers(session_id)
     if proxy:
@@ -352,9 +402,7 @@ async def resolve_litellm_params(provider: ProviderInfo, session_id: str | None 
 def resolve_model_for_provider(provider: ProviderInfo, model: str) -> str:
     if "/" in model:
         return model
-    if provider.provider_type == "chatgpt":
-        return f"chatgpt/{model}"
-    return f"openai/{model}"
+    return f"{model_prefix_for(provider.provider_type)}/{model}"
 
 
 async def fetch_models(provider_name: str) -> list[str]:

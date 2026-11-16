@@ -766,6 +766,22 @@ class TokenUsage(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class ToolInvocation(Base):
+    __tablename__ = "tool_invocations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    session_id: Mapped[str] = mapped_column(String(64), default="")
+    run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    agent_name: Mapped[str] = mapped_column(String(100), default="")
+    tool_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    reason_class: Mapped[str] = mapped_column(String(20), default="ok")
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    session_mode: Mapped[str] = mapped_column(String(20), default="interactive")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class ExecutionSpan(Base):
     """A single step in an agent execution tree (LLM call, tool call, or agent delegation).
 
@@ -814,6 +830,7 @@ class MeetingSession(Base):
     title: Mapped[str] = mapped_column(String(500), default="")
     participants: Mapped[str] = mapped_column(Text, default="[]")
     notes: Mapped[str] = mapped_column(Text, default="[]")
+    minutes: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
@@ -841,6 +858,7 @@ async def meeting_session_upsert(
     participants: list[str] | None = None,
     notes: list[dict] | None = None,
     status: str = "active",
+    minutes: str = "",
 ) -> MeetingSession:
     import json
 
@@ -852,6 +870,7 @@ async def meeting_session_upsert(
     row.title = title
     row.participants = json.dumps(participants or [])
     row.notes = json.dumps(notes or [])
+    row.minutes = minutes
     row.status = status
     await db.commit()
     await db.refresh(row)
@@ -1192,6 +1211,7 @@ async def init_db() -> None:
         # meeting_sessions — table is created by create_all(); upgrade databases
         # that already ran the pre-ownership version.
         await ensure_column(conn, "meeting_sessions", "user_id", "INTEGER NOT NULL DEFAULT 1")
+        await ensure_column(conn, "meeting_sessions", "minutes", "TEXT DEFAULT ''")
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_meeting_sessions_user_id ON meeting_sessions(user_id)"
         ))

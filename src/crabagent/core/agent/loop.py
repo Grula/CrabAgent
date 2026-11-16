@@ -8,6 +8,10 @@ import uuid
 
 import litellm
 
+from crabagent.core.agent.capability_manifest import (
+    build_runtime_system_prompt,
+    excluded_tool_names,
+)
 from crabagent.core.agent.compress import SUMMARY_PREFIX, compress_context
 from crabagent.core.agent.context import AgentContext
 from crabagent.core.agent.multimodal import (
@@ -17,7 +21,7 @@ from crabagent.core.agent.multimodal import (
     stringify_tool_result,
 )
 from crabagent.core.agent.token_limits import get_model_token_limit
-from crabagent.core.agent.tools.tool_search import deferred_exclusions, intercept_unloaded_call
+from crabagent.core.agent.tools.tool_search import intercept_unloaded_call
 from crabagent.core.config import settings
 from crabagent.core.event import AgentEvent, EventType
 from crabagent.core.observability.spans import end_span, start_span
@@ -57,21 +61,8 @@ async def _resolve_provider(provider_name: str | None = None) -> ProviderInfo:
 
 
 def _litellm_params(provider: ProviderInfo, proxy: str = "", session_id: str | None = None) -> dict:
-    # ChatGPT subscription provider uses litellm's built-in OAuth flow.
-    # No api_key / api_base needed — litellm's ChatGPTConfig handles everything.
-    if provider.provider_type == "chatgpt":
-        return {}
-    params: dict = {"api_key": provider.api_key}
-    if provider.base_url:
-        params["api_base"] = provider.base_url
-        params["custom_llm_provider"] = "openai"
-    if provider.provider_type == "opencode-go":
-        from crabagent.core.provider_store import opencode_extra_headers
-
-        params["extra_headers"] = opencode_extra_headers(session_id)
-    if proxy:
-        params["proxy"] = proxy
-    return params
+    from crabagent.core.provider_store import build_litellm_params
+    return build_litellm_params(provider, proxy, session_id=session_id)
 
 
 _MAX_TOOL_RESULT_CHARS = 20_000
@@ -286,11 +277,9 @@ async def _run_agent(
     # CLI/API overrides win; otherwise use the Settings page pair before env defaults.
     model = context.model or saved_model or settings.default_model
     if "/" not in model:
-        # ChatGPT subscription provider uses litellm's built-in chatgpt/ prefix
-        if provider.provider_type == "chatgpt":
-            model = f"chatgpt/{model}"
-        else:
-            model = f"openai/{model}"
+        from crabagent.core.provider_store import model_prefix_for
+
+        model = f"{model_prefix_for(provider.provider_type)}/{model}"
 
     # For chatgpt provider, verify OAuth token exists before calling litellm
     # (litellm would otherwise block trying interactive device code login)
@@ -313,7 +302,16 @@ async def _run_agent(
         {"name": s["name"], "status": s["status"], "tool_count": s["tool_count"]}
         for s in context.metadata.get("mcp_status", [])
     ]
-    await context.event_bus.emit(AgentEvent(type=EventType.AGENT_START, data={"mcp_servers": mcp_summary}))
+    # The run recorder stores this as agent_runs.task_summary; without it a run's
+    # tokens cannot be attributed to the task that caused them.
+    _start_query = (
+        query
+        if isinstance(query, str)
+        else " ".join(part.get("text", "") for part in query if isinstance(part, dict))
+    )
+    await context.event_bus.emit(
+        AgentEvent(type=EventType.AGENT_START, data={"mcp_servers": mcp_summary, "query": _start_query})
+    )
 
     _stream_retries = 0
     _max_stream_retries = 2
@@ -326,6 +324,9 @@ async def _run_agent(
     context.metadata["_llm_params"] = dict(llm)
     context.metadata["_resolved_model"] = model.split("/", 1)[-1] if "/" in model else model
     context.metadata["_resolved_model_full"] = model  # keep provider prefix for compress
+
+    if context.system_prompt:
+        context.system_prompt = build_runtime_system_prompt(context)
 
     while not context.budget_exhausted:
         await _consume_user_messages(context)
@@ -341,7 +342,7 @@ async def _run_agent(
                 excluded_tools = direct_vision_redundant_tool_names(context.tool_registry)
         # On-demand loading: tool groups the conversation has not needed yet
         # are left out of the request (see tools/tool_search.py).
-        excluded_tools = set(excluded_tools) | deferred_exclusions(context)
+        excluded_tools = set(excluded_tools) | excluded_tool_names(context)
         tools = context.tool_registry.tool_defs(exclude_names=excluded_tools) or None
 
         try:

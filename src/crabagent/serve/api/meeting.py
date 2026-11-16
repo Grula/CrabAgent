@@ -35,6 +35,7 @@ def _meeting_to_dict(row) -> dict:
         "title": row.title or "",
         "participants": json.loads(row.participants or "[]"),
         "notes": json.loads(row.notes or "[]"),
+        "minutes": row.minutes or "",
         "status": row.status or "active",
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
@@ -141,9 +142,21 @@ async def end_meeting_session(
         context=await _session_model_context(db, session_id),
         session_id=session_id,
     )
+    summary = result.get("summary", "")
+    await meeting_session_upsert(
+        db,
+        session_id,
+        user.id,
+        title=title,
+        participants=participants,
+        notes=stored_notes,
+        status="ended",
+        minutes=summary,
+    )
     return {
         "session_id": session_id,
         "summary": result.get("summary", ""),
+        "minutes": summary,
         "created_tasks": result.get("created_tasks", []),
         "status": "ended",
     }
