@@ -628,6 +628,9 @@ async def build_memory_prompt(
     if not user_id:
         return ""
     from crabagent.core.config import settings
+
+    if not getattr(settings, "memory_prompt_enabled", False):
+        return ""
     from crabagent.core.database import (
         agent_memory_get_by_type,
         agent_memory_search_vector,

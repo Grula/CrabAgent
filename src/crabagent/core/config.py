@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     context_keep_recent: int = 6
 
     memory_auto_extract: bool = True
+    # Saved memories (team notes, user preferences) in the main system prompt,
+    # plus the automatic preference extraction that feeds them. Off by default:
+    # project knowledge lives in each project's AGENTS.md instead. Agents can
+    # still save and recall memories with the memory tools either way.
+    memory_prompt_enabled: bool = False
     memory_auto_recall: bool = True
     memory_max_inject: int = 5
 

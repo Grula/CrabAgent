@@ -154,6 +154,12 @@ class ReflectMiddleware:
                 logger.debug("Background lesson extraction failed", exc_info=True)
 
         async def _extract_prefs():
+            from crabagent.core.config import settings
+
+            # Preferences only feed the memory section of the main prompt; while
+            # that is switched off, extracting them is a model call for nothing.
+            if not getattr(settings, "memory_prompt_enabled", False):
+                return
             try:
                 # Load existing preferences to avoid duplicates
                 existing = []

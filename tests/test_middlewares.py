@@ -536,6 +536,7 @@ class TestReflectMiddlewareBareModel:
                 return await _reflect_asyncio.gather(*aws, **kwargs)
 
         monkeypatch.setattr(_reflect_config.settings, "memory_auto_extract", True)
+        monkeypatch.setattr(_reflect_config.settings, "memory_prompt_enabled", True)  # preferences too
         # _has_signal is called as a module-level function inside the method.
         monkeypatch.setattr(reflect_mw_mod, "_has_signal", lambda context: True)
         # These are imported into reflect_middleware's namespace: patch the import site.

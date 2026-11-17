@@ -226,6 +226,12 @@ class TestInjectAgentLessons:
 
 
 class TestBuildMemoryPrompt:
+    @pytest.fixture(autouse=True)
+    def _switched_on(self, monkeypatch: pytest.MonkeyPatch):
+        from crabagent.core.config import settings
+
+        monkeypatch.setattr(settings, "memory_prompt_enabled", True)
+
     @pytest.mark.asyncio
     async def test_returns_empty_for_zero_user_id(self):
         result = await agents_module.build_memory_prompt(user_id=0)

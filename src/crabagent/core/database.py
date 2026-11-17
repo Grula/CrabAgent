@@ -1786,16 +1786,23 @@ async def agent_memory_get_by_type(
     user_id: int,
     memory_type: str,
     limit: int = 15,
+    *,
+    scope: str = "",
+    workspace_path: str = "",
+    recall_policy: str = "",
 ) -> list[dict]:
+    """Memories of one type, most important first. Empty filters match anything."""
     from sqlalchemy import select
 
+    query = select(AgentMemory).where(AgentMemory.user_id == user_id, AgentMemory.memory_type == memory_type)
+    if scope:
+        query = query.where(AgentMemory.scope == scope)
+    if workspace_path:
+        query = query.where(AgentMemory.workspace_path == workspace_path)
+    if recall_policy:
+        query = query.where(AgentMemory.recall_policy == recall_policy)
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(AgentMemory)
-            .where(AgentMemory.user_id == user_id, AgentMemory.memory_type == memory_type)
-            .order_by(AgentMemory.importance.desc())
-            .limit(limit)
-        )
+        result = await db.execute(query.order_by(AgentMemory.importance.desc(), AgentMemory.id.desc()).limit(limit))
         return [
             {
                 "id": r.id,
