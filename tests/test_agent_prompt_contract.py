@@ -224,54 +224,60 @@ class TestTeamPromptAgents:
         assert result == "Error: agent '__default__' not found"
 
 
-class TestSummarizeDeniedTools:
-    def test_three_or_more_tools_of_a_family_are_collapsed(self):
-        denied = [
-            "bash", "edit", "office_create", "office_edit", "office_batch_edit", "image_edit",
-            "image_generate", "macos_click", "macos_type", "macos_key", "macos_drag",
-            "scheduled_task_create", "scheduled_task_update", "scheduled_task_delete",
-            "collab_browser_click", "update_agents_md",
-        ]
-
-        summary = agents_module.summarize_denied_tools(denied)
-
-        assert summary == (
-            "bash, edit, office_* (3), image_edit, image_generate, macos_* (4), "
-            "scheduled_task_* (3), collab_browser_click, update_agents_md"
+class TestAgentCapabilities:
+    def test_lists_what_the_profile_allows_in_plain_words(self):
+        caps = agents_module.agent_capabilities(
+            {"bash": "deny", "edit": "deny", "write": "deny", "web_search": "confirm", "web_scrape": "confirm",
+             "browser": "deny", "collab_browser_open": "deny", "office_read": "deny", "office_edit": "deny",
+             "office_create": "deny", "image_generate": "deny", "image_edit": "deny", "email_check": "deny",
+             "email_send": "deny", "calendar_list": "deny", "calendar_add": "deny", "scheduled_task_list": "deny",
+             "scheduled_task_create": "deny", "computer_act": "deny", "create_tool": "deny"}
         )
+        assert caps == ["read files", "git diff", "web search (asks first)"]
 
-    def test_unrelated_tools_that_share_a_first_word_are_not_merged(self):
-        assert agents_module.summarize_denied_tools(["create_tool", "update_tool", "delete_tool"]) == (
-            "create_tool, update_tool, delete_tool"
-        )
-        assert agents_module.summarize_denied_tools([]) == ""
+    def test_one_allowed_tool_is_enough_for_a_capability(self):
+        caps = agents_module.agent_capabilities({"write": "deny", "edit": "auto"})
+        assert "edit files" in caps
+
+    def test_browser_family_permission_counts(self):
+        assert "browser" not in agents_module.agent_capabilities({"browser": "deny"})
+        assert "browser" in agents_module.agent_capabilities({})
 
 
-class TestTeamPromptSharedDenials:
+class TestTeamPromptCapabilities:
     @pytest.mark.asyncio
-    async def test_tools_denied_to_every_agent_are_not_repeated_per_agent(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_shared_capabilities_are_listed_once(self, monkeypatch: pytest.MonkeyPatch):
+        everything_but = {"browser": "deny", "collab_browser_open": "deny", "office_read": "deny",
+                          "office_edit": "deny", "office_create": "deny", "image_generate": "deny",
+                          "image_edit": "deny", "email_check": "deny", "email_send": "deny",
+                          "calendar_list": "deny", "calendar_add": "deny", "scheduled_task_list": "deny",
+                          "scheduled_task_create": "deny", "computer_act": "deny", "create_tool": "deny",
+                          "git_diff": "deny"}
+
         async def fake_registry():
             return [
-                _agent("implementer", tool_permissions={"pay_now": "deny", "web_search": "deny", "bash": "auto"}),
-                _agent("reviewer", tool_permissions={"pay_now": "deny", "bash": "deny"}),
+                _agent("implementer", tool_permissions={**everything_but, "web_search": "deny", "web_scrape": "deny"}),
+                _agent("researcher", tool_permissions={**everything_but, "bash": "deny", "edit": "deny", "write": "deny"}),
             ]
 
         monkeypatch.setattr(agents_module, "load_agent_registry", fake_registry)
-
         prompt = await agents_module.build_team_prompt()
 
-        assert "pay_now" not in prompt
-        assert "(disabled tools: web_search)" in prompt
-        assert "(disabled tools: bash)" in prompt
+        assert "Every agent can: read files." in prompt
+        assert "(can: edit files, run commands)" in prompt
+        assert "(can: web search)" in prompt
+        assert "disabled tools" not in prompt
 
     @pytest.mark.asyncio
-    async def test_a_single_agent_keeps_its_full_denied_list(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_an_agent_with_nothing_extra_says_so(self, monkeypatch: pytest.MonkeyPatch):
         async def fake_registry():
-            return [_agent("reviewer", tool_permissions={"pay_now": "deny", "bash": "deny"})]
+            return [_agent("a", tool_permissions={"bash": "deny"}), _agent("b", tool_permissions={})]
 
         monkeypatch.setattr(agents_module, "load_agent_registry", fake_registry)
+        prompt = await agents_module.build_team_prompt()
 
-        assert "(disabled tools: pay_now, bash)" in await agents_module.build_team_prompt()
+        assert "(can: only what every agent can)" in prompt
+        assert "(can: run commands)" in prompt
 
 
 class TestTeamListGoalSummary:

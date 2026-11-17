@@ -128,3 +128,28 @@ class TestDeleteEndpoint:
         with pytest.raises(HTTPException) as err:
             await self._delete(agents_db, "__default__")
         assert err.value.status_code == 403
+
+
+class TestDefaultTeamCapabilities:
+    """The shipped team gets the tools its jobs need, not email or the calendar."""
+
+    def _caps(self, name: str) -> list[str]:
+        agent = next(a for a in db.DEFAULT_AGENTS if a["name"] == name)
+        return agents.agent_capabilities(agent["tool_permissions"])
+
+    def test_no_default_agent_handles_email_calendar_or_schedules(self):
+        for agent in db.DEFAULT_AGENTS:
+            caps = self._caps(agent["name"])
+            assert not {"email", "calendar", "scheduled tasks"} & set(caps), (agent["name"], caps)
+
+    def test_only_implementer_and_tester_use_the_shared_browser(self):
+        users = {a["name"] for a in db.DEFAULT_AGENTS if "shared browser" in self._caps(a["name"])}
+        assert users == {"implementer", "tester"}
+
+    def test_each_agent_keeps_what_its_job_needs(self):
+        assert {"edit files", "run commands"} <= set(self._caps("implementer"))
+        assert {"edit files", "run commands"} <= set(self._caps("tester"))
+        assert {"run commands", "git diff"} <= set(self._caps("the_reviewer"))
+        assert "edit files" not in self._caps("the_reviewer")
+        assert "web search" in self._caps("researcher")
+        assert not {"edit files", "run commands", "web search"} & set(self._caps("architect"))

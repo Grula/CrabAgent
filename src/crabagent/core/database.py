@@ -1265,6 +1265,29 @@ async def _ensure_default_admin():
         await db.commit()
 
 
+# Tool groups the default team never needs; the plain assistant keeps them.
+# Listed tool by tool so they show up on the Agents page.
+_EMAIL_TOOLS = ("email_check", "email_reply_draft", "email_send", "email_send_draft")
+_CALENDAR_TOOLS = ("calendar_add", "calendar_delete", "calendar_list", "calendar_today", "calendar_update")
+_SCHEDULED_TASK_TOOLS = (
+    "scheduled_task_create", "scheduled_task_delete", "scheduled_task_get", "scheduled_task_list",
+    "scheduled_task_pause", "scheduled_task_resume", "scheduled_task_update",
+)
+_SHARED_BROWSER_TOOLS = (
+    "collab_browser_authorize_local_preview", "collab_browser_click", "collab_browser_history",
+    "collab_browser_observe", "collab_browser_open", "collab_browser_press_key", "collab_browser_screenshot",
+    "collab_browser_scroll", "collab_browser_select", "collab_browser_type", "collab_browser_wait_for",
+    "collab_browser_wait_for_user",
+)
+
+
+def _deny(*groups: tuple[str, ...]) -> dict[str, str]:
+    return {tool: "deny" for group in groups for tool in group}
+
+
+_NOT_FOR_THE_TEAM = (_EMAIL_TOOLS, _CALENDAR_TOOLS, _SCHEDULED_TASK_TOOLS)
+
+
 # The team a fresh install starts with: an architect who plans and delegates,
 # and the people it delegates to. Bundled skills (plan, parallel-workflows, ...)
 # are written around these names. ``skills`` is each agent's own skill list.
@@ -1296,6 +1319,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🧠",
         "tool_permissions": {
+            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS),
             "delegate_task": "auto",
             "delegate_parallel": "auto",
             "run_pipeline": "auto",
@@ -1345,6 +1369,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "💻",
         "tool_permissions": {
+            **_deny(*_NOT_FOR_THE_TEAM),
             "bash": "auto",
             "read": "auto",
             "write": "auto",
@@ -1386,6 +1411,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🧪",
         "tool_permissions": {
+            **_deny(*_NOT_FOR_THE_TEAM),
             "bash": "auto",
             "read": "auto",
             "write": "auto",
@@ -1421,6 +1447,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🔍",
         "tool_permissions": {
+            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS),
             "read": "auto",
             "glob": "auto",
             "grep": "auto",
@@ -1448,6 +1475,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🌐",
         "tool_permissions": {
+            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS),
             "read": "auto",
             "glob": "auto",
             "grep": "auto",

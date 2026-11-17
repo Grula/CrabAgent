@@ -105,7 +105,6 @@ _TEAM_PROMPT_DELEGATION_TOOLS = '### Delegation Tools'
 _TEAM_PROMPT_SHARED_WORKSPACE = '### Shared Workspace'
 _TEAM_PROMPT_WHEN_TO_DELEGATE = '### When to Delegate'
 _TEAM_PROMPT_BRIEFING = '### Writing the Task'
-_TEAM_PROMPT_RESTRICTED = '(disabled tools: {tools})'
 _PIPELINE_GRANULARITY = 'One pipeline step = one file or one concern. If a step has more than ~5 deliverables, split it into separate steps.'
 
 # Delegation-tool bullet lines, in display order.
@@ -147,7 +146,7 @@ _TEAM_PROMPT_WHEN_LINES: tuple[str, ...] = (
     'Multiple independent subtasks (no ordering needed) -> `delegate_parallel`',
     'Multi-step workflow with ordering or data flow (e.g., research -> analyze -> write) -> `run_pipeline`',
     'User asks for multiple sub-agents or parallel execution -> use `delegate_parallel` or `run_pipeline`, not sequential `delegate_task`',
-    "Check each agent's disabled tools above before assigning work it cannot do",
+    "Give a step only to an agent whose capabilities above cover it",
     'A lookup you can do in a few tool calls, or a small edit -> do it yourself',
 )
 
@@ -422,39 +421,60 @@ def is_internal_profile(name: str) -> bool:
     return name.startswith("__")
 
 
-_MULTIWORD_TOOL_FAMILIES = ("collab_browser", "scheduled_task", "background_group")
+# What an agent can do, for routing. A capability counts when the profile does
+# not deny every one of its tools; "(asks first)" when all it has need approval.
+_CAPABILITIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("read files", ("read", "grep", "glob")),
+    ("edit files", ("edit", "write")),
+    ("run commands", ("bash",)),
+    ("git diff", ("git_diff",)),
+    ("web search", ("web_search", "web_scrape")),
+    ("browser", ("browser_navigate",)),
+    ("shared browser", ("collab_browser_open",)),
+    ("office documents", ("office_read", "office_edit", "office_create")),
+    ("images", ("image_generate", "image_edit")),
+    ("email", ("email_check", "email_send")),
+    ("calendar", ("calendar_list", "calendar_add")),
+    ("scheduled tasks", ("scheduled_task_list", "scheduled_task_create")),
+    ("computer control", ("computer_act",)),
+    ("building tools", ("create_tool",)),
+)
 
 
-def _tool_family(name: str) -> str:
-    for family in _MULTIWORD_TOOL_FAMILIES:
-        if name.startswith(family + "_"):
-            return family
-    return name.split("_", 1)[0] if "_" in name else ""
+def agent_capabilities(tool_permissions: dict[str, str] | None) -> list[str]:
+    """Plain-language list of what an agent profile lets it do."""
+    from crabagent.core.agent.tools.registry import resolve_permission
+
+    capabilities: list[str] = []
+    for label, tools in _CAPABILITIES:
+        allowed = [p for p in (resolve_permission(tool_permissions, t) or "auto" for t in tools) if p != "deny"]
+        if not allowed:
+            continue
+        capabilities.append(label if "auto" in allowed else f"{label} (asks first)")
+    return capabilities
 
 
-def summarize_denied_tools(denied: list[str]) -> str:
-    """Render a denied-tool list compactly for prompts.
+def describe_team_capabilities(agents: list[dict]) -> tuple[list[str], dict[str, str]]:
+    """Split capabilities into those every agent shares and each agent's extras.
 
-    Three or more tools of one family are shown as ``family_* (n)`` so that a
-    long permission list does not swamp the description of what an agent does.
+    Returns ``(shared, notes)``: ``notes`` maps an agent name to the text shown
+    after its entry. Listing the shared ones once keeps every entry short.
     """
-    families: dict[str, list[str]] = {}
-    for name in denied:
-        family = _tool_family(name)
-        if family:
-            families.setdefault(family, []).append(name)
-    collapsed = {family for family, names in families.items() if len(names) >= 3}
-    parts: list[str] = []
-    shown: set[str] = set()
-    for name in denied:
-        family = _tool_family(name)
-        if family in collapsed:
-            if family not in shown:
-                shown.add(family)
-                parts.append(f"{family}_* ({len(families[family])})")
+    capabilities = {a["name"]: agent_capabilities(a.get("tool_permissions")) for a in agents}
+    shared: list[str] = []
+    if len(agents) > 1:
+        common = set.intersection(*(set(c) for c in capabilities.values()))
+        shared = [c for c in capabilities[agents[0]["name"]] if c in common]
+    notes: dict[str, str] = {}
+    for name, caps in capabilities.items():
+        extra = [c for c in caps if c not in shared]
+        if extra:
+            notes[name] = f"(can: {', '.join(extra)})"
+        elif shared:
+            notes[name] = "(can: only what every agent can)"
         else:
-            parts.append(name)
-    return ", ".join(parts)
+            notes[name] = "(no tools)"
+    return shared, notes
 
 
 _GOAL_SUMMARY_MAX = 240
@@ -489,21 +509,12 @@ async def build_team_prompt() -> str:
         _TEAM_PROMPT_AVAILABLE_AGENTS,
         "",
     ]
-    # A tool that every agent is denied says nothing about whom to pick, so
-    # only the differences between agents are listed.
-    denied_by_agent = {
-        a["name"]: [k for k, v in (a.get("tool_permissions") or {}).items() if v == "deny"] for a in agents
-    }
-    denied_everywhere: set[str] = set()
-    if len(agents) > 1:
-        denied_everywhere = set.intersection(*(set(names) for names in denied_by_agent.values()))
+    shared, notes = describe_team_capabilities(agents)
+    if shared:
+        lines.extend([f"Every agent can: {', '.join(shared)}.", ""])
     for a in agents:
-        denied = [k for k in denied_by_agent[a["name"]] if k not in denied_everywhere]
-        perm_info = ""
-        if denied:
-            perm_info = " " + _TEAM_PROMPT_RESTRICTED.format(tools=summarize_denied_tools(denied))
         lines.append(
-            f"- **{a['display_name']}** (`{a['name']}`): {a['role']}. {goal_summary(a['goal'])}{perm_info}"
+            f"- **{a['display_name']}** (`{a['name']}`): {a['role']}. {goal_summary(a['goal'])} {notes[a['name']]}"
         )
     lines.extend(["", _TEAM_PROMPT_DELEGATION_TOOLS, ""])
     for line in _TEAM_PROMPT_TOOL_LINES:

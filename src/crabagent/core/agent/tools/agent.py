@@ -51,7 +51,7 @@ async def delegate_task(agent_name: str, task: str, context=None) -> str:
     metadata={"source": "builtin", "category": "agent"},
 )
 async def list_agents() -> str:
-    from crabagent.core.agent.agents import is_internal_profile, load_agent_registry
+    from crabagent.core.agent.agents import agent_capabilities, is_internal_profile, load_agent_registry
 
     agents = [a for a in await load_agent_registry() if not is_internal_profile(a["name"])]
     if not agents:
@@ -62,6 +62,7 @@ async def list_agents() -> str:
         lines.append(f"**{a['display_name']}** (`{a['name']}`)")
         lines.append(f"  Role: {a['role']}")
         lines.append(f"  Goal: {a['goal']}")
+        lines.append(f"  Can: {', '.join(agent_capabilities(a.get('tool_permissions'))) or 'nothing (no tools)'}")
         if a.get("model"):
             lines.append(f"  Model: {a['model']}")
         lines.append("")
@@ -392,20 +393,23 @@ async def plan_task(task: str, context=None) -> str:
 
     import json as _json
 
-    from crabagent.core.agent.agents import is_internal_profile, load_agent_registry, summarize_denied_tools
+    from crabagent.core.agent.agents import (
+        describe_team_capabilities,
+        goal_summary,
+        is_internal_profile,
+        load_agent_registry,
+    )
 
     agents = [a for a in await load_agent_registry() if not is_internal_profile(a["name"])]
     if not agents:
         return "Error: no agents available. Use list_agents."
 
-    agent_lines = []
+    shared, notes = describe_team_capabilities(agents)
+    agent_lines = [f"Every agent can: {', '.join(shared)}."] if shared else []
     for a in agents:
-        perms = a.get("tool_permissions", {})
-        denied = [k for k, v in perms.items() if v == "deny"]
-        perm_info = ""
-        if denied:
-            perm_info = f" (restricted: {summarize_denied_tools(denied)})"
-        agent_lines.append(f"- **{a['display_name']}** (`{a['name']}`): {a['role']}. {a['goal']}{perm_info}")
+        agent_lines.append(
+            f"- **{a['display_name']}** (`{a['name']}`): {a['role']}. {goal_summary(a['goal'])} {notes[a['name']]}"
+        )
     agent_text = "\n".join(agent_lines)
 
     plan_prompt = (
@@ -414,8 +418,8 @@ async def plan_task(task: str, context=None) -> str:
         f"## Available Agents\n{agent_text}\n\n"
         f"## Task\n{task}\n\n"
         "Rules:\n"
-        "1. Each step is done by exactly one available agent; never give a step to an agent whose "
-        "restricted tools it would need\n"
+        "1. Each step is done by exactly one available agent, and only by one whose capabilities "
+        "cover it\n"
         "2. Steps without depends_on run in parallel; add depends_on only when a step needs another "
         "step's result\n"
         "3. Write each step's task so it stands on its own: the goal, the inputs it needs (paths, "
