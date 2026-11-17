@@ -9,10 +9,22 @@ _TOOL_DIR_NAME = ".crabagent/tools"
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
-def _tool_dir(context) -> tuple:
-    ws = context.workspace
-    td = ws / _TOOL_DIR_NAME
-    return td
+def _tool_dir(context, scope: str = "global"):
+    """Where a new tool goes: every project (global, the default) or this one."""
+    from crabagent.core.tool_loader import global_tools_dir, project_tools_dir
+
+    return project_tools_dir(context.workspace) if scope == "project" else global_tools_dir()
+
+
+def _find_tool_file(context, name: str):
+    """An existing tool's file: the project's copy wins over the global one."""
+    from crabagent.core.tool_loader import global_tools_dir, project_tools_dir
+
+    for tools_dir in (project_tools_dir(context.workspace), global_tools_dir()):
+        candidate = tools_dir / f"{name}.py"
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _generate_tool_file(name: str, description: str, parameters: dict | None, code: str) -> str:
@@ -89,6 +101,15 @@ def _validate_code(code: str, name: str) -> str | None:
                     "execution context, injected at call time."
                 ),
             },
+            "scope": {
+                "type": "string",
+                "enum": ["global", "project"],
+                "description": (
+                    "Where the tool lives. 'global' (default): available in every project. "
+                    "'project': only in this project; use it only for tools tied to this "
+                    "project's own code or data."
+                ),
+            },
         },
         "required": ["name", "description", "code"],
     },
@@ -100,10 +121,13 @@ async def create_tool(
     description: str,
     code: str,
     parameters: dict | None = None,
+    scope: str = "global",
     context=None,
 ) -> str:
     if context is None:
         return "Error: create_tool requires an active session"
+    if scope not in ("global", "project"):
+        return "Error: scope must be 'global' or 'project'"
 
     if not _NAME_RE.match(name):
         return (
@@ -150,11 +174,14 @@ async def create_tool(
     if err:
         return f"Error: {err}"
 
-    td = _tool_dir(context)
+    existing = _find_tool_file(context, name)
+    if existing is not None:
+        return (
+            f"Error: tool '{name}' already exists ({existing}). Use update_tool to modify it, "
+            "or delete_tool to remove it first."
+        )
+    td = _tool_dir(context, scope)
     tool_file = td / f"{name}.py"
-
-    if tool_file.exists():
-        return f"Error: tool '{name}' already exists. Use update_tool to modify it, or delete_tool to remove it first."
 
     file_content = _generate_tool_file(name, description, parameters, code)
 
@@ -192,8 +219,8 @@ async def create_tool(
                 source_session=session_id,
                 source="auto",
                 task_category="",
-                scope="workspace",
-                workspace_path=str(getattr(context, 'workspace', '') or ''),
+                scope="global" if scope == "global" else "workspace",
+                workspace_path="" if scope == "global" else str(getattr(context, "workspace", "") or ""),
                 recall_policy="query_only",
             )
     except Exception:
@@ -204,7 +231,8 @@ async def create_tool(
         f"  File: {tool_file}\n"
         f"  Description: {description}\n"
         f"  Parameters: {json.dumps(parameters or {})}\n"
-        f"  The tool is now available in this session and will auto-load in future sessions.\n"
+        f"  The tool is now available in this session and will auto-load in future sessions"
+        f"{' in every project' if scope == 'global' else ' in this project'}.\n"
         f"  A lesson has been saved so you remember this tool exists."
     )
 
@@ -253,10 +281,8 @@ async def update_tool(
     if context is None:
         return "Error: update_tool requires an active session"
 
-    td = _tool_dir(context)
-    tool_file = td / f"{name}.py"
-
-    if not tool_file.exists():
+    tool_file = _find_tool_file(context, name)
+    if tool_file is None:
         return f"Error: tool '{name}' does not exist. Use create_tool to create it first."
 
     existing = tool_file.read_text(encoding="utf-8")
@@ -310,10 +336,8 @@ async def delete_tool(name: str, context=None) -> str:
     if context is None:
         return "Error: delete_tool requires an active session"
 
-    td = _tool_dir(context)
-    tool_file = td / f"{name}.py"
-
-    if not tool_file.exists():
+    tool_file = _find_tool_file(context, name)
+    if tool_file is None:
         return f"Error: tool '{name}' does not exist."
 
     tool_info = context.tool_registry.get(name)

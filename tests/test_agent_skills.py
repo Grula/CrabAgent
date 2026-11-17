@@ -373,3 +373,52 @@ def test_a_read_only_agent_is_not_offered_someone_to_edit_files():
     coder = {"name": "coder", "tool_permissions": {}}
 
     assert all("edit files" not in h["adds"] for h in helpers_for(reviewer, [coder]))
+
+
+def test_nobody_is_offered_as_a_git_diff_helper():
+    from crabagent.core.agent.agents import helpers_for
+
+    researcher = {"name": "ml_researcher", "tool_permissions": {"git_diff": "deny", "bash": "deny"}}
+    architect = {"name": "architect", "tool_permissions": {"bash": "deny", "edit": "deny", "write": "deny"}}
+
+    assert helpers_for(researcher, [architect]) == []
+
+
+# --- Shared notes injected into delegated agents are capped ----------------------------
+
+
+async def test_shared_notes_keep_the_newest_within_a_budget(monkeypatch: pytest.MonkeyPatch):
+    notes = [{"key": f"note-{i}", "value": "x" * 1500, "author": "coder"} for i in range(20)]
+
+    async def get_all(session_id):
+        return notes
+
+    monkeypatch.setattr("crabagent.core.database.shared_memory_get_all", get_all)
+    block = await agents_module._load_shared_context("s")
+
+    assert "### note-19" in block and "### note-15" in block  # newest kept
+    assert "### note-0 " not in block and "### note-0\n" not in block
+    assert "older note(s) not shown" in block and "`note-0`" in block
+    assert len(block) < agents_module._SHARED_CONTEXT_BUDGET + 2000
+
+
+async def test_a_single_huge_note_is_cut_with_a_pointer(monkeypatch: pytest.MonkeyPatch):
+    async def get_all(session_id):
+        return [{"key": "dump", "value": "y" * 20000, "author": ""}]
+
+    monkeypatch.setattr("crabagent.core.database.shared_memory_get_all", get_all)
+    block = await agents_module._load_shared_context("s")
+
+    assert "shared_get('dump')" in block
+    assert len(block) < agents_module._SHARED_CONTEXT_BUDGET + 500
+
+
+async def test_small_sessions_are_unchanged(monkeypatch: pytest.MonkeyPatch):
+    async def get_all(session_id):
+        return [{"key": "scope", "value": "Only src/api.", "author": "architect"}]
+
+    monkeypatch.setattr("crabagent.core.database.shared_memory_get_all", get_all)
+    block = await agents_module._load_shared_context("s")
+
+    assert "### scope (by architect)\nOnly src/api." in block
+    assert "not shown" not in block

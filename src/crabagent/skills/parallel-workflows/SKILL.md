@@ -57,9 +57,10 @@ More shapes, with example calls: [references/patterns.md](references/patterns.md
   characters** of each dependency's result. Ask upstream steps to put a short summary
   *first*, or pass file paths, or run the phase with `delegate_parallel` and paste
   what the next step needs into its brief yourself.
-- **Shared notes are broadcast.** Every `shared_put` note (max 10,000 characters) is
-  injected into every sub-agent started later in the session. Use it for small facts
-  all of them need (a decision, a convention), never for bulk data.
+- **Shared notes are broadcast.** Every agent started later in the session gets the
+  newest `shared_put` notes, up to about 8,000 characters in total; older ones are
+  listed by key only. Use them for small facts all of them need (a decision, a
+  convention), never for bulk data.
 - **A failed pipeline step fails its dependents.** Independent branches keep running.
 
 ## 6. Write the brief

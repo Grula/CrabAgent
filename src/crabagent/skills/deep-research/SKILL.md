@@ -20,7 +20,7 @@ report where every important fact traces back to a source.
 | `coder`, `tester`, `the_reviewer` | No web access. Use them only on material you already gathered (`coder` can save files). |
 | `delegate_parallel(tasks)` | All tasks start together. You receive every reply in full. This is the main fan-out tool. |
 | `run_pipeline(steps)` | A dependent step sees only about the **first 1500 characters** of each dependency's result. Don't use a research → write pipeline for long notes. |
-| `shared_put(key, value)` | Each note (max 10,000 chars) is **injected into every sub-agent spawned later in this session**. Use it for short shared context, like the scope or a glossary. Never put raw notes there. |
+| `shared_put(key, value)` | Notes are **injected into every sub-agent spawned later in this session**, newest first, up to about 8,000 characters in total. Use them for short shared context, like the scope or a glossary. Never put raw notes there. |
 | Background agents | Get **no web tools** and have a 5-minute limit. They can't gather sources, so don't use them for this skill. |
 
 Check your Agent Team list: any agent with `web_search` (for example a domain

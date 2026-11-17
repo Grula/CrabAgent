@@ -98,6 +98,11 @@ _MEMORY_PROMPT_SAVE_INSTRUCTION = (
     "matters to this conversation or what the code already records."
 )
 _SHARED_CONTEXT_TITLE = '## Shared Team Knowledge'
+# Characters of shared notes a delegated agent receives up front (newest first).
+_SHARED_CONTEXT_BUDGET = 8000
+_SHARED_CONTEXT_OMITTED = (
+    '{count} older note(s) not shown: {keys}. Read one with shared_get(key) only if your task needs it.'
+)
 _TEAM_PROMPT_TITLE = '## Agent Team'
 _TEAM_PROMPT_INTRO = (
     'You can delegate work to specialized sub-agents. Use them for parallel work or when a task needs '
@@ -476,8 +481,10 @@ _CAPABILITY_OWNERS: dict[str, tuple[str, ...]] = {
     "building tools": ("toolsmith",),
 }
 # Help is for knowledge and tools an agent lacks, not a side door around its
-# role: a read-only reviewer must not get files changed through a helper.
-_NOT_OFFERED_AS_HELP = {"edit files"}
+# role: a read-only reviewer must not get files changed through a helper. Diffs
+# of code changes are left out too: an agent that doesn't review code has no
+# use for someone else's.
+_NOT_OFFERED_AS_HELP = {"edit files", "git diff"}
 
 
 def helpers_for(agent_def: dict, team: list[dict]) -> list[dict]:
@@ -611,11 +618,31 @@ async def _load_shared_context(session_id: str) -> str:
     items = await shared_memory_get_all(session_id)
     if not items:
         return ""
+    # Every delegated agent gets this block, so a long session's notes would
+    # flood each one. Keep the newest notes up to a budget; older ones are
+    # listed by key so an agent can still fetch one with shared_get.
+    kept: list[dict] = []
+    used = 0
+    for item in reversed(items):
+        size = len(item["key"]) + len(item["value"] or "")
+        if kept and used + size > _SHARED_CONTEXT_BUDGET:
+            break
+        kept.append(item)
+        used += size
+    kept.reverse()
+    omitted = [item["key"] for item in items[: len(items) - len(kept)]]
+
     lines = [_SHARED_CONTEXT_TITLE, ""]
-    for item in items:
+    for item in kept:
         author_tag = f" (by {item['author']})" if item["author"] else ""
+        value = item["value"] or ""
+        if len(value) > _SHARED_CONTEXT_BUDGET:
+            value = value[:_SHARED_CONTEXT_BUDGET] + f"\n[... cut; read it in full with shared_get('{item['key']}')]"
         lines.append(f"### {item['key']}{author_tag}")
-        lines.append(item["value"])
+        lines.append(value)
+        lines.append("")
+    if omitted:
+        lines.append(_SHARED_CONTEXT_OMITTED.format(count=len(omitted), keys=", ".join(f"`{k}`" for k in omitted)))
         lines.append("")
     return "\n".join(lines)
 

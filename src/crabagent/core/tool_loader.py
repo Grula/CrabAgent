@@ -9,15 +9,31 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def discover_and_register_tools(registry, workspace: Path) -> None:
-    tools_dir = workspace / ".crabagent" / "tools"
-    if not tools_dir.exists():
-        return
+def global_tools_dir() -> Path:
+    """Custom tools every project gets (``~/.crabagent/tools``)."""
+    return Path.home() / ".crabagent" / "tools"
 
-    for py_file in sorted(tools_dir.glob("*.py")):
-        if py_file.name.startswith("_"):
-            continue
-        _load_tool_file(py_file, registry)
+
+def project_tools_dir(workspace: Path) -> Path:
+    """Custom tools for one project only."""
+    return Path(workspace) / ".crabagent" / "tools"
+
+
+def discover_and_register_tools(registry, workspace: Path) -> None:
+    """Load custom tools: the global ones, then the project's.
+
+    A project tool with the same name as a global one replaces it, the same way
+    project skills override bundled ones. Files starting with ``_`` are skipped.
+    """
+    dirs: list[Path] = []
+    for tools_dir in (global_tools_dir(), project_tools_dir(workspace)):
+        if tools_dir.is_dir() and tools_dir.resolve() not in {d.resolve() for d in dirs}:
+            dirs.append(tools_dir)
+    for tools_dir in dirs:
+        for py_file in sorted(tools_dir.glob("*.py")):
+            if py_file.name.startswith("_"):
+                continue
+            _load_tool_file(py_file, registry)
 
 
 def _load_tool_file(path: Path, registry) -> None:

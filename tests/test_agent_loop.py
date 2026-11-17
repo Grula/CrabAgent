@@ -539,7 +539,12 @@ async def test_run_agent_emits_budget_exhausted_and_grace_call(monkeypatch: pyte
             {"role": "assistant", "content": "grace summary", "agent": context_arg.current_agent}
         )
 
+    async def fake_provider(provider_name=None):
+        # This test used to pass only by finding a provider in the developer's real database.
+        return SimpleNamespace(name="mock", provider_type="openai", api_key="k", base_url="", enabled=True, extra={})
+
     monkeypatch.setattr(loop, "_grace_call", fake_grace)
+    monkeypatch.setattr(loop, "_resolve_provider", fake_provider)
 
     messages = await loop.run_agent(context, "hello")
 
