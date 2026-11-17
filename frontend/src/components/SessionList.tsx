@@ -27,6 +27,7 @@ import { formatDate } from "../api/time";
 import { EmptyState, ConfirmDialog } from "./ui";
 import FloatingMenu from "./ui/FloatingMenu";
 import { cn } from "../lib/cn";
+import { displayTitle } from "../lib/userMessageText";
 
 interface Props {
   sessions: Session[];
@@ -325,7 +326,7 @@ export default function SessionList({
                 >
                   <div className="min-w-0">
                     <div className="truncate text-sm text-[var(--text-primary)] flex items-center gap-1.5">
-                      <span className="truncate">{r.title || `(${"untitled"})`}</span>
+                      <span className="truncate">{r.title ? displayTitle(r.title) : `(${"untitled"})`}</span>
                       <span className={cn(
                         "inline-flex items-center px-1 py-px rounded text-[9px] font-medium shrink-0",
                         r.role === "user" ? "bg-[var(--brand-bg)] text-[var(--brand)]" : "bg-[var(--accent-bg)] text-[var(--accent)]",
@@ -394,7 +395,7 @@ export default function SessionList({
                         />
                       )}
                       <span className="truncate">
-                        {s.title || `(${"untitled"})`}
+                        {s.title ? displayTitle(s.title) : `(${"untitled"})`}
                       </span>
                       {s.active_branch && s.active_branch !== "main" && (
                         <span className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded font-mono bg-[var(--warning-bg)] text-[var(--warning)] shrink-0">

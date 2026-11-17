@@ -35,6 +35,7 @@ import {
   PackageOpen,
 } from "lucide-react";
 import { RichMarkdown } from "./rich-content/RichMarkdown";
+import { displayUserText } from "../lib/userMessageText";
 import ToolResultRender from "./ToolResultRender";
 import { markResultViewed, openTaskArtifact } from "../api/tasks";
 import { SubAgentCard } from "./SubAgentCard";
@@ -741,7 +742,7 @@ const UserMessageItem = memo(function UserMessageItem({
           </div>
         )}
         <p className="whitespace-pre-wrap leading-relaxed text-[15px]">
-          {msg.content}
+          {displayUserText(msg.content)}
         </p>
         {onBranch && !replaying && !msg.isStreaming && msg.id.startsWith("db-") && (
           <button

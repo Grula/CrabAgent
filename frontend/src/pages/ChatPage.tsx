@@ -817,7 +817,9 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     ]);
     setSending(true);
     try {
-      const mentions = parseAgentMentions(text, agentProfiles);
+      // Mentioning the agent you're already talking to is just a message to it,
+      // not a delegation to a second copy of itself.
+      const mentions = parseAgentMentions(text, agentProfiles).filter((m) => m.name !== effectiveAgent);
       if (mentions.length > 0) {
         const mainText = text.replace(/@\w+/g, "").replace(/\s+/g, " ").trim();
         if (mentions.length === 1) {

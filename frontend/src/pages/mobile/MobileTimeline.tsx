@@ -22,6 +22,7 @@ import { listAgentProfiles, AgentProfile } from "../../api/agents";
 import { connectSSE } from "../../api/events";
 import { BackgroundTasks } from "../../components/BackgroundTasks";
 import "./mobile.css";
+import { displayTitle, displayUserText } from "../../lib/userMessageText";
 
 interface LiveItem {
   id: string;
@@ -293,7 +294,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
             {sessions.length === 0 && <option value="">{"No sessions yet"}</option>}
             {sessions.map((s) => (
               <option key={s.session_id} value={s.session_id}>
-                {s.title || s.session_id.slice(0, 12)}
+                {s.title ? displayTitle(s.title) : s.session_id.slice(0, 12)}
               </option>
             ))}
           </select>
@@ -341,7 +342,7 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
                   }`}
                 >
                   {m.role === "user" ? (
-                    m.content
+                    displayUserText(m.content ?? "")
                   ) : (
                     <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
                       {m.content}

@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api/client";
 import { getAgentMonitor, AgentMonitorInfo } from "../../api/monitor";
 import { listTasks, Task } from "../../api/tasks";
+import { displayTitle } from "../../lib/userMessageText";
 
 export interface TaskRequestItem {
   request_key: string;
@@ -226,7 +227,7 @@ export function MobileTaskFlow({ focusKey, onOpenSession }: Props) {
               </span>
               <span className="text-[11px] text-zinc-500">{elapsedLabel(a.started_at)}</span>
             </div>
-            <h3 className="text-[14px] font-semibold leading-snug">{a.title || a.session_id}</h3>
+            <h3 className="text-[14px] font-semibold leading-snug">{a.title ? displayTitle(a.title) : a.session_id}</h3>
             <p className="text-[12px] text-zinc-500 mt-1">{a.model}</p>
           </button>
         ))}
