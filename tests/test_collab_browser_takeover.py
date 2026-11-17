@@ -65,37 +65,27 @@ def _bridge_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CRAB_COLLAB_BROWSER_TOKEN", "test-token")
 
 
-def test_resumes_on_task_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    bridge = _Bridge([_http_error(TASK_MISMATCH), _ok({}), _ok({"ok": True})])
+def test_task_mismatch_does_not_take_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:
+    bridge = _Bridge([_http_error(TASK_MISMATCH)])
     monkeypatch.setattr(browser, "urlopen", bridge)
 
-    result = browser._bridge_request("navigate", {"url": "https://example.test"})
-
-    assert result == {"ok": True}
-    assert bridge.commands == ["navigate", "resume", "navigate"]
-    # resume carries no action payload / action_id
-    assert bridge.payloads[1] == {}
-
-
-def test_resumes_on_stopped(monkeypatch: pytest.MonkeyPatch) -> None:
-    bridge = _Bridge([_http_error(STOPPED), _ok({}), _ok({"observation": "observe-ok"})])
-    monkeypatch.setattr(browser, "urlopen", bridge)
-
-    result = browser._bridge_request("observe")
-
-    assert result == {"observation": "observe-ok"}
-    assert bridge.commands == ["observe", "resume", "observe"]
-
-
-def test_retries_exactly_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A fourth request would trip _Bridge's "unexpected extra bridge request".
-    bridge = _Bridge([_http_error(TASK_MISMATCH), _http_error(TASK_MISMATCH), _http_error(TASK_MISMATCH)])
-    monkeypatch.setattr(browser, "urlopen", bridge)
-
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="TASK_MISMATCH: another agent task") as exc:
         browser._bridge_request("navigate", {"url": "https://example.test"})
 
-    assert bridge.commands == ["navigate", "resume", "navigate"]
+    assert bridge.commands == ["navigate"]
+    assert "Do not retry" in str(exc.value)
+    assert browser._is_session_state_error(exc.value)
+
+
+def test_user_pause_is_not_undone(monkeypatch: pytest.MonkeyPatch) -> None:
+    bridge = _Bridge([_http_error(STOPPED)])
+    monkeypatch.setattr(browser, "urlopen", bridge)
+
+    with pytest.raises(RuntimeError, match="STOPPED: the user paused") as exc:
+        browser._bridge_request("observe")
+
+    assert bridge.commands == ["observe"]
+    assert browser._is_session_state_error(exc.value)
 
 
 def test_no_resume_for_non_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:

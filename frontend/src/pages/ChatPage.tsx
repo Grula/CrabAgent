@@ -18,7 +18,12 @@ import {
   LayoutPanelTop,
   FileText,
   Archive,
+  Globe,
+  Mic,
+  Calendar as CalendarIcon,
 } from "lucide-react";
+import type { WorkTab } from "../App";
+import CalendarPage from "./CalendarPage";
 import * as goalsApi from "../api/goals";
 import { Goal as GoalData, GoalDraft } from "../types/Goal";
 import { GoalCard } from "../components/GoalCard";
@@ -74,7 +79,21 @@ import { SSEEvent } from "../api/events";
 import * as documentsApi from "../api/documents";
 
 interface Props {
+  /** Chat page (sessions + full chat) or Work page (side chat + work tabs). */
+  view: "chat" | "work";
+  onViewChange: (view: "chat" | "work") => void;
+  workTab: WorkTab;
+  onWorkTabChange: (tab: WorkTab) => void;
+  onActiveSessionChange?: (sessionId: string | null) => void;
+  onActiveBranchChange?: (branch: string) => void;
 }
+
+const WORK_TABS: { id: WorkTab; label: string; icon: React.ReactNode }[] = [
+  { id: "documents", label: "Documents", icon: <FileText size={13} /> },
+  { id: "browser", label: "Browser", icon: <Globe size={13} /> },
+  { id: "meeting", label: "Meeting", icon: <Mic size={13} /> },
+  { id: "calendar", label: "Calendar", icon: <CalendarIcon size={13} /> },
+];
 
 const STARTER_PROMPTS = [
   { icon: <Code size={14} />, label: "Debug an error", prompt: "Help me find the cause of this error:\n\n" },
@@ -83,7 +102,8 @@ const STARTER_PROMPTS = [
   { icon: <MessageSquare size={14} />, label: "Write a doc", prompt: "Write a document about " },
 ];
 
-export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, enterBrowserSignal }: { onActiveSessionChange?: (sessionId: string | null) => void; onActiveBranchChange?: (branch: string) => void; enterBrowserSignal?: number }) {
+export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange, onActiveSessionChange, onActiveBranchChange }: Props) {
+  const mode = view;
   const [workspace, setWorkspace] = useState<string>("");
   const [goal, setGoal] = useState<GoalData | null>(null);
   const [goalComposerOpen, setGoalComposerOpen] = useState(false);
@@ -161,50 +181,32 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
 
   const [docPanelMaximized, setDocPanelMaximized] = useState(false);
 
-  // ── Work mode state ────────────────────────────────────────────
-  type Mode = "chat" | "work";
-  const [mode, setMode] = useState<Mode>(() => {
-    try {
-      const saved = localStorage.getItem("crabagent_mode");
-      if (saved === "work" || saved === "chat") return saved;
-    } catch {}
-    return "chat";
-  });
+  // ── Work page state ────────────────────────────────────────────
   const [mobileWorkChat, setMobileWorkChat] = useState(false);
   const [pendingHighlight, setPendingHighlight] = useState<{ path?: string; text?: string } | null>(null);
-  type WorkspaceType = "document" | "code" | "prototype" | "meeting" | "markdown" | "browser";
+  // Kind of file open in the Documents tab.
+  type WorkspaceType = "document" | "code" | "prototype" | "markdown";
   const [workspaceType, setWorkspaceType] = useState<WorkspaceType>("document");
   const [meetingActive, setMeetingActive] = useState(false);
   const [fileTreeRefreshKey, setFileTreeRefreshKey] = useState(0);
   // +1 after each finished iteration (LLM call done, token usage persisted) to drive the stats bar refresh
   const [statsTick, setStatsTick] = useState(0);
 
+  /** Switch to the Work page, optionally on a given tab. */
+  const openWork = useCallback((tab?: WorkTab) => {
+    if (tab) onWorkTabChange(tab);
+    onViewChange("work");
+  }, [onViewChange, onWorkTabChange]);
+
   const handleStartMeeting = useCallback(() => {
     setMeetingActive(true);
-    setWorkspaceType("meeting");
-    setMode("work");
-  }, []);
+    openWork("meeting");
+  }, [openWork]);
 
-  const [browserMode, setBrowserMode] = useState(false);
-
-  const handleEnterBrowserMode = useCallback(() => {
-    setBrowserMode(true);
-    setWorkspaceType("browser");
-    setMeetingActive(false);
-    setDocState(null);
-    setCurrentDocPath(null);
-    setMode("work");
-  }, []);
-
-  useEffect(() => {
-    if (enterBrowserSignal && enterBrowserSignal > 0) {
-      handleEnterBrowserMode();
-    }
-  }, [enterBrowserSignal, handleEnterBrowserMode]);
-
-  useEffect(() => {
-    localStorage.setItem("crabagent_mode", mode);
-  }, [mode]);
+  // What the agent is told about the Work page with each prompt: the open
+  // file's kind on the Documents tab, otherwise the tab itself.
+  const promptWorkspaceType = mode === "work" ? (workTab === "documents" ? workspaceType : workTab) : undefined;
+  const promptWorkMode = mode === "work" && workTab === "documents";
 
   const docPanelWidthRef = useRef(docPanelWidth);
   docPanelWidthRef.current = docPanelWidth;
@@ -254,8 +256,8 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
         previewError: null,
         events: [{ message: `📄 ${data.operation as string} ${file}`, timestamp: Date.now(), status: "running" }],
       });
-      // Auto-switch to work mode when AI starts working on a document
-      setMode("work");
+      // Show the Work page's Documents tab when the AI starts working on a document
+      openWork("documents");
     } else if (type === "doc_op_delta") {
       setDocState((prev) => {
         if (!prev) return prev;
@@ -292,7 +294,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
       // Refresh file tree to show new/modified files
       setFileTreeRefreshKey((k) => k + 1);
     }
-  }, []);
+  }, [openWork]);
 
   const wrappedOnEvent = useCallback((event: SSEEvent) => {
     if (event.type === "iteration_end" || event.type === "sub_agent_end") {
@@ -346,7 +348,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
     if (name.toLowerCase().endsWith(".html") || name.toLowerCase().endsWith(".md")) {
       setCurrentDocPath(path);
       setDocState(null);
-      setMode("work");
+      openWork("documents");
       return;
     }
     setDocState({
@@ -360,7 +362,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
       workspace: ws || undefined,
     });
     setCurrentDocPath(path);
-    setMode("work");
+    openWork("documents");
     let installTimer: ReturnType<typeof setTimeout> | null = null;
     try {
       const preview = await documentsApi.getPreview(path, ws, (status) => {
@@ -393,7 +395,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
         events: [...prev.events, { message: `❌ Failed: ${e?.message || "Unknown error"}`, timestamp: Date.now(), status: "error" }],
       } : prev);
     }
-  }, [activeSession?.workspace, workspace]);
+  }, [activeSession?.workspace, workspace, openWork]);
 
   // Sync active session ID to parent (for NavBar language switcher reset)
   useEffect(() => {
@@ -838,8 +840,8 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
         activeEffort,
         selectedProvider ?? undefined,
         currentDocPath || undefined,
-        mode === "work" ? workspaceType : undefined,
-        mode === "work" && workspaceType !== "browser",
+        promptWorkspaceType,
+        promptWorkMode,
       );
     } catch (error) {
       if (!wasSending) setSending(false);
@@ -1031,12 +1033,12 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
         activeSession.session_id, text, selectedModel, undefined, effectiveAgent,
         activeEffort, selectedProvider ?? undefined,
         currentDocPath || undefined,
-        mode === "work" ? workspaceType : undefined,
-        mode === "work",
+        promptWorkspaceType,
+        promptWorkMode,
       )
         .catch(() => setSending(false));
     }
-  }, [activeSession, selectedModel, effectiveAgent, activeEffort, selectedProvider, currentDocPath, mode, workspaceType, sending, setMessages, setSending]);
+  }, [activeSession, selectedModel, effectiveAgent, activeEffort, selectedProvider, currentDocPath, promptWorkspaceType, promptWorkMode, sending, setMessages, setSending]);
 
   const completedTasks = agentRunBoardRuns.filter((t) => t.status === "done");
 
@@ -1329,7 +1331,7 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
       {mode === "work" && (
         <div className="w-12 shrink-0 border-r border-[var(--border)] bg-[var(--bg-secondary)] flex flex-col items-center py-2 gap-2">
           <button
-            onClick={() => setMode("chat")}
+            onClick={() => onViewChange("chat")}
             className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
             title={"Sessions"}
           >
@@ -1431,67 +1433,85 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
 
           {/* Workspace — right side (flex-1) */}
           <div className={cn("flex-1 flex-col min-w-0 bg-[var(--bg-primary)] md:flex", mobileWorkChat ? "hidden" : "flex")}>
-            {/* Work mode toolbar */}
-            <div className="flex items-center gap-2 px-3 h-11 overflow-x-auto overscroll-x-contain border-b border-[var(--border)] bg-[var(--bg-secondary)] shrink-0">
-              <button
-                onClick={() => setMode("chat")}
-                className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
-              >
-                <MessageSquare size={13} />
-                {"Chat Mode"}
-              </button>
-              <button
-                onClick={onNewSession}
-                className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
-              >
-                <Sparkles size={13} />
-                {"Start New Conversation"}
-              </button>
-              <button
-                onClick={handleStartMeeting}
-                className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-[var(--text-tertiary)] hover:text-[var(--accent)] hover:bg-[var(--accent-bg)] transition-colors"
-              >
-                {"Meeting"}
-              </button>
-              <button
-                onClick={handleEnterBrowserMode}
-                className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] transition-colors ${browserMode ? "text-[var(--brand)] bg-[var(--brand-bg)]" : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]"}`}
-              >
-                🌐 Collaboration Browser
-              </button>
-              <div className="flex-1 min-w-0" />
-              <WorkspaceSwitcher current={workspace} onChange={setWorkspace} />
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => setShowWorkFiles((v) => !v)}
-                title={showWorkFiles ? "Hide file browser" : "Show file browser"}
-                className={cn(showWorkFiles ? "text-[var(--brand)] bg-[var(--brand-bg)]" : "")}
-              >
-                {showWorkFiles ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
-              </Button>
-              {docState && (
+            {/* Work tabs */}
+            <div className="flex items-center gap-1 px-3 h-11 overflow-x-auto overscroll-x-contain border-b border-[var(--border)] bg-[var(--bg-secondary)] shrink-0">
+              <div role="tablist" aria-label="Work" className="flex items-center gap-0.5">
+                {WORK_TABS.map((tab) => {
+                  const active = workTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => onWorkTabChange(tab.id)}
+                      className={cn(
+                        "flex shrink-0 items-center gap-1.5 px-2.5 h-7 rounded-md text-[12px] transition-colors",
+                        active
+                          ? "text-[var(--text-primary)] bg-[var(--bg-tertiary)] font-medium"
+                          : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]",
+                      )}
+                    >
+                      {tab.icon}
+                      {tab.label}
+                      {tab.id === "meeting" && meetingActive && (
+                        <span aria-label="Meeting in progress" className="w-1.5 h-1.5 rounded-full bg-[var(--danger)]" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {workTab === "documents" && docState && (
                 <>
-                  <div className="w-px h-4 bg-[var(--border)]" />
-                  <span className="text-sm font-medium truncate text-[var(--text-primary)]">
+                  <div className="w-px h-4 mx-1 bg-[var(--border)]" />
+                  <span className="min-w-0 text-[13px] font-medium truncate text-[var(--text-primary)]">
                     {docState.fileName}
                   </span>
-                  <div className="flex-1" />
                   <button
-                    onClick={() => { setDocState(null); setCurrentDocPath(null); setMeetingActive(false); }}
+                    onClick={() => { setDocState(null); setCurrentDocPath(null); }}
+                    title={"Close document"}
+                    aria-label={"Close document"}
                     className="p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
                   >
                     <X size={14} />
                   </button>
                 </>
               )}
-              {meetingActive && (
+              {workTab === "meeting" && meetingActive && (
                 <>
-                  <div className="w-px h-4 bg-[var(--border)]" />
-                  <span className="text-sm font-medium text-[var(--text-primary)]">
-                    📝 {"Meeting title…"}
-                  </span>
-                  <div className="flex-1" />
+                  <div className="w-px h-4 mx-1 bg-[var(--border)]" />
+                  <button
+                    onClick={() => setMeetingActive(false)}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-[var(--text-tertiary)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] transition-colors"
+                  >
+                    <X size={13} />
+                    {"Close meeting"}
+                  </button>
+                </>
+              )}
+
+              <div className="flex-1 min-w-0" />
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={onNewSession}
+                title={"Start new conversation"}
+                aria-label={"Start new conversation"}
+              >
+                <Sparkles size={15} />
+              </Button>
+              {workTab === "documents" && (
+                <>
+                  <WorkspaceSwitcher current={workspace} onChange={setWorkspace} />
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => setShowWorkFiles((v) => !v)}
+                    title={showWorkFiles ? "Hide file browser" : "Show file browser"}
+                    className={cn(showWorkFiles ? "text-[var(--brand)] bg-[var(--brand-bg)]" : "")}
+                  >
+                    {showWorkFiles ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+                  </Button>
                 </>
               )}
             </div>
@@ -1500,19 +1520,35 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
             <div className="flex-1 min-h-0 flex">
               {/* Content area (left) */}
               <div className="flex-1 min-h-0 overflow-hidden">
-                {workspaceType === "browser" ? (
-                  <BrowserPanel />
-                ) : meetingActive && activeSession ? (
-                  <MeetingPanel
-                    sessionId={activeSession.session_id}
-                    onPrompt={(text) => {
-                      setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", content: text }]);
-                      setSending(true);
-                      sessionsApi.sendPrompt(activeSession.session_id, text, selectedModel, undefined, effectiveAgent, activeEffort, selectedProvider ?? undefined, currentDocPath || undefined)
-                        .catch(() => setSending(false));
-                    }}
-                  />
-                ) : workspaceType === "code" && currentDocPath ? (
+                {workTab === "browser" && <BrowserPanel />}
+                {workTab === "calendar" && <CalendarPage />}
+                {/* Stays mounted while the meeting runs, so switching tabs does not end it. */}
+                {meetingActive && activeSession && (
+                  <div className={cn("h-full", workTab !== "meeting" && "hidden")}>
+                    <MeetingPanel
+                      sessionId={activeSession.session_id}
+                      onPrompt={(text) => {
+                        setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", content: text }]);
+                        setSending(true);
+                        sessionsApi.sendPrompt(activeSession.session_id, text, selectedModel, undefined, effectiveAgent, activeEffort, selectedProvider ?? undefined, currentDocPath || undefined)
+                          .catch(() => setSending(false));
+                      }}
+                    />
+                  </div>
+                )}
+                {workTab === "meeting" && !(meetingActive && activeSession) && (
+                  <div className="h-full flex items-center justify-center text-[var(--text-tertiary)]">
+                    <div className="text-center">
+                      <Mic size={32} className="mx-auto mb-3 opacity-30" />
+                      {activeSession ? (
+                        <Button size="sm" onClick={handleStartMeeting}>{"Start meeting"}</Button>
+                      ) : (
+                        <p className="text-sm">{"Start or open a conversation to hold a meeting."}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {workTab === "documents" && (workspaceType === "code" && currentDocPath ? (
                   <CodePanel
                     key={currentDocPath}
                     initialPath={currentDocPath}
@@ -1578,21 +1614,23 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
                       <p className="text-sm">{"Nothing to work on. Ask AI to create or open a file."}</p>
                     </div>
                   </div>
-                )}
+                ))}
               </div>
 
-              {/* File list in work mode — right side */}
-              <FileBrowser
-                collapsed={!showWorkFiles}
-                onToggle={() => setShowWorkFiles((v) => !v)}
-                sessionId={activeSession?.session_id || null}
-                workspace={activeSession?.workspace || workspace || undefined}
-                onOpenDoc={(path, name) => {
-                  setShowWorkFiles(false);
-                  handleOpenDoc(path, name);
-                }}
-                refreshTrigger={fileTreeRefreshKey}
-              />
+              {/* File list on the Documents tab — right side */}
+              {workTab === "documents" && (
+                <FileBrowser
+                  collapsed={!showWorkFiles}
+                  onToggle={() => setShowWorkFiles((v) => !v)}
+                  sessionId={activeSession?.session_id || null}
+                  workspace={activeSession?.workspace || workspace || undefined}
+                  onOpenDoc={(path, name) => {
+                    setShowWorkFiles(false);
+                    handleOpenDoc(path, name);
+                  }}
+                  refreshTrigger={fileTreeRefreshKey}
+                />
+              )}
             </div>
           </div>
         </>
@@ -1654,15 +1692,6 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
               className={cn(showFiles ? "text-[var(--brand)] bg-[var(--brand-bg)]" : "")}
             >
               {showFiles ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={() => setMode("work")}
-              title={"Work Mode"}
-              className="text-[var(--text-tertiary)] hover:text-[var(--accent)] hover:bg-[var(--accent-bg)]"
-            >
-              <LayoutPanelLeft size={15} />
             </Button>
           </div>
 
@@ -1872,10 +1901,13 @@ export default function ChatPage({ onActiveSessionChange, onActiveBranchChange, 
         </>
       )}
 
-      <AgentRunBoard
-        tasks={agentRunBoardRuns}
-        onTaskClick={(t) => setViewingSubAgent(t.subId)}
-      />
+      {/* The live sub-agent board belongs to the Work page. */}
+      {mode === "work" && (
+        <AgentRunBoard
+          tasks={agentRunBoardRuns}
+          onTaskClick={(t) => setViewingSubAgent(t.subId)}
+        />
+      )}
 
       <TodoWidget
         sessionId={activeSession?.session_id || null}

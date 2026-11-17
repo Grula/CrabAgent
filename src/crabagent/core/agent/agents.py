@@ -46,8 +46,6 @@ _AGENT_EXECUTION_CONTRACT = (
     "Working rules:\n"
     "- You have a limited tool-iteration budget. Work in small steps and verify each one before building on it; "
     "once about 80% of the budget is used, stop starting new work and wrap up.\n"
-    "- Verify prompt-text changes by re-rendering the constant, grepping the new sentence, and running the "
-    "named test files only. Do not diff whole DB tables or copy the production DB.\n"
     "- Confirm your working directory before editing; if it does not match the task, stop and report "
     "instead of guessing.\n"
     "- Follow the project's rules. If they were not given to you, read AGENTS.md in the working directory "
@@ -341,7 +339,9 @@ def build_agent_switch_msg(agent_def: dict, extra_lines: list[str] | None = None
     # Dynamic capability hints (browser control) so the model knows its real
     # toolset instead of inferring it from the role wording.
     lines.extend(extra_lines or [])
-    lines.append(_AGENT_EXECUTION_CONTRACT)
+    # No _AGENT_EXECUTION_CONTRACT here: it is written for delegated sub-agents
+    # (work without asking, report files/commands/REMAINING) and contradicts the
+    # main chat prompt, where the agent talks to the user directly.
     lines.append(_AGENT_SWITCH_FOOTER)
     return {"role": "user", "content": "\n".join(lines), "agent": agent_name}
 
@@ -1045,6 +1045,18 @@ async def spawn_sub_agent(
     sub_context.spans = parent_context.spans
     sub_context._span_counter = parent_context._span_counter
     _saved_root_parent = None
+
+    if not background and parent_context.metadata.pop("_collab_browser_used", False):
+        # Hand the collaboration browser to the sub-agent. Each run is its own
+        # browser task, so while the parent waits here it would otherwise keep
+        # the sub-agent out (TASK_MISMATCH). The parent takes it back on its
+        # next browser call.
+        try:
+            from crabagent.core.agent.tools.collaboration_browser import _bridge_request
+
+            await asyncio.to_thread(_bridge_request, "release", context=parent_context)
+        except Exception:
+            logger.warning("Failed to hand the collaboration browser to %s", agent_name, exc_info=True)
 
     try:
         t0 = time.time()

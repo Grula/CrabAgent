@@ -13,6 +13,10 @@
       #stage { position: fixed; top: 45px; left: 0; right: 0; bottom: 0; }
       #frame { width: 100%; height: 100%; display: block; object-fit: contain; }
       #status { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: #8b949e; display: none; text-align: center; }
+      #msg { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); max-width: 90%; padding: 6px 12px; border-radius: 6px; display: none; z-index: 1; }
+      #msg.error { background: #3d1d20; border: 1px solid #f85149; color: #ffdcd7; }
+      #msg.info { background: #161b22; border: 1px solid #30363d; color: #8b949e; }
+      #open:disabled { opacity: 0.6; cursor: default; }
     </style>
   </head>
   <body>
@@ -25,6 +29,7 @@
     </div>
     <div id="stage">
       <img id="frame" alt="Collaboration browser" />
+      <div id="msg" role="status"></div>
       <div id="status"></div>
     </div>
     <script>
@@ -33,11 +38,35 @@
         var img = document.getElementById('frame');
         var status = document.getElementById('status');
         var urlInput = document.getElementById('url');
+        var openBtn = document.getElementById('open');
+        var msgBox = document.getElementById('msg');
         var timer = null, lastUrl = null;
 
         function setStatus(msg) {
           status.style.display = msg ? 'block' : 'none';
           status.textContent = msg || '';
+        }
+
+        // Notice over the live frame. It stays until the next action replaces it.
+        function showMsg(text, kind) {
+          msgBox.className = kind || 'error';
+          msgBox.textContent = text || '';
+          msgBox.style.display = text ? 'block' : 'none';
+        }
+
+        // Turn the bridge's error codes into something a person can act on.
+        function explain(detail) {
+          var d = String(detail || '');
+          if (d.indexOf('LOCAL_PREVIEW_RESERVED') === 0) return 'That port belongs to CrabAgent itself and cannot be opened here.';
+          if (d.indexOf('PRIVATE_NETWORK_BLOCKED') === 0) return 'Private network addresses are blocked. Local dev servers work on localhost, 127.0.0.1 or [::1].';
+          if (d.indexOf('NAVIGATION_FAILED') === 0) {
+            if (/ERR_CONNECTION_REFUSED/.test(d)) return 'Nothing is answering at that address. Is the server running?';
+            if (/ERR_NAME_NOT_RESOLVED/.test(d)) return 'That address could not be found.';
+            if (/Timeout/i.test(d)) return 'The page did not load within 30 seconds. Is the server running?';
+            return 'The page failed to load: ' + d.replace(/^NAVIGATION_FAILED:\s*/, '').split('\n')[0];
+          }
+          if (d.indexOf('HISTORY_FAILED') === 0) return 'Could not go there: ' + d.replace(/^HISTORY_FAILED:\s*/, '').split('\n')[0];
+          return d || 'The browser could not do that.';
         }
 
         function stop() { if (timer) { clearTimeout(timer); timer = null; } }
@@ -50,7 +79,11 @@
         function poll() {
           fetch('/api/collab-browser/frame', { headers: { Authorization: 'Bearer ' + token() } })
             .then(function (res) {
-              if (res.status !== 200) throw new Error('http ' + res.status);
+              if (res.status !== 200) {
+                var err = new Error('http ' + res.status);
+                err.status = res.status;
+                throw err;
+              }
               return res.blob().then(function (blob) {
                 var url = URL.createObjectURL(blob);
                 if (lastUrl) URL.revokeObjectURL(lastUrl);
@@ -60,7 +93,12 @@
                 timer = setTimeout(poll, 400);
               });
             })
-            .catch(function () {
+            .catch(function (err) {
+              if (err && err.status === 502) {
+                // Browser is up but busy (a page is loading): keep the last frame.
+                timer = setTimeout(poll, 1000);
+                return;
+              }
               stop();
               clearFrame();
               setStatus('browser unavailable');
@@ -74,23 +112,43 @@
             headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
             body: JSON.stringify(body)
           }).then(function (res) {
-            if (res.status !== 200) throw new Error('http ' + res.status);
-            return res.json();
+            return res.json().catch(function () { return {}; }).then(function (data) {
+              if (!res.ok) {
+                var err = new Error((data && data.detail) || ('http ' + res.status));
+                err.status = res.status;
+                throw err;
+              }
+              return data;
+            });
           }).then(function (data) {
             var result = (data && data.result) || {};
             if (result.url) urlInput.value = result.url;
+            showMsg('');
             setStatus('');
             if (!timer) poll();
-          }).catch(function () {
-            stop();
-            setStatus('browser unavailable');
-            setTimeout(function () { if (!timer) poll(); }, 5000);
+          }).catch(function (err) {
+            if (!err.status || err.status === 503) {
+              // The bridge itself is down: stop the frame and retry later.
+              stop();
+              showMsg('');
+              setStatus('browser unavailable');
+              setTimeout(function () { if (!timer) poll(); }, 5000);
+              return;
+            }
+            // The browser is fine; only this request was refused. Keep the frame live.
+            showMsg(err.status === 401 ? 'Your session expired. Sign in again.' : explain(err.message));
+            if (!timer) poll();
           });
         }
 
         function navigate() {
           var url = urlInput.value.trim();
-          if (url) post('/api/collab-browser/navigate', { url: url });
+          if (!url || openBtn.disabled) return;
+          openBtn.disabled = true;
+          showMsg('Opening ' + url + '…', 'info');
+          post('/api/collab-browser/navigate', { url: url }).then(function () {
+            openBtn.disabled = false;
+          });
         }
 
         document.getElementById('open').addEventListener('click', navigate);

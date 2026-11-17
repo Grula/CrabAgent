@@ -45,7 +45,7 @@ def _bridge_request(command: str, payload: dict[str, Any] | None = None, *, cont
         metadata["_collab_browser_used"] = True
     # The binding is derived from trusted Agent context, never a model argument.
     task_id = str(metadata.get("_run_id") or metadata.setdefault("_computer_task_id", str(uuid.uuid4())))
-    def send(command: str, payload: dict[str, Any], *, may_resume: bool) -> dict[str, Any]:
+    def send(command: str, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(
             {
                 "protocol_version": 1,
@@ -76,12 +76,18 @@ def _bridge_request(command: str, payload: dict[str, Any] | None = None, *, cont
                 reason = str(json.loads(detail).get("detail") or "")
             except (ValueError, AttributeError):
                 reason = ""
-            if may_resume and reason.startswith(("TASK_MISMATCH", "STOPPED")):
-                try:
-                    send("resume", {}, may_resume=False)
-                except RuntimeError:
-                    pass
-                return send(command, payload, may_resume=False)
+            # Never resume here: that would take the browser from another agent
+            # task, or undo a pause the user asked for. Say so and let the agent stop.
+            if reason.startswith("TASK_MISMATCH"):
+                raise RuntimeError(
+                    "TASK_MISMATCH: another agent task is using the collaboration browser. "
+                    "Do not retry; finish without the browser or tell the user it is busy."
+                ) from exc
+            if reason.startswith("STOPPED"):
+                raise RuntimeError(
+                    "STOPPED: the user paused browser actions. Do not retry; "
+                    "tell the user what you were about to do and wait for them."
+                ) from exc
             raise RuntimeError(f"Collaboration browser rejected {command}: {detail}") from exc
         except URLError as exc:
             raise RuntimeError(f"Cannot reach the local collaboration browser: {exc.reason}") from exc
@@ -90,7 +96,7 @@ def _bridge_request(command: str, payload: dict[str, Any] | None = None, *, cont
             raise RuntimeError(str(data.get("detail", "Collaboration browser request failed")))
         return data["result"]
 
-    return send(command, action_payload, may_resume=True)
+    return send(command, action_payload)
 
 
 def _result(value: dict[str, Any]) -> str:

@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -1577,6 +1578,9 @@ def _run_serve(args):
             begin_shutdown()
             super().handle_exit(sig, frame)
 
+    # The collaboration browser bridge never lets the agent open CrabAgent's own
+    # API port; it reads the port from here.
+    os.environ["CRAB_APP_PORT"] = str(args.port)
     app = create_app()
     # Streams end within a second of Ctrl+C (see serve/shutdown.py). The timeout is
     # a backstop for any other request that would otherwise keep shutdown waiting.

@@ -1,4 +1,4 @@
-import { MessageSquare, Users, Brain, Settings, Sun, Moon, LogOut, Coins, Calendar, PanelTop } from "lucide-react";
+import { MessageSquare, Users, Brain, Settings, Sun, Moon, LogOut, Coins, LayoutPanelLeft } from "lucide-react";
 import { useTheme } from "../lib/theme";
 import { cn } from "../lib/cn";
 import { useState } from "react";
@@ -13,9 +13,9 @@ interface NavItem {
 
 const items: NavItem[] = [
   { id: "chat", label: "Chat", icon: <MessageSquare size={15} /> },
-  { id: "browser", label: "Browser", icon: <PanelTop size={15} /> },
+  // Browser, Meeting, Calendar, documents and the agent run board live in Work.
+  { id: "work", label: "Work", icon: <LayoutPanelLeft size={15} /> },
   { id: "agents", label: "Agents", icon: <Users size={15} /> },
-  { id: "calendar", label: "Calendar", icon: <Calendar size={15} /> },
   { id: "memory", label: "Memory", icon: <Brain size={15} /> },
   { id: "usage", label: "Usage", icon: <Coins size={15} /> },
   { id: "settings", label: "Settings", icon: <Settings size={15} /> },

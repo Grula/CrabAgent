@@ -6,7 +6,6 @@ import AgentsPage from "./pages/AgentsPage";
 import MemoryPage from "./pages/MemoryPage";
 import SettingsPage from "./pages/SettingsPage";
 import UsagePage from "./pages/UsagePage";
-import CalendarPage from "./pages/CalendarPage";
 import { NavBar } from "./components/NavBar";
 import { cn } from "./lib/cn";
 import { connectGlobalSSE } from "./api/monitor";
@@ -15,13 +14,41 @@ import { FtsStatusBar } from "./components/FtsStatusBar";
 import { BackgroundTasks } from "./components/BackgroundTasks";
 import { MobileConsole } from "./pages/mobile/MobileConsole";
 
-export type PageId = "chat" | "browser" | "agents" | "memory" | "usage" | "calendar" | "settings";
+export type PageId = "chat" | "work" | "agents" | "memory" | "usage" | "settings";
 
-const pageIds: readonly PageId[] = ["chat", "browser", "agents", "memory", "usage", "calendar", "settings"];
+/** Tabs of the Work page. */
+export type WorkTab = "documents" | "browser" | "meeting" | "calendar";
 
-function pageFromHash(): PageId | null {
-  const page = window.location.hash.replace(/^#\/?/, "");
-  return pageIds.includes(page as PageId) ? page as PageId : null;
+const pageIds: readonly PageId[] = ["chat", "work", "agents", "memory", "usage", "settings"];
+const workTabs: readonly WorkTab[] = ["documents", "browser", "meeting", "calendar"];
+
+const PAGE_STORAGE_KEY = "crabagent_mode";
+const WORK_TAB_STORAGE_KEY = "crabagent_work_tab";
+
+/** Parse `#/page` or `#/work/<tab>`. The old `#/browser` and `#/calendar` pages are Work tabs now. */
+export function routeFromHash(): { page: PageId; tab?: WorkTab } | null {
+  const [first, second] = window.location.hash.replace(/^#\/?/, "").split("/");
+  if (first === "browser" || first === "calendar") return { page: "work", tab: first };
+  if (!pageIds.includes(first as PageId)) return null;
+  const tab = first === "work" && workTabs.includes(second as WorkTab) ? second as WorkTab : undefined;
+  return { page: first as PageId, tab };
+}
+
+function readStored<T extends string>(key: string, allowed: readonly T[]): T | null {
+  try {
+    const value = localStorage.getItem(key);
+    return allowed.includes(value as T) ? value as T : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Storage can be unavailable (private mode); the choice just isn't remembered.
+  }
 }
 
 interface FtsRebuild {
@@ -31,11 +58,31 @@ interface FtsRebuild {
 }
 
 function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
-  const [page, setPage] = useState<PageId>(() => pageFromHash() ?? "chat");
+  const [page, setPage] = useState<PageId>(() => {
+    const route = routeFromHash();
+    if (route) return route.page;
+    return readStored(PAGE_STORAGE_KEY, ["chat", "work"] as const) ?? "chat";
+  });
+  const [workTab, setWorkTab] = useState<WorkTab>(
+    () => routeFromHash()?.tab ?? readStored(WORK_TAB_STORAGE_KEY, workTabs) ?? "documents",
+  );
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeBranch, setActiveBranch] = useState<string | undefined>();
-  const [enterBrowser, setEnterBrowser] = useState(0);
   const [ftsStatus, setFtsStatus] = useState<FtsRebuild | null>(null);
+
+  // Chat and Work share one ChatPage (same conversation); remember which one was open.
+  useEffect(() => {
+    if (page === "chat" || page === "work") writeStored(PAGE_STORAGE_KEY, page);
+  }, [page]);
+  useEffect(() => {
+    writeStored(WORK_TAB_STORAGE_KEY, workTab);
+  }, [workTab]);
+  // Keep the address in step with what is shown, so a reload (or a copied
+  // link) reopens the same page and tab. replaceState fires no hashchange.
+  useEffect(() => {
+    const hash = page === "work" ? `#/work/${workTab}` : `#/${page}`;
+    if (window.location.hash !== hash) window.history.replaceState(null, "", hash);
+  }, [page, workTab]);
 
   // Lightweight health poll — only for FTS progress, never blocks the UI
   const checkHealth = useCallback(async () => {
@@ -59,17 +106,14 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   }, [checkHealth]);
 
   const handleNavigate = useCallback((target: PageId) => {
-    if (target === "browser") {
-      setPage("chat");
-      setEnterBrowser((n) => n + 1);
-    } else {
-      setPage(target);
-    }
+    setPage(target);
   }, []);
   useEffect(() => {
     const handleHashChange = () => {
-      const targetPage = pageFromHash();
-      if (targetPage) setPage(targetPage);
+      const route = routeFromHash();
+      if (!route) return;
+      setPage(route.page);
+      if (route.tab) setWorkTab(route.tab);
     };
     window.addEventListener("hashchange", handleHashChange);
     return () => window.removeEventListener("hashchange", handleHashChange);
@@ -95,23 +139,28 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
     return () => es?.close();
   }, []);
 
+  const isChatOrWork = page === "chat" || page === "work";
+
   return (
     <div className="flex flex-col h-dvh overflow-hidden">
       <NavBar currentPage={page} onNavigate={handleNavigate} onLogout={onLogout} sessionId={activeSessionId} />
-      {page === "chat" && activeSessionId && <BackgroundTasks key={`${activeSessionId}:${activeBranch}`} sessionId={activeSessionId} activeBranch={activeBranch} />}
+      {isChatOrWork && activeSessionId && <BackgroundTasks key={`${activeSessionId}:${activeBranch}`} sessionId={activeSessionId} activeBranch={activeBranch} />}
       <div className="flex-1 relative overflow-hidden">
-        <div className={cn("absolute inset-0", page !== "chat" && "hidden")}>
+        {/* Chat and Work are two views of one ChatPage, so the conversation, the
+            live event stream and open documents survive switching between them. */}
+        <div className={cn("absolute inset-0", !isChatOrWork && "hidden")}>
           <ChatPage
+            view={page === "work" ? "work" : "chat"}
+            onViewChange={setPage}
+            workTab={workTab}
+            onWorkTabChange={setWorkTab}
             onActiveSessionChange={setActiveSessionId}
             onActiveBranchChange={setActiveBranch}
-            enterBrowserSignal={enterBrowser}
           />
         </div>
-        {page === "browser" && null}
         {page === "agents" && <div className="absolute inset-0"><AgentsPage /></div>}
         {page === "memory" && <div className="absolute inset-0"><MemoryPage /></div>}
         {page === "usage" && <div className="absolute inset-0"><UsagePage /></div>}
-        {page === "calendar" && <div className="absolute inset-0"><CalendarPage /></div>}
         {page === "settings" && <div className="absolute inset-0"><SettingsPage /></div>}
       </div>
 

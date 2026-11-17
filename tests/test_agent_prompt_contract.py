@@ -4,7 +4,7 @@ These pin two behaviours of the agent prompt text:
 
 1. Sub-agent prompts carry a single shared *execution contract* (budget, cwd,
    tool-call markup, REMAINING list, independent work) and no longer carry the
-   old "Be thorough" wording.
+   old "Be thorough" wording. The chat agent-switch message does not carry it.
 2. The team prompt states the pipeline granularity rule.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ PIPELINE_GRANULARITY_TEXT = (
     "If a step has more than ~5 deliverables, split it into separate steps."
 )
 
-# Prefix of the agent-switch footer; the contract has to sit *before* it.
+# Prefix of the agent-switch footer, which ends the switch message.
 SWITCH_TOOL_LIST_PREFIX = "Your actually available tools are the ones provided"
 
 AGENT_DEF = {
@@ -90,16 +90,20 @@ class TestSystemPromptContract:
 
 
 class TestAgentSwitchMsgContract:
-    def test_includes_execution_contract(self):
-        msg = agents_module.build_agent_switch_msg(AGENT_DEF, extra_lines=None)
-        assert _contract() in msg["content"]
+    # The switch message is for the main chat agent, which talks to the user;
+    # the sub-agent contract ("don't stop to ask questions", REMAINING report)
+    # contradicts the main system prompt there.
+    def test_excludes_execution_contract(self):
+        content = agents_module.build_agent_switch_msg(AGENT_DEF, extra_lines=None)["content"]
+        assert _contract() not in content
+        assert "work independently" not in content
 
-    def test_contract_precedes_tool_list_note(self):
+    def test_ends_with_tool_list_note(self):
         content = agents_module.build_agent_switch_msg(AGENT_DEF, extra_lines=None)["content"]
         assert SWITCH_TOOL_LIST_PREFIX in content, (
             "agent-switch footer wording changed; update this test deliberately"
         )
-        assert content.index(_contract()) < content.index(SWITCH_TOOL_LIST_PREFIX)
+        assert content.rstrip().splitlines()[-1].startswith(SWITCH_TOOL_LIST_PREFIX)
 
 
 # ── _PIPELINE_GRANULARITY ─────────────────────────────────────────────

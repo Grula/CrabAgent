@@ -42,6 +42,7 @@ from crabagent.core.computer.url_policy import (
     allowed_network_url,
     normalize_browser_url,
 )
+from crabagent.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,12 @@ ACTION_ID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+
+# The person using the web viewer. Their commands never bind the browser to a
+# task, are never refused because an agent task holds it, and are not paused by
+# ``stop`` (stop pauses the agent, not the person). Only the viewer's own controls.
+USER_TASK_ID = "00000000-0000-0000-0000-000000000000"
+USER_COMMANDS = frozenset({"authorize_local_preview", "navigate", "back", "forward", "reload"})
 
 ALLOWED_COMMANDS = frozenset(
     {
@@ -230,7 +237,9 @@ class BrowserBridgeService:
     # ------------------------------------------------------------------ #
     def _forbidden_ports(self) -> list[int]:
         ports: list[int] = []
-        serve_port = os.environ.get("CRAB_APP_PORT")
+        # Fall back to the configured port when the server was started some other
+        # way (e.g. uvicorn directly) and CRAB_APP_PORT was never exported.
+        serve_port = os.environ.get("CRAB_APP_PORT") or str(settings.serve_port)
         if serve_port:
             try:
                 ports.append(int(serve_port))
@@ -354,8 +363,10 @@ class BrowserBridgeService:
 
     async def _capture_jpeg(self) -> bytes:
         await self._ensure_browser()
+        # The viewer polls every few hundred ms; while a slow page loads a
+        # screenshot can stall, so give up quickly and let the next poll retry.
         data = await self._page.screenshot(
-            type="jpeg", quality=FRAME_JPEG_QUALITY, full_page=False
+            type="jpeg", quality=FRAME_JPEG_QUALITY, full_page=False, timeout=5_000
         )
         if not data:
             raise RuntimeError("screenshot produced no bytes")
@@ -440,12 +451,17 @@ class BrowserBridgeService:
         task_id: str,
         queued_at_epoch: int,
     ) -> dict[str, Any]:
-        if self.task_id and self.task_id != task_id and command not in ("stop", "resume", "status"):
-            raise BridgeError("TASK_MISMATCH: stop and resume before switching browser tasks")
-        if queued_at_epoch != self.stop_epoch and command not in ("status", "stop", "resume"):
-            raise BridgeError("STOPPED: action queued before stop")
-        if not self.task_id and not self.stopped and command not in ("stop", "resume", "status", "release"):
-            self.task_id = task_id
+        as_user = task_id == USER_TASK_ID
+        if as_user:
+            if command not in USER_COMMANDS:
+                raise BridgeError("Invalid bridge command for the viewer")
+        else:
+            if self.task_id and self.task_id != task_id and command not in ("stop", "resume", "status"):
+                raise BridgeError("TASK_MISMATCH: another task is using the collaboration browser")
+            if queued_at_epoch != self.stop_epoch and command not in ("status", "stop", "resume"):
+                raise BridgeError("STOPPED: action queued before stop")
+            if not self.task_id and not self.stopped and command not in ("stop", "resume", "status", "release"):
+                self.task_id = task_id
 
         if command in MUTATING_COMMANDS:
             action_id = payload.get("action_id")
@@ -458,7 +474,7 @@ class BrowserBridgeService:
             if len(self.action_ids) > MAX_ACTION_IDS:
                 self.action_ids.pop(next(iter(self.action_ids)))
 
-        return await self._handle_command(command, payload)
+        return await self._handle_command(command, payload, as_user=as_user)
 
     def _purge_action_ids(self) -> None:
         now = time.monotonic()
@@ -562,7 +578,7 @@ class BrowserBridgeService:
     # ------------------------------------------------------------------ #
     # Command handlers
     # ------------------------------------------------------------------ #
-    async def _handle_command(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_command(self, command: str, payload: dict[str, Any], *, as_user: bool = False) -> dict[str, Any]:
         if command == "release":
             self.task_id = None
             self._invalidate("task-release")
@@ -582,7 +598,7 @@ class BrowserBridgeService:
             self._invalidate("resume")
             return {"resumed": True}
 
-        if self.stopped and command not in ("status", "observe", "computer_observe", "screenshot"):
+        if self.stopped and not as_user and command not in ("status", "observe", "computer_observe", "screenshot"):
             raise BridgeError("STOPPED: browser actions are paused")
 
         if command == "status":

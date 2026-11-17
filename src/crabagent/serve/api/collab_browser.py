@@ -9,6 +9,8 @@ import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
+from crabagent.core.computer.bridge_service import USER_TASK_ID
+from crabagent.core.computer.url_policy import local_preview_origin
 from crabagent.serve.deps import get_current_user
 
 router = APIRouter(tags=["collab-browser"])
@@ -18,10 +20,10 @@ router = APIRouter(tags=["collab-browser"])
 PROTOCOL_VERSION = 1
 RUNTIME_ID = "browser:collaboration"
 
-# The bridge binds the first task_id it sees and rejects later commands from a
-# different one (TASK_MISMATCH). The web viewer is therefore one logical task:
-# a single uuid4 generated per process, shared by every proxied command.
-WEB_TASK_ID = str(uuid.uuid4())
+# The viewer speaks for the signed-in person, not for an agent task. The bridge
+# never binds the browser to this id and never refuses it because an agent holds
+# the browser, so the viewer has no need to take the browser over (resume).
+WEB_TASK_ID = USER_TASK_ID
 
 
 class NavigateBody(BaseModel):
@@ -70,14 +72,13 @@ async def _forward_command(command: str, payload: dict[str, Any]) -> dict[str, A
         async with aiohttp.ClientSession(timeout=timeout) as session:
             status, data = await _post_command(session, url, token, command, payload)
             detail = str((data or {}).get("detail") or "")
-            # The browser is shared with the agent; if another task owns the
-            # binding (or the session is paused), take it over once so the web
-            # viewer stays usable.
-            if status != 200 and (detail.startswith("TASK_MISMATCH") or detail.startswith("STOPPED")):
-                await _post_command(session, url, token, "resume", {})
-                status, data = await _post_command(session, url, token, command, payload)
-            if status != 200:
+            if status == 401 or status >= 500:
                 raise HTTPException(status_code=503, detail="collaboration browser unreachable")
+            if status != 200:
+                # The bridge is up but refused the command (blocked address, page
+                # failed to load, ...). Pass its reason on so the viewer can show it.
+                reason = detail or "collaboration browser request failed"
+                raise HTTPException(status_code=400, detail=reason[:300])
             return data
     except HTTPException:
         raise
@@ -94,6 +95,10 @@ async def get_collab_browser_frame(user=Depends(get_current_user)):
         timeout = aiohttp.ClientTimeout(total=5)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(f"{base_url}/frame", headers=headers) as resp:
+                if resp.status == 500:
+                    # The browser is running but could not take a picture right now
+                    # (usually a page still loading); the viewer keeps its last frame.
+                    raise HTTPException(status_code=502, detail="frame capture failed")
                 if resp.status != 200:
                     raise HTTPException(status_code=503, detail="collaboration browser unreachable")
                 data = await resp.read()
@@ -105,10 +110,36 @@ async def get_collab_browser_frame(user=Depends(get_current_user)):
     return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
+_LOOPBACK_PREFIXES = ("localhost", "127.0.0.1", "[::1]")
+
+
+def _viewer_url(raw: str) -> str:
+    """Local dev servers speak plain http, so a bare ``localhost:5173`` gets
+    ``http://``. Every other bare host keeps the bridge default (https)."""
+    value = raw.strip()
+    if "://" not in value and value.lower().startswith(_LOOPBACK_PREFIXES):
+        return f"http://{value}"
+    return value
+
+
+def _is_local_preview(url: str) -> bool:
+    try:
+        local_preview_origin(url)
+    except ValueError:
+        return False
+    return True
+
+
 @router.post("/navigate")
 async def collab_browser_navigate(body: NavigateBody, user=Depends(get_current_user)):
+    url = _viewer_url(body.url)
+    if _is_local_preview(url):
+        # The signed-in user typed this loopback address into the viewer, which is
+        # the approval the agent's authorize tool asks for. The bridge still grants
+        # only this exact origin, for 30 minutes, and refuses CrabAgent's own ports.
+        await _forward_command("authorize_local_preview", {"url": url})
     return await _forward_command(
-        "navigate", {"url": body.url, "action_id": str(uuid.uuid4())}
+        "navigate", {"url": url, "action_id": str(uuid.uuid4())}
     )
 
 
