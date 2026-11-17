@@ -181,3 +181,85 @@ async def test_chat_agent_sees_only_its_skills(monkeypatch: pytest.MonkeyPatch, 
     assert _offered(context.base_tool_registry or context.tool_registry) == sub_pool
     if profile["tool_permissions"].get("bash") == "deny":
         assert context.tool_registry.get("bash") is None
+
+
+# --- Project skills come from the chat's own project ----------------------------------
+
+
+def test_project_skills_follow_the_chats_workspace(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    from crabagent.core.config import settings
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))  # no global skills in the way
+
+    for project in ("alpha", "beta"):
+        skill = tmp_path / project / ".crabagent" / "skills" / "run-app"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(f"---\nname: run-app\ndescription: run {project}\n---\nbody")
+    from crabagent.core.agent.skill.loader import discover_skills
+
+    alpha = discover_skills(settings.skill_discovery_dirs(tmp_path / "alpha"))
+    beta = discover_skills(settings.skill_discovery_dirs(tmp_path / "beta"))
+    empty = discover_skills(settings.skill_discovery_dirs(tmp_path))
+
+    assert alpha["run-app"].description == "run alpha"
+    assert beta["run-app"].description == "run beta"
+    # a project without its own run guide gets the general one CrabAgent ships
+    assert empty["run-app"].location.parent.name == "skills"
+    assert tmp_path not in empty["run-app"].location.parents
+
+
+# --- request_help: a delegated agent can ask one teammate ----------------------------
+
+
+async def test_delegated_agent_can_ask_a_teammate_once(monkeypatch: pytest.MonkeyPatch):
+    from crabagent.core.agent.context import AgentContext
+    from crabagent.core.agent.tools import agent as agent_tools
+
+    team = {
+        "coder": {"name": "coder", "display_name": "Coder", "role": "Software Engineer", "goal": "g",
+                  "backstory": "", "tool_permissions": {}, "allow_delegation": True},
+        "researcher": {"name": "researcher", "display_name": "Researcher", "role": "Web Researcher", "goal": "g",
+                       "backstory": "", "tool_permissions": {}, "allow_delegation": True},
+    }
+
+    async def get_agent(name):
+        return team.get(name)
+
+    async def registry():
+        return list(team.values())
+
+    async def returns(value):
+        return value
+
+    monkeypatch.setattr(agents_module, "get_agent", get_agent)
+    monkeypatch.setattr(agents_module, "load_agent_registry", registry)
+    monkeypatch.setattr(agents_module, "_load_shared_context", lambda *a, **k: returns(""))
+    monkeypatch.setattr(agents_module, "load_sub_agent_model_map", lambda *a, **k: returns({}))
+    seen: dict[str, object] = {}
+
+    async def run_agent(sub_context, task, *args, **kwargs):
+        name = sub_context.current_agent
+        seen[name] = sub_context
+        if name == "coder":
+            answer = await agent_tools.request_help("researcher", "std::span::subspan bounds?", context=sub_context)
+            seen["answer"] = answer
+            # the helper cannot ask anyone in turn
+            seen["helper_asks"] = await agent_tools.request_help("coder", "x", context=seen["researcher"])
+        sub_context.messages.append({"role": "assistant", "content": f"{name} done"})
+        return sub_context.messages
+
+    monkeypatch.setattr(agents_module, "run_agent", run_agent, raising=False)
+    monkeypatch.setattr("crabagent.core.agent.loop.run_agent", run_agent)
+    agents_module._running_sub_agents.clear()
+    parent = AgentContext(workspace=Path("/tmp"), metadata={"user_id": 0})
+    parent.tool_registry = ToolRegistry()
+    parent.tool_registry._tools["request_help"] = agent_tools.registry.get("request_help")
+
+    await agents_module.spawn_sub_agent(parent, agent_name="coder", task="fix it", agent_def=team["coder"])
+
+    coder = seen["coder"]
+    assert "request_help" in coder.tool_registry._tools
+    assert "Teammates you can ask: `researcher` (Web Researcher)." in coder.system_prompt
+    assert "researcher done" in seen["answer"]
+    assert "request_help" not in seen["researcher"].tool_registry._tools
+    assert seen["helper_asks"].startswith("Error: cannot request help")

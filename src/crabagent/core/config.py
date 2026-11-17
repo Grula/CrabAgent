@@ -119,12 +119,17 @@ class Settings(BaseSettings):
             return model or None
         return None
 
-    def skill_discovery_dirs(self) -> list[Path]:
+    def skill_discovery_dirs(self, workspace: Path | None = None) -> list[Path]:
         """Directories scanned for skills, lowest priority first.
 
         A skill found in a later directory replaces one with the same name from
         an earlier directory, so workspace and user skills override bundled ones.
+
+        ``workspace`` is the project a chat works in. Project skills come from
+        that folder, never from the folder the server happened to start in, so
+        one project's skills don't leak into another's chats.
         """
+        workspace = workspace or self.workspace
         dirs: list[Path] = []
         # Skills shipped with CrabAgent. Listed first so that every workspace
         # gets them, including workspaces created before a skill was added.
@@ -135,11 +140,11 @@ class Settings(BaseSettings):
             dirs.append(self.skills_dir)
         for p in self.skills_paths:
             dirs.append(Path(p))
-        candidate = self.workspace / ".crabagent" / "skills"
+        candidate = workspace / ".crabagent" / "skills"
         if candidate.exists():
             dirs.append(candidate)
         if not self.disable_opencode_skills:
-            candidate = self.workspace / ".opencode" / "skills"
+            candidate = workspace / ".opencode" / "skills"
             if candidate.exists():
                 dirs.append(candidate)
         home = Path.home()

@@ -23,8 +23,10 @@ Complexity, ambiguity, or a greenfield project on their own do **not** trigger e
    and relevant code. Never ask for something you can find out yourself.
 2. **Ask only about what the user owns:** scope, target users, user-facing behavior,
    platform support, data/API contracts, domain values, budgets, where the project lives,
-   cross-system architecture. Technical choices you can make (library, framework,
-   algorithm, file layout) are yours - decide them and say what you chose.
+   cross-system architecture, and design choices that set the direction and are costly
+   to undo later (architecture, data model, public API, a framework or major
+   dependency). Details that are cheap to change later (algorithm, file layout,
+   internal helpers, naming) are yours - decide them and say what you chose.
 3. **Prefer a stated default.** If a narrow, reversible default safely satisfies the
    request, state it as an assumption and keep going instead of asking.
 4. **One decision per question,** phrased as an outcome, with your recommended answer

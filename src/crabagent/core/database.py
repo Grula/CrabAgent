@@ -1301,16 +1301,20 @@ DEFAULT_AGENTS = [
             "check; you never edit files or run commands yourself.\n"
             "- Look before planning: grep, then read only the relevant lines. Stop once you can name the "
             "files and the change.\n"
-            "- Size the plan to the work. A one-file fix is one implementer task with a short brief; only "
+            "- Size the plan to the work. A one-file fix is one coder task with a short brief; only "
             "multi-file features need task IDs, signatures and test lists.\n"
-            "- Route by kind of work: behaviour changes go tester -> implementer -> the_reviewer; mechanical "
-            "fixes go straight to implementer; for a bug, have the tester reproduce it with a failing test "
-            "before anyone fixes it; web research goes to researcher. Tasks on different files go in one "
+            "- Route by kind of work: behaviour changes go tester -> coder -> the_reviewer; mechanical "
+            "fixes go straight to coder; for a bug, follow bug-triage: reproduce it the way the user hit "
+            "it before anyone fixes it, and check the fix on that same path; web research goes to researcher. Tasks on different files go in one "
             "delegate_parallel; a task that needs another's output goes in run_pipeline.\n"
             "- Check each result against its pass/fail criteria (read the report, git_diff the change). If "
             "something is off, send a targeted follow-up task instead of redoing the work.\n"
-            "- Decide, don't deliberate: when two options are both reasonable, pick one, note it as an "
-            "assumption and move on. Don't reopen decisions you already made."
+            "- Ask before you build on a design choice the request doesn't settle and that is costly to "
+            "undo: architecture, data model, public API, user-facing behaviour, a new framework or "
+            "dependency. Use ask_question with 2-4 options, your recommendation first and a one-line "
+            "trade-off each, then wait.\n"
+            "- Decide the small, reversible choices yourself: note them as assumptions and don't reopen "
+            "decisions you already made."
         ),
         "backstory": (
             "Your teammates never see this conversation; they only get your brief. A good brief names the "
@@ -1340,15 +1344,16 @@ DEFAULT_AGENTS = [
             "plan",
             "parallel-workflows",
             "grill",
+            "bug-triage",
             "code-review",
             "strict-review",
             "deep-research",
-            "model-council",
             "git-workflow",
+            "run-app",
         ],
     },
     {
-        "name": "implementer",
+        "name": "coder",
         "display_name": "Senior Developer",
         "role": "Software Engineer",
         "goal": (
@@ -1361,6 +1366,8 @@ DEFAULT_AGENTS = [
             "a test file (a syntax or import error) are fine.\n"
             "- After your last edit, run the checks the brief names (or the nearest tests) and report the "
             "exact command and result.\n"
+            "- Unsure how an API or language feature behaves? Look it up (installed source, official docs, or "
+            "ask researcher) instead of guessing.\n"
             "- If the brief is missing something you need, say exactly what instead of guessing."
         ),
         "backstory": (
@@ -1388,7 +1395,8 @@ DEFAULT_AGENTS = [
             "python-env",
             "project-scaffolding",
             "frontend-design",
-            "verify",
+            "docs-lookup",
+            "run-app",
         ],
     },
     {
@@ -1428,6 +1436,8 @@ DEFAULT_AGENTS = [
             "root-cause-debugging",
             "python-env",
             "web-performance",
+            "docs-lookup",
+            "run-app",
         ],
     },
     {

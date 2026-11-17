@@ -73,7 +73,7 @@ class TestRemovedBuiltins:
         await db._ensure_default_agents()
         async with agents_db() as session:
             rows = {r.name: r for r in (await session.execute(select(db.AgentProfile))).scalars()}
-        assert set(rows) == {"architect", "implementer", "tester", "the_reviewer", "researcher"}
+        assert set(rows) == {"architect", "coder", "tester", "the_reviewer", "researcher"}
         assert "plan" in json.loads(rows["architect"].skills)
         assert "docx" not in json.loads(rows["architect"].skills)
         assert json.loads(rows["the_reviewer"].skills) == ["strict-review", "code-review", "security-review", "git-workflow"]
@@ -106,20 +106,20 @@ class TestDeleteEndpoint:
             return await delete_agent_profile(name, user=None, db=session)
 
     async def test_deleting_a_builtin_is_remembered_and_clears_the_default(self, agents_db):
-        await _add(agents_db, _profile("implementer", builtin=True), _profile("architect"),
-                   db.AppSetting(key="default_agent", value="implementer"))
-        assert (await self._delete(agents_db, "implementer"))["status"] == "deleted"
+        await _add(agents_db, _profile("coder", builtin=True), _profile("architect"),
+                   db.AppSetting(key="default_agent", value="coder"))
+        assert (await self._delete(agents_db, "coder"))["status"] == "deleted"
         async with agents_db() as session:
             settings = {row.key: row.value for row in (await session.execute(select(db.AppSetting))).scalars()}
             names = set((await session.execute(select(db.AgentProfile.name))).scalars())
         assert names == {"architect"}
-        assert json.loads(settings[db.REMOVED_BUILTIN_AGENTS_SETTING]) == ["implementer"]
+        assert json.loads(settings[db.REMOVED_BUILTIN_AGENTS_SETTING]) == ["coder"]
         assert settings["default_agent"] == ""
 
         # and it stays gone after the startup seeding
         await db._ensure_default_agents()
         async with agents_db() as session:
-            assert not (await session.execute(select(db.AgentProfile).where(db.AgentProfile.name == "implementer"))).first()
+            assert not (await session.execute(select(db.AgentProfile).where(db.AgentProfile.name == "coder"))).first()
 
     async def test_internal_profile_cannot_be_deleted(self, agents_db):
         from fastapi import HTTPException
@@ -144,10 +144,10 @@ class TestDefaultTeamCapabilities:
 
     def test_only_implementer_and_tester_use_the_shared_browser(self):
         users = {a["name"] for a in db.DEFAULT_AGENTS if "shared browser" in self._caps(a["name"])}
-        assert users == {"implementer", "tester"}
+        assert users == {"coder", "tester"}
 
     def test_each_agent_keeps_what_its_job_needs(self):
-        assert {"edit files", "run commands"} <= set(self._caps("implementer"))
+        assert {"edit files", "run commands"} <= set(self._caps("coder"))
         assert {"edit files", "run commands"} <= set(self._caps("tester"))
         assert {"run commands", "git diff"} <= set(self._caps("the_reviewer"))
         assert "edit files" not in self._caps("the_reviewer")

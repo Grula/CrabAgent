@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
                 "type": "string",
                 "description": (
                     "Name of the agent to delegate to "
-                    "(e.g., 'implementer', 'tester', 'the_reviewer', 'researcher'). "
+                    "(e.g., 'coder', 'tester', 'the_reviewer', 'researcher'). "
                     "Use list_agents to see available agents."
                 ),
             },
@@ -168,8 +168,10 @@ async def delegate_parallel(tasks: list[dict], context=None) -> str:
 async def request_help(agent_name: str, question: str, context=None) -> str:
     if context is None:
         return "Error: request_help requires an active session"
+    # A delegated agent (depth 1) may ask one teammate; that helper (depth 2)
+    # cannot ask further.
     depth = context.metadata.get("_sub_agent_depth", 0)
-    if depth >= 1:
+    if depth >= 2:
         return "Error: cannot request help (maximum nesting depth reached)"
     from crabagent.core.agent.agents import spawn_sub_agent
 

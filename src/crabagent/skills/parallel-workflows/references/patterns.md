@@ -9,13 +9,13 @@ Fits new behaviour, behaviour changes and bug fixes.
 run_pipeline({"steps": [
   {"id": "test-lockout", "agent_name": "tester",
    "task": "Write failing tests for: <behaviour>. Files: tests/test_auth.py. Run them and confirm each fails on its assertion. Reply: STATUS, TESTS: <file::name>, RED: <command> -> <key line>."},
-  {"id": "impl-lockout", "agent_name": "implementer", "depends_on": ["test-lockout"],
+  {"id": "impl-lockout", "agent_name": "coder", "depends_on": ["test-lockout"],
    "task": "Make the failing tests in tests/test_auth.py pass by changing src/auth.py only. Do not edit the tests. Reply: STATUS, CHANGED, CHECK: <command> -> <result>."},
   {"id": "review-lockout", "agent_name": "the_reviewer", "depends_on": ["impl-lockout"],
    "task": "Review the uncommitted change to src/auth.py and tests/test_auth.py against this task: <task>. Reply with the strict-review verdict format."}
 ]})
 ```
-If the review fails, send its findings to one corrective `implementer` task, then
+If the review fails, send its findings to one corrective `coder` task, then
 review again. Stop after 2 rounds and report.
 
 ## Fan-out, then you merge
@@ -33,8 +33,8 @@ are long, because a pipeline step sees only 1500 characters of each.
 Fits several changes that touch different files.
 ```json
 delegate_parallel({"tasks": [
-  {"agent_name": "implementer", "task": "<change 1: files under src/api/ only>"},
-  {"agent_name": "implementer", "task": "<change 2: files under src/ui/ only>"}
+  {"agent_name": "coder", "task": "<change 1: files under src/api/ only>"},
+  {"agent_name": "coder", "task": "<change 2: files under src/ui/ only>"}
 ]})
 ```
 Then one `the_reviewer` task over the combined diff, listing which files belong to
@@ -65,6 +65,6 @@ Fits large or risky changes.
 | A pipeline step that needs long upstream output | It sees 1500 characters of each. Merge yourself, or pass files |
 | Raw data in `shared_put` | Bloats every later sub-agent's prompt |
 | Two parallel steps editing one file | Conflicting writes |
-| Web work given to `implementer`, or edits given to `researcher` or `the_reviewer` | The step fails on missing permissions |
+| Web work given to `coder`, or edits given to `researcher` or `the_reviewer` | The step fails on missing permissions |
 | A checker asked "is it good?" | Rubber stamp. Ask for defects instead |
 | Unbounded retries | Burned budget. Retry once, then report the gap |

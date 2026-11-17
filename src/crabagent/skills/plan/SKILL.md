@@ -36,9 +36,12 @@ Do the applicable steps in order and write no plan prose until they are done.
    an older plan or doc as a map, not as evidence - check what it cites.
 3. **Ask the user only what they own.** A question is justified only when a product
    preference or tradeoff cannot be found in the request, the workspace, or research, and
-   the answer would materially change the plan. Phrase it as an outcome ("should offline
-   edits sync automatically or ask first?"), not as a technology choice - pick the
-   technology yourself. Ask one question, offer a recommended answer, and wait. Use
+   the answer would materially change the plan. Phrase product questions as outcomes
+   ("should offline edits sync automatically or ask first?"). Design choices that set the
+   direction and are costly to undo (architecture, data model, public API, a framework or
+   major dependency) are the user's too: offer 2-4 options with a one-line trade-off
+   each. Pick cheap, reversible details yourself. Ask one question, offer a recommended
+   answer, and wait. Use
    `ask_question` when you have it (put the recommended answer first in `options`);
    otherwise ask in your reply. If a safe, reversible default exists, state it as an
    assumption and continue instead of asking.
@@ -105,7 +108,7 @@ Don't invent issues, PRs, or file paths to fill a section, and don't add empty s
 
 When the work will be carried out by the team, name the agent on each step and make
 `depends_on` explicit, using the shapes in `parallel-workflows`: behaviour changes go
-`tester` -> `implementer` -> `the_reviewer`, mechanical fixes go to `implementer`
+`tester` -> `coder` -> `the_reviewer`, mechanical fixes go to `coder`
 alone, web research goes to `researcher`. Use the agent names from your Agent Team
 list if they differ.
 
@@ -121,7 +124,7 @@ constraints. End by repeating the `go` line, and point out the riskiest validati
 
 **Saving to a file:** deliver inline by default. Write a file only when the user asks or
 a workspace convention requires it; if you cannot write files, make saving it the first
-`implementer` task after `go`. Use the path they give, else an existing convention
+`coder` task after `go`. Use the path they give, else an existing convention
 (e.g. `docs/plans/`, `specs/<feature>/plan.md`), else
 `.crabagent/plans/YYYY-MM-DD-<slug>.md`. Never overwrite an unrelated existing file. The
 file content must be identical to the plan you show in the reply; mention its path after

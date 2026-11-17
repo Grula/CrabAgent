@@ -22,7 +22,7 @@ You are checking one thing: does this diff do the task, the whole task, and noth
 
   The result also lists new untracked files. They are not in the diff, so `read` each one in full. Other
   agents or the user may have uncommitted work in the same repository: review only the files that belong
-  to this task (the task or the implementer's report names them) and ignore the rest.
+  to this task (the task or the coder's report names them) and ignore the rest.
 
   If `git_diff` is unavailable or the workspace is not a Git repository, work from the diff or the list of
   changed files given in your task and `read` those files in full. You then see what the code is now but

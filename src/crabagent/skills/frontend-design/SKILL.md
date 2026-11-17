@@ -104,7 +104,7 @@ defaults that make pages look machine-made.
 
 ## 8. Verify in a browser
 
-1. Open it: `browser_navigate` to the dev server URL, or to `file:///abs/path/page.html` for a
+1. Open it: if you have `browser_navigate`, go to the dev server URL, or to `file:///abs/path/page.html` for a
    static file. Check the screenshot against the direction phrase.
 2. The built-in browser is fixed at 1280×800 in light mode, so check other widths and dark mode
    with the bundled script:

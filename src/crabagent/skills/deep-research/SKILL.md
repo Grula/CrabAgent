@@ -17,7 +17,7 @@ report where every important fact traces back to a source.
 | Mechanism | Behaviour that matters here |
 |---|---|
 | `researcher` agent | Has `web_search`, `web_scrape`, browser tools. **Cannot write files** or run commands. Returns its findings as its reply. |
-| `implementer`, `tester`, `the_reviewer` | No web access. Use them only on material you already gathered (`implementer` can save files). |
+| `coder`, `tester`, `the_reviewer` | No web access. Use them only on material you already gathered (`coder` can save files). |
 | `delegate_parallel(tasks)` | All tasks start together. You receive every reply in full. This is the main fan-out tool. |
 | `run_pipeline(steps)` | A dependent step sees only about the **first 1500 characters** of each dependency's result. Don't use a research → write pipeline for long notes. |
 | `shared_put(key, value)` | Each note (max 10,000 chars) is **injected into every sub-agent spawned later in this session**. Use it for short shared context, like the scope or a glossary. Never put raw notes there. |
@@ -82,7 +82,7 @@ a dependency excerpt would truncate the claim ledger.
 ### 6. Deliver
 - If the report runs longer than about 60 lines, save it to
   `reports/<short-title>.md` in the workspace and give the path. If you can't write
-  files, send the finished report in one `implementer` task that saves it unchanged.
+  files, send the finished report in one `coder` task that saves it unchanged.
 - In your reply, give the key answer in 3–5 sentences, the overall confidence, the
   biggest open question, and where the full report is.
 

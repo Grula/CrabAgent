@@ -1,6 +1,6 @@
 ---
 name: parallel-workflows
-description: Run work through the agent team - choose between delegate_task, delegate_parallel and run_pipeline, route each task to the right agent (implementer, tester, the_reviewer, researcher), write self-contained briefs, check results and handle failures. Use for multi-step or many-item jobs, "do these in parallel", "split this up", batch work across files.
+description: Run work through the agent team - pick delegate_task, delegate_parallel or run_pipeline, route each task to the right agent, write briefs from templates, check results and handle failures. Use for multi-step or many-item jobs, "do these in parallel", "split this up", batch work across files.
 ---
 
 # Parallel Workflows
@@ -13,7 +13,7 @@ Design the workflow, run it, check what comes back, and report.
 
 | Agent | Does | Cannot |
 |---|---|---|
-| `implementer` | writes and fixes code, runs commands and tests | web research |
+| `coder` | writes and fixes code, runs commands and tests; looks up docs (asks `researcher` when it has no web access) | open-ended web research |
 | `tester` | writes tests, reproduces bugs, verifies changes end to end (shell, browser) | write the implementation |
 | `the_reviewer` | read-only review of a diff against its task: PASS/FAIL | edit files |
 | `researcher` | web search and reading sources, with citations | write files, run commands |
@@ -25,7 +25,7 @@ tools fit it. Never give a step to an agent that lacks the tools it needs.
 ## 2. Should you orchestrate at all?
 Every delegation costs a full agent session plus your brief. Size the workflow to
 the work:
-- A one-file or mechanical fix is **one** `implementer` task with a short brief.
+- A one-file or mechanical fix is **one** `coder` task with a short brief.
 - Delegate a separate step only when the work splits into independent parts, needs
   a different agent's tools, or needs an independent check.
 
@@ -44,10 +44,10 @@ chain of `delegate_task` calls.
 
 | Work | Shape |
 |---|---|
-| New behaviour or behaviour change | pipeline: `tester` writes failing tests -> `implementer` makes them pass -> `the_reviewer` checks scope and correctness |
-| Bug | pipeline: `tester` reproduces it with a failing test -> `implementer` fixes the cause -> `the_reviewer` |
-| Mechanical change (rename, lint, formatting) | one `implementer` task; its test run is the check |
-| Several independent changes on different files | one `delegate_parallel` with one `implementer` task per file group, then one review |
+| New behaviour or behaviour change | pipeline: `tester` writes failing tests -> `coder` makes them pass -> `the_reviewer` checks scope and correctness |
+| Bug | follow the `bug-triage` skill: reproduce it the way the user hit it, find the cause, then `tester` -> `coder` -> `the_reviewer`, then check it on the user's path |
+| Mechanical change (rename, lint, formatting) | one `coder` task; its test run is the check |
+| Several independent changes on different files | one `delegate_parallel` with one `coder` task per file group, then one review |
 | Questions that need the web | `delegate_parallel` with one `researcher` per question; you merge the answers |
 
 More shapes, with example calls: [references/patterns.md](references/patterns.md).
@@ -63,7 +63,9 @@ More shapes, with example calls: [references/patterns.md](references/patterns.md
 - **A failed pipeline step fails its dependents.** Independent branches keep running.
 
 ## 6. Write the brief
-A sub-agent knows nothing but its brief. Each one states:
+A sub-agent knows nothing but its brief. Start from a template in
+[references/briefs.md](references/briefs.md) (reproduce, failing tests, implement,
+review, check a fix, commit). Each brief states:
 - the goal, in one sentence;
 - the exact files, functions or URLs involved;
 - the pass/fail check (a test command, a behaviour to observe);
@@ -78,6 +80,9 @@ run waves of 4-8 and check the first wave before launching the rest.
 ## 7. Check before you report
 - Read each reply against its pass/fail check. For code, look at the change itself
   with `git_diff`; a report of success is not evidence.
+- Before a review step, confirm with `git_diff` that the change is on disk.
+- A change the user will see must be live (built, copied, restarted as the project
+  needs; see the `run-app` skill) before anyone checks it.
 - One independent check per deliverable. Ask the checker for defects ("list what is
   wrong or missing"), never "is this good?". Don't stack reviewers.
 

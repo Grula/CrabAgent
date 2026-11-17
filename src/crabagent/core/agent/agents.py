@@ -74,9 +74,10 @@ _AGENT_SYSTEM_SHARED_INSTRUCTION = (
     "paths and decisions, not raw dumps."
 )
 _AGENT_SYSTEM_HELP_INSTRUCTION = (
-    "If part of the task needs expertise you lack, ask a teammate with "
-    "`request_help(agent_name, question)` instead of guessing."
+    "If part of the task needs expertise or tools you lack (for example documentation from the web), "
+    "ask a teammate with `request_help(agent_name, question)` instead of guessing."
 )
+_AGENT_SYSTEM_HELPERS = "Teammates you can ask: {helpers}."
 _AGENT_SWITCH_HEADER = '[Agent Switch] You are now acting as {icon} **{display_name}**.'
 _AGENT_SWITCH_ROLE = 'Role: {role}'
 _AGENT_SWITCH_GOAL = 'Goal: {goal}'
@@ -130,13 +131,12 @@ _TEAM_PROMPT_SHARED_LINES: tuple[str, ...] = (
 # Routing hints for the built-in agents. A hint is shown only while its agent is
 # enabled; otherwise the main agent would be sent to an agent that does not exist.
 _TEAM_PROMPT_AGENT_ROUTES: tuple[tuple[str, str], ...] = (
-    ('implementer', 'Writing, fixing or refactoring code -> `implementer`'),
+    ('coder', 'Writing, fixing or refactoring code -> `coder`'),
     ('tester', 'Writing tests, reproducing a bug, verifying a change end to end -> `tester`'),
     ('the_reviewer', 'Reviewing a finished change before it is committed -> `the_reviewer`'),
     ('researcher', 'Web research, searching, browsing -> `researcher`'),
     # Agents from older installs, still routed while they exist.
     ('analyst', 'Data analysis, comparison, report generation -> `analyst`'),
-    ('coder', 'Code writing, debugging, refactoring -> `coder`'),
     ('writer', 'Content writing, editing, translation -> `writer`'),
 )
 
@@ -390,6 +390,7 @@ def _build_system_prompt(
     can_request_help: bool = False,
     extra_lines: list[str] | None = None,
     workspace: Path | str | None = None,
+    helpers: list[dict] | None = None,
 ) -> str:
     """Build the system prompt for a sub-agent."""
     role = agent_def.get("role", "")
@@ -413,6 +414,9 @@ def _build_system_prompt(
         parts.append(_AGENT_SYSTEM_SHARED_INSTRUCTION)
     if can_request_help:
         parts.append(_AGENT_SYSTEM_HELP_INSTRUCTION)
+        if helpers:
+            listed = ", ".join(f"`{h['name']}` ({h['role']})" for h in helpers)
+            parts.append(_AGENT_SYSTEM_HELPERS.format(helpers=listed))
     return "\n".join(parts)
 
 
@@ -863,11 +867,16 @@ async def spawn_sub_agent(
 
     has_shared = bool(_SHARED_TOOLS & set(sub_registry._tools.keys()))
 
+    helpers: list[dict] = []
     if agent_def.get("allow_delegation") and current_depth < max_depth:
         parent_tools = base_registry._tools
         if "request_help" in parent_tools:
             sub_registry._tools["request_help"] = parent_tools["request_help"]
             can_request_help = True
+            helpers = [
+                a for a in await load_agent_registry()
+                if a["name"] != agent_name and not is_internal_profile(a["name"])
+            ]
 
     # Resolve sub-agent model+provider via the cost-control map
     # (parent provider|model → child provider|model), then fall back to the
@@ -896,6 +905,7 @@ async def spawn_sub_agent(
             can_request_help=can_request_help,
             extra_lines=capability_hint_lines(set(sub_registry._tools.keys())),
             workspace=shared_workspace,
+            helpers=helpers,
         ),
     )
 

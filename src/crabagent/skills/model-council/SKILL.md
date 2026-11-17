@@ -33,7 +33,7 @@ That gives two kinds of council:
   with a different `model` in the agent settings. You can't do that with a tool.
 
 Match tools to the question. If it needs current facts, every member needs web access
-(`researcher`, or any agent on your team list with `web_search`). `implementer`,
+(`researcher`, or any agent on your team list with `web_search`). `coder`,
 `tester` and `the_reviewer` have no web access, so give them only reasoning, code or
 data questions. Use 3 members by
 default. Use 2 when that is all you have. More than 5 rarely adds signal.

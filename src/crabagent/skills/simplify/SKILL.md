@@ -69,7 +69,7 @@ bug, or a try/except that hides a broken invariant suggest the fix belongs one l
 deeper. Name the deeper change. Apply it only when it stays small and inside the diff's
 area; otherwise report it as a recommendation.
 
-**Large diffs:** you may run the four lenses in parallel with `delegate_parallel` using
+**Large diffs:** if you can delegate (a delegated agent can't), you may run the four lenses in parallel with `delegate_parallel` using
 the read-only `the_reviewer` agent (or another read-only agent from your team list) - one
 task per lens, each including the repo path, the
 exact diff command, and the lens text above. You still apply the fixes yourself.

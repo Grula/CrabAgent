@@ -565,7 +565,7 @@ Use ordinary Markdown when a visualization is not helpful.
 
     from crabagent.core.agent.skill.loader import discover_skills, register_skill_tool
 
-    skill_dirs = settings.skill_discovery_dirs()
+    skill_dirs = settings.skill_discovery_dirs(workspace)
     skills = discover_skills(skill_dirs)
     if skills:
         register_skill_tool(context.tool_registry, skills)
