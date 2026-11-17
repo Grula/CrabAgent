@@ -45,39 +45,52 @@ def _bridge_request(command: str, payload: dict[str, Any] | None = None, *, cont
         metadata["_collab_browser_used"] = True
     # The binding is derived from trusted Agent context, never a model argument.
     task_id = str(metadata.get("_run_id") or metadata.setdefault("_computer_task_id", str(uuid.uuid4())))
-    body = json.dumps(
-        {
-            "protocol_version": 1,
-            "runtime_id": "browser:collaboration",
-            "task_id": task_id,
-            "trace_id": str(uuid.uuid4()),
-            "command": command,
-            "payload": action_payload,
-        }
-    ).encode("utf-8")
-    request = Request(
-        f"http://127.0.0.1:{port}/",
-        data=body,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-    )
-    # Navigation and waiting can take a while for slow sites.
-    timeout = 120 if command in ("navigate", "wait_for", "authorize_local_preview") else 35
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Collaboration browser rejected {command}: {detail}") from exc
-    except URLError as exc:
-        raise RuntimeError(f"Cannot reach the local collaboration browser: {exc.reason}") from exc
+    def send(command: str, payload: dict[str, Any], *, may_resume: bool) -> dict[str, Any]:
+        body = json.dumps(
+            {
+                "protocol_version": 1,
+                "runtime_id": "browser:collaboration",
+                "task_id": task_id,
+                "trace_id": str(uuid.uuid4()),
+                "command": command,
+                "payload": payload,
+            }
+        ).encode("utf-8")
+        request = Request(
+            f"http://127.0.0.1:{port}/",
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+        # Navigation and waiting can take a while for slow sites.
+        timeout = 120 if command in ("navigate", "wait_for", "authorize_local_preview") else 35
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            try:
+                reason = str(json.loads(detail).get("detail") or "")
+            except (ValueError, AttributeError):
+                reason = ""
+            if may_resume and reason.startswith(("TASK_MISMATCH", "STOPPED")):
+                try:
+                    send("resume", {}, may_resume=False)
+                except RuntimeError:
+                    pass
+                return send(command, payload, may_resume=False)
+            raise RuntimeError(f"Collaboration browser rejected {command}: {detail}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Cannot reach the local collaboration browser: {exc.reason}") from exc
 
-    if "result" not in data:
-        raise RuntimeError(str(data.get("detail", "Collaboration browser request failed")))
-    return data["result"]
+        if "result" not in data:
+            raise RuntimeError(str(data.get("detail", "Collaboration browser request failed")))
+        return data["result"]
+
+    return send(command, action_payload, may_resume=True)
 
 
 def _result(value: dict[str, Any]) -> str:
@@ -156,10 +169,20 @@ def _versioned_payload(payload: dict[str, Any], page_version: int | None, contex
         "exact scheme, host and port for 30 minutes; other private destinations remain blocked. "
         "After approval use collab_browser_open. Never use this for CrabAgent service ports."
     ),
-    parameters={"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]},
+    parameters={
+        "type": "object",
+        "properties": {
+            "url": {"type": "string"},
+            "all_ports": {
+                "type": "boolean",
+                "description": "When true, authorize every loopback port for this host (not just the URL's port).",
+            },
+        },
+        "required": ["url"],
+    },
     metadata={"source": "builtin", "category": "collaboration_browser"},
 )
-async def collab_browser_authorize_local_preview(url: str, context=None) -> str:
+async def collab_browser_authorize_local_preview(url: str, context=None, *, all_ports: bool = False) -> str:
     status = await asyncio.to_thread(_bridge_request, "status", context=context)
     if status.get("headless"):
         if context is None or getattr(context, "confirm_callback", None) is None:
@@ -168,7 +191,10 @@ async def collab_browser_authorize_local_preview(url: str, context=None) -> str:
         if not approved:
             raise RuntimeError("local preview authorization denied")
     # The bridge owns the confirmation; no model-supplied approved flag.
-    value = await asyncio.to_thread(_bridge_request, "authorize_local_preview", {"url": url}, context=context)
+    payload: dict[str, Any] = {"url": url}
+    if all_ports:
+        payload["all_ports"] = True
+    value = await asyncio.to_thread(_bridge_request, "authorize_local_preview", payload, context=context)
     await record_browser_event(
         context,
         "approval_requested",

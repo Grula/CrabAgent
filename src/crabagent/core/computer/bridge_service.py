@@ -219,8 +219,10 @@ class BrowserBridgeService:
         self.pending: dict[str, dict[str, Any]] = {}
         self.action_ids: dict[str, float] = {}
 
+        allow_all = os.environ.get("CRAB_ALLOW_LOOPBACK_PREVIEWS", "").strip().lower() in ("1", "true", "yes", "on")
         self.local_preview_policy = LocalPreviewPolicy(
             forbidden_ports=lambda: self._forbidden_ports(),
+            allow_all_loopback=allow_all,
         )
 
     # ------------------------------------------------------------------ #
@@ -640,7 +642,9 @@ class BrowserBridgeService:
         # (local_preview_origin + reserved port check). The origin is still
         # bounded to 30 minutes.
         try:
-            origin = self.local_preview_policy.grant(str(payload.get("url") or ""))
+            origin = self.local_preview_policy.grant(
+                str(payload.get("url") or ""), all_ports=bool(payload.get("all_ports"))
+            )
         except ValueError as exc:
             raise BridgeError(str(exc)) from exc
         return {"status": "authorized", "origin": origin, "expires_in_seconds": 1800}

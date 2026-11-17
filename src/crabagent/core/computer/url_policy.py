@@ -139,11 +139,13 @@ class LocalPreviewPolicy:
         ttl_ms: float = 30 * 60_000,
         now: Callable[[], float] = time.monotonic,
         forbidden_ports: Callable[[], list[int]] | None = None,
+        allow_all_loopback: bool = False,
     ) -> None:
         self._ttl_seconds = ttl_ms / 1000.0
         self._now = now
         self._forbidden_ports = forbidden_ports or (lambda: [])
-        self._grants: dict[str, float] = {}
+        self._allow_all_loopback = allow_all_loopback
+        self._grants: dict[tuple[str, str, int | None], float] = {}
 
     def origin(self, raw: str) -> str:
         value = local_preview_origin(raw)
@@ -153,26 +155,47 @@ class LocalPreviewPolicy:
             raise ValueError("LOCAL_PREVIEW_RESERVED: CrabAgent service ports cannot be authorized")
         return value
 
-    def grant(self, raw: str) -> str:
+    def _key(self, raw: str) -> tuple[str, str, int]:
+        parsed = urlsplit(self.origin(raw))
+        return (parsed.scheme, (parsed.hostname or "").lower(), parsed.port or (443 if parsed.scheme == "https" else 80))
+
+    def grant(self, raw: str, *, all_ports: bool = False) -> str:
         value = self.origin(raw)
-        self._grants[value] = self._now() + self._ttl_seconds
+        scheme, host, port = self._key(raw)
+        self._grants[(scheme, host, None if all_ports else port)] = self._now() + self._ttl_seconds
         return value
 
     def allows(self, raw: str) -> bool:
         try:
-            value = self.origin(raw)
-            if (self._grants.get(value) or 0) > self._now():
-                return True
-            self._grants.pop(value, None)
+            scheme, host, port = self._key(raw)
         except Exception:
-            pass
+            return False
+        if self._allow_all_loopback:
+            return True
+        now = self._now()
+        wildcard = (self._grants.get((scheme, host, None)) or 0) > now and port not in self._forbidden_ports()
+        if (self._grants.get((scheme, host, port)) or 0) > now or wildcard:
+            return True
+        self._grants.pop((scheme, host, port), None)
         return False
 
     def clear(self) -> None:
         self._grants.clear()
 
     def list(self) -> list[str]:
-        return [value for value in list(self._grants.keys()) if self.allows(value)]
+        values: list[str] = []
+        for (scheme, host, port), expires in list(self._grants.items()):
+            if expires <= self._now():
+                self._grants.pop((scheme, host, port), None)
+                continue
+            name = f"[{host}]" if ":" in host else host
+            if port is None:
+                values.append(f"{scheme}://{name}:*")
+            elif port == (443 if scheme == "https" else 80):
+                values.append(f"{scheme}://{name}")
+            else:
+                values.append(f"{scheme}://{name}:{port}")
+        return values
 
 
 async def allowed_network_url(raw: str, local_preview_policy: LocalPreviewPolicy | None = None) -> str:
