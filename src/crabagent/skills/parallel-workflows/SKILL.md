@@ -73,7 +73,9 @@ review, check a fix, commit). Each brief states:
 - the reply format, for example: `STATUS: done|blocked`, `CHANGED: <paths>`,
   `CHECK: <command> -> <result>`, `NOTES: <=5 bullets`.
 
-Two parallel steps must never edit the same file. Use step ids that say what the step
+Two parallel steps must never edit the same file. Workers share one working tree,
+so tell them not to run git commands that change it (`checkout`, `stash`, `reset`,
+worktree tricks) while others work: that has wiped a whole pipeline's changes. Use step ids that say what the step
 does (`test-login-lockout`, `impl-login-lockout`), not `step3`. For dozens of items,
 run waves of 4-8 and check the first wave before launching the rest.
 

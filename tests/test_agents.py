@@ -454,7 +454,6 @@ class TestSpawnSubAgent:
         monkeypatch.setattr("crabagent.core.database.shared_memory_put", _async_return(None))
         monkeypatch.setattr("crabagent.core.database.agent_memory_upsert", _async_return(None))
         monkeypatch.setattr("crabagent.core.database.task_record_create", _async_return(None))
-        monkeypatch.setattr(agents_module, "_rule_extract_lesson", lambda **kwargs: None)
         monkeypatch.setattr(agents_module, "_llm_reflect_lesson", _async_return(None))
 
         async def fake_run_agent(context, query):

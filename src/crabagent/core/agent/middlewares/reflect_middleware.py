@@ -26,7 +26,6 @@ from crabagent.core.agent.reflect import (
     llm_reflect_lesson,
     persist_lesson,
     persist_preferences,
-    rule_extract_lesson,
 )
 
 if TYPE_CHECKING:
@@ -82,26 +81,7 @@ class ReflectMiddleware:
         if isinstance(elapsed_cached, (int, float)):
             stats["elapsed"] = float(elapsed_cached)
 
-        # 1. Rule-based lesson (synchronous — no LLM call, near-free)
-        rule_lesson = rule_extract_lesson(
-            agent_name=agent_name,
-            iterations=context.iteration,
-            max_iterations=context.max_iterations,
-            task=task,
-            result=last_assistant_text,
-            task_category=task_category,
-        )
-        if rule_lesson:
-            try:
-                await persist_lesson(
-                    user_id=user_id,
-                    agent_name=agent_name,
-                    lesson=rule_lesson,
-                    source_session=session_id,
-                    workspace_path=workspace_path,
-                )
-            except Exception:
-                logger.debug("Failed to persist rule lesson", exc_info=True)
+        # (No rule-based "ran out of iterations" lesson: it only restated the task.)
 
         # 2+3. LLM lesson + user preferences → fire-and-forget in background
         conversation_text = _format_for_preference_extraction(context.messages)

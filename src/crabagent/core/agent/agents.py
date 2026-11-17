@@ -16,9 +16,6 @@ from crabagent.core.agent.reflect import (
 from crabagent.core.agent.reflect import (
     llm_reflect_lesson as _llm_reflect_lesson,
 )
-from crabagent.core.agent.reflect import (
-    rule_extract_lesson as _rule_extract_lesson,
-)
 from crabagent.core.agent.skill.loader import scope_skill_tool
 from crabagent.core.database import AgentProfile, async_session_factory
 
@@ -645,6 +642,52 @@ async def build_memory_prompt(
     return "\n\n".join(parts) if parts else ""
 
 
+async def _reflect_and_save_lesson(
+    *,
+    user_id: int,
+    agent_name: str,
+    task: str,
+    result: str,
+    task_category: str,
+    stats: dict,
+    model: str,
+    provider_name: str | None,
+    session_id: str,
+    workspace,
+    error_msg: str = "",
+) -> None:
+    """Ask for one reusable lesson from a finished sub-agent run and save it.
+
+    Goes through ``persist_lesson`` like the main agent's reflection, so the
+    duplicate check, the junk filter and the per-agent cap apply. The model is
+    shown the agent's existing lessons so it doesn't restate one of them.
+    """
+    if not user_id or not model:
+        return
+    from crabagent.core.agent.reflect import persist_lesson
+    from crabagent.core.database import agent_memory_get_by_agent
+
+    try:
+        existing = await agent_memory_get_by_agent(user_id, agent_name, limit=30)
+    except Exception:
+        existing = []
+    lesson = await _llm_reflect_lesson(
+        agent_name=agent_name,
+        task=task,
+        result=result,
+        task_category=task_category,
+        stats=stats,
+        model=model,
+        provider_name=provider_name,
+        error_msg=error_msg,
+        existing_lessons=existing,
+    )
+    if lesson:
+        await persist_lesson(
+            user_id, agent_name, lesson, source_session=session_id, workspace_path=str(workspace or "")
+        )
+
+
 async def inject_agent_lessons(
     system_prompt: str,
     user_id: int,
@@ -1168,7 +1211,7 @@ async def spawn_sub_agent(
 
         if parent_user_id and not background:
             try:
-                from crabagent.core.database import agent_memory_upsert, task_record_create
+                from crabagent.core.database import task_record_create
 
                 stats = {
                     "iterations": sub_context.iteration,
@@ -1176,60 +1219,6 @@ async def spawn_sub_agent(
                     "tokens": sub_context.accumulated_total,
                     "elapsed": elapsed,
                 }
-
-                rule_lesson = _rule_extract_lesson(
-                    agent_name=agent_name,
-                    iterations=sub_context.iteration,
-                    max_iterations=sub_context.max_iterations,
-                    task=task,
-                    result=last_text,
-                    task_category=task_category,
-                )
-                if rule_lesson:
-                    await agent_memory_upsert(
-                        user_id=parent_user_id,
-                        memory_type="agent_lesson",
-                        agent_name=agent_name,
-                        category=rule_lesson["category"],
-                        key=rule_lesson["key"],
-                        content=rule_lesson["content"],
-                        importance=rule_lesson["importance"],
-                        source_session=session_id,
-                        source=rule_lesson["source"],
-                        task_category=rule_lesson["task_category"],
-                        scope="agent",
-                        workspace_path=str(parent_context.workspace),
-                        recall_policy="query_only",
-                    )
-
-                reflect_model = sub_context.model or agent_def.get("model") or parent_context.model or ""
-                reflect_provider = sub_context.provider_name or parent_context.provider_name
-                if reflect_model:
-                    llm_lesson = await _llm_reflect_lesson(
-                        agent_name=agent_name,
-                        task=task,
-                        result=last_text,
-                        task_category=task_category,
-                        stats=stats,
-                        model=reflect_model,
-                        provider_name=reflect_provider,
-                    )
-                    if llm_lesson:
-                        await agent_memory_upsert(
-                            user_id=parent_user_id,
-                            memory_type="agent_lesson",
-                            agent_name=agent_name,
-                            category=llm_lesson["category"],
-                            key=llm_lesson["key"],
-                            content=llm_lesson["content"],
-                            importance=llm_lesson["importance"],
-                            source_session=session_id,
-                            source=llm_lesson["source"],
-                            task_category=llm_lesson["task_category"],
-                            scope="agent",
-                            workspace_path=str(parent_context.workspace),
-                            recall_policy="query_only",
-                        )
 
                 await task_record_create(
                     user_id=parent_user_id,
@@ -1239,6 +1228,19 @@ async def spawn_sub_agent(
                     elapsed=elapsed,
                     tokens=sub_context.accumulated_total,
                     iterations=sub_context.iteration,
+                )
+
+                await _reflect_and_save_lesson(
+                    user_id=parent_user_id,
+                    agent_name=agent_name,
+                    task=task,
+                    result=last_text,
+                    task_category=task_category,
+                    stats=stats,
+                    model=sub_context.model or agent_def.get("model") or parent_context.model or "",
+                    provider_name=sub_context.provider_name or parent_context.provider_name,
+                    session_id=session_id,
+                    workspace=parent_context.workspace,
                 )
             except Exception:
                 logger.debug("Failed to extract lesson for %s", agent_name)
@@ -1319,39 +1321,23 @@ async def spawn_sub_agent(
                 pass
 
             try:
-                from crabagent.core.database import agent_memory_upsert
-
-                reflect_model = sub_context.model or agent_def.get("model") or parent_context.model or ""
-                reflect_provider = sub_context.provider_name or parent_context.provider_name
-                error_stats = {
-                    "iterations": sub_context.iteration,
-                    "tokens": sub_context.accumulated_total,
-                    "elapsed": error_elapsed,
-                }
-                if reflect_model:
-                    llm_lesson = await _llm_reflect_lesson(
-                        agent_name=agent_name,
-                        task=task,
-                        result="",
-                        task_category=task_category,
-                        stats=error_stats,
-                        model=reflect_model,
-                        provider_name=reflect_provider,
-                        error_msg=str(e),
-                    )
-                    if llm_lesson:
-                        await agent_memory_upsert(
-                            user_id=parent_user_id,
-                            memory_type="agent_lesson",
-                            agent_name=agent_name,
-                            category=llm_lesson["category"],
-                            key=llm_lesson["key"],
-                            content=llm_lesson["content"],
-                            importance=llm_lesson["importance"],
-                            source_session=session_id,
-                            source=llm_lesson["source"],
-                            task_category=llm_lesson["task_category"],
-                        )
+                await _reflect_and_save_lesson(
+                    user_id=parent_user_id,
+                    agent_name=agent_name,
+                    task=task,
+                    result="",
+                    task_category=task_category,
+                    stats={
+                        "iterations": sub_context.iteration,
+                        "tokens": sub_context.accumulated_total,
+                        "elapsed": error_elapsed,
+                    },
+                    model=sub_context.model or agent_def.get("model") or parent_context.model or "",
+                    provider_name=sub_context.provider_name or parent_context.provider_name,
+                    session_id=session_id,
+                    workspace=parent_context.workspace,
+                    error_msg=str(e),
+                )
             except Exception:
                 pass
         await parent_context.event_bus.emit(

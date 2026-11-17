@@ -1798,7 +1798,9 @@ async def agent_memory_get_by_agent(
                 AgentMemory.memory_type == "agent_lesson",
                 AgentMemory.agent_name == agent_name,
             )
-            .order_by(AgentMemory.importance.desc())
+            # Newest first among equal importance, so old lessons can't hold the
+            # top places forever just by being saved first.
+            .order_by(AgentMemory.importance.desc(), AgentMemory.id.desc())
             .limit(limit)
         )
         return [

@@ -11,9 +11,6 @@ class TestReflectHelpers:
     def test_classify_task_returns_general_for_unknown_text(self):
         assert reflect.classify_task("just chatting about weather") == "general"
 
-    def test_rule_extract_lesson_returns_none_when_iterations_low(self):
-        assert reflect.rule_extract_lesson("coder", 1, 10, "task", "result") is None
-
     def test_extract_response_text_prefers_message_content(self):
         response = SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content="answer", reasoning_content="thinking"))]
@@ -58,7 +55,7 @@ class TestLLMReflectLesson:
                 choices=[
                     SimpleNamespace(
                         message=SimpleNamespace(
-                            content="Category: code\nInsight: Check file existence before destructive writes",
+                            content="Category: code\nInsight: Check file existence before destructive writes.",
                             reasoning_content="",
                         )
                     )
@@ -80,7 +77,7 @@ class TestLLMReflectLesson:
         assert result["category"] == "failed_approach"
         assert result["task_category"] == "code"
         assert "Check file existence" in result["content"]
-        assert result["importance"] == 0.85
+        assert result["importance"] == 0.7  # below the 0.85 of lessons people kept
 
     @pytest.mark.asyncio
     async def test_rejects_generic_praise(self, monkeypatch: pytest.MonkeyPatch):
@@ -103,6 +100,110 @@ class TestLLMReflectLesson:
         )
 
         assert result is None
+
+
+def _answer(content: str, finish_reason: str = "stop", reasoning: str = ""):
+    async def fake_acompletion(**kwargs):
+        fake_acompletion.prompt = kwargs["messages"][0]["content"]
+        return SimpleNamespace(choices=[SimpleNamespace(
+            finish_reason=finish_reason,
+            message=SimpleNamespace(content=content, reasoning_content=reasoning),
+        )])
+
+    return fake_acompletion
+
+
+async def _reflect(monkeypatch, fake, **overrides):
+    monkeypatch.setattr(reflect, "_resolve_llm_params", _async_return({"api_key": "k"}))
+    monkeypatch.setattr(reflect, "litellm", SimpleNamespace(acompletion=fake))
+    kwargs = dict(agent_name="coder", task="fix bug", result="done", task_category="code",
+                  stats={"iterations": 15, "tokens": 10, "elapsed": 1.2}, model="gpt-4o")
+    kwargs.update(overrides)
+    return await reflect.llm_reflect_lesson(**kwargs)
+
+
+class TestLessonQuality:
+    """Every case here is a kind of junk that was found saved as a lesson."""
+
+    @pytest.mark.asyncio
+    async def test_a_good_lesson_from_a_long_run_starts_below_kept_ones(self, monkeypatch):
+        fake = _answer("Category: code\nInsight: Piping pytest through tail hides its exit code; use set -o pipefail.")
+        lesson = await _reflect(monkeypatch, fake)
+        assert lesson["importance"] == 0.6  # long runs used to get 0.8 and crowd out the rest
+        assert "When in doubt, answer NONE" in fake.prompt
+        assert "different project" in fake.prompt
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("content", [
+        "NONE", "None.",
+        "Category: code\nInsight: <a single concrete, actionable sentence>",
+        "Category: code\nInsight: the lesson, as one complete sentence",
+        "Category: code\nInsight: For byte-for-byte read-only lint sweeps, pass `--no-cache` (or set `RUFF",
+        "Category: code\nInsight: Fix it.",
+        "The user asks to extract one lesson. We should consider the task...\nOtherwise respond in EX",
+    ])
+    async def test_junk_is_not_saved(self, monkeypatch, content):
+        assert await _reflect(monkeypatch, _answer(content)) is None
+
+    @pytest.mark.asyncio
+    async def test_an_answer_cut_off_by_the_token_limit_is_not_saved(self, monkeypatch):
+        fake = _answer("Category: code\nInsight: Always check the exit code of piped commands.", finish_reason="length")
+        assert await _reflect(monkeypatch, fake) is None
+
+    @pytest.mark.asyncio
+    async def test_reasoning_without_an_answer_is_not_saved(self, monkeypatch):
+        fake = _answer("", reasoning="The user asks: extract ONE concrete lesson. Insight: something useful.")
+        assert await _reflect(monkeypatch, fake) is None
+
+    @pytest.mark.asyncio
+    async def test_existing_lessons_are_shown_to_avoid_repeats(self, monkeypatch):
+        fake = _answer("NONE")
+        await _reflect(monkeypatch, fake, existing_lessons=[{"content": "Prove a failing test reaches its assertion."}])
+        assert "Prove a failing test reaches its assertion." in fake.prompt
+
+
+class TestSavePaths:
+    @pytest.mark.asyncio
+    async def test_persist_lesson_accepts_the_workspace_the_main_agent_passes(self, monkeypatch):
+        saved = {}
+
+        async def upsert(**kwargs):
+            saved.update(kwargs)
+
+        monkeypatch.setattr("crabagent.core.database.agent_memory_get_by_agent", _async_return([]))
+        monkeypatch.setattr("crabagent.core.database.agent_memory_upsert", upsert)
+        lesson = {"key": "k", "content": "Use set -o pipefail when piping test output.", "memory_type": "agent_lesson"}
+
+        assert await reflect.persist_lesson(1, "architect", lesson, source_session="s", workspace_path="/proj")
+        assert saved["workspace_path"] == "/proj"
+
+    @pytest.mark.asyncio
+    async def test_sub_agent_lessons_go_through_persist_lesson_with_known_lessons(self, monkeypatch):
+        from crabagent.core.agent import agents as agents_module
+
+        known = [{"key": "a", "content": "Patch the name where the code under test imports it."}]
+        seen = {}
+
+        async def reflect_fn(**kwargs):
+            seen["existing"] = kwargs["existing_lessons"]
+            return {"key": "k", "content": "Lesson text that is long enough.", "memory_type": "agent_lesson"}
+
+        async def persist(user_id, agent_name, lesson, source_session="", workspace_path=""):
+            seen["persisted"] = (agent_name, lesson["content"], workspace_path)
+            return True
+
+        monkeypatch.setattr("crabagent.core.database.agent_memory_get_by_agent", _async_return(known))
+        monkeypatch.setattr(agents_module, "_llm_reflect_lesson", reflect_fn)
+        monkeypatch.setattr(reflect, "persist_lesson", persist)
+
+        await agents_module._reflect_and_save_lesson(
+            user_id=1, agent_name="tester", task="t", result="r", task_category="code",
+            stats={"iterations": 3, "tokens": 1, "elapsed": 1.0}, model="m", provider_name=None,
+            session_id="s", workspace="/proj",
+        )
+
+        assert seen["existing"] == known
+        assert seen["persisted"] == ("tester", "Lesson text that is long enough.", "/proj")
 
 
 class TestPreferenceExtraction:

@@ -6,7 +6,6 @@ reflection logic without circular imports.
 
 Public surface:
 - :func:`classify_task` — keyword-based task category tagging
-- :func:`rule_extract_lesson` — deterministic lesson (high iterations etc.)
 - :func:`llm_reflect_lesson` — single LLM call to extract one technical lesson
 - :func:`llm_extract_user_preferences` — single LLM call to extract user
   preferences / behavioural rules (Lobehub-style "Memory")
@@ -100,35 +99,6 @@ def classify_task(task: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Rule-based lesson extraction
-# ---------------------------------------------------------------------------
-
-
-def rule_extract_lesson(
-    agent_name: str,
-    iterations: int,
-    max_iterations: int,
-    task: str,
-    result: str,
-    task_category: str = "general",
-) -> dict | None:
-    if iterations >= max_iterations * 0.8 and result:
-        return {
-            "category": "failed_approach",
-            "key": f"lesson:{agent_name}:rule:high_iterations",
-            "content": (
-                f"Exhausted {iterations}/{max_iterations} iterations on: {task[:100]}. "
-                "Next time: decompose complex tasks, narrow scope, or use fewer tools per iteration."
-            ),
-            "importance": 0.5,
-            "source": "rule",
-            "task_category": task_category,
-            "memory_type": "agent_lesson",
-        }
-    return None
-
-
-# ---------------------------------------------------------------------------
 # LLM-based lesson extraction (technical)
 # ---------------------------------------------------------------------------
 
@@ -151,14 +121,19 @@ async def llm_reflect_lesson(
             result_text = result[:800] if result else "(no output)"
 
         prompt = (
-            f"Based on this completed task, extract ONE concrete lesson.\n\n"
+            "An agent just finished a task. Decide whether it taught a lesson worth remembering "
+            "for OTHER tasks.\n\n"
             f"Agent: {agent_name}\n"
             f"Task: {task[:400]}\n"
             f"Output: {result_text}\n"
             f"Stats: {stats['iterations']} steps, {stats['tokens']} tokens, {stats['elapsed']}s\n\n"
-            "Identify one specific tip, pitfall, or technique that would help in future similar tasks. "
-            "Be specific and actionable. Do not give generic praise.\n\n"
-            f"Category (pick one): {task_category}\n\n"
+            "Save a lesson only if it is all of these:\n"
+            "- reusable: it would still help on a different task, in a different project;\n"
+            f"- not obvious: a competent {agent_name} would not already do it;\n"
+            "- learned here: a mistake, a surprise, or a technique that saved real effort in this run.\n"
+            "Leave out file paths, function names and other details that only exist in this project, "
+            "unless the lesson is about a widely used tool or library.\n"
+            "Most runs teach nothing new. When in doubt, answer NONE.\n\n"
         )
 
         # Inject existing lessons to avoid duplicates
@@ -175,10 +150,9 @@ async def llm_reflect_lesson(
             )
 
         prompt += (
-            "If there is truly nothing worth noting, respond with just the word: NONE\n"
-            "Otherwise respond in EXACTLY this format (no other text):\n"
-            "Category: <one of: code, research, analysis, writing, general>\n"
-            "Insight: <a single concrete, actionable sentence>"
+            "Answer with exactly NONE, or with exactly these two lines and nothing else:\n"
+            "Category: code, research, analysis, writing or general\n"
+            "Insight: the lesson, as one complete sentence"
         )
 
         llm_params = await _resolve_llm_params(provider_name)
@@ -195,13 +169,14 @@ async def llm_reflect_lesson(
         response = await litellm.acompletion(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=500,
+            # Room for reasoning models to think and still answer.
+            max_tokens=1000,
             temperature=0.3,
             **llm_params,
         )
 
-        text = _extract_response_text(response)
-        if text.strip().upper() in ("NONE", "SKIP"):
+        text, usable = _lesson_answer(response)
+        if not usable or text.strip().upper().rstrip(".") in ("NONE", "SKIP"):
             return None
 
         category = task_category
@@ -215,17 +190,8 @@ async def llm_reflect_lesson(
             elif line.lower().startswith("insight:"):
                 insight = line.split(":", 1)[1].strip()
 
-        if not insight:
-            # Fallback: take the last non-empty line (LLMs often put the answer
-            # at the end after analysis).  Reject the whole response if it looks
-            # like meta-reflection rather than a lesson.
-            from crabagent.core.agent.lesson_dedup import looks_like_meta_lesson
-
-            lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
-            candidate = lines[-1] if lines else ""
-            if candidate and not looks_like_meta_lesson(candidate):
-                insight = candidate
-
+        # No "Insight:" line means the model didn't follow the format: its text is
+        # analysis, not a lesson. Guessing a line out of it saved junk before.
         if not insight:
             logger.debug("llm_reflect_lesson for %s: no insight extracted from response", agent_name)
             return None
@@ -240,17 +206,13 @@ async def llm_reflect_lesson(
             logger.info("llm_reflect_lesson for %s: insight looks like meta-reflection, skipping", agent_name)
             return None
 
-        if len(insight) < 10:
-            logger.warning("llm_reflect_lesson for %s: insight too short (%d chars)", agent_name, len(insight))
+        if len(insight) < 25 or _looks_unfinished(insight):
+            logger.info("llm_reflect_lesson for %s: insight too short or cut off, skipping", agent_name)
             return None
 
-        # Importance scoring: base on signal quality, not flat 0.7
-        if error_msg:
-            importance = 0.85  # failed-task lessons are high value
-        elif stats.get("iterations", 0) >= 8:
-            importance = 0.80  # complex multi-step tasks yield richer lessons
-        else:
-            importance = 0.65  # ordinary tasks
+        # A new lesson starts below the ones people have kept (0.85), so it can't
+        # push them out of the prompt. It still shows up when it matches a task.
+        importance = 0.7 if error_msg else 0.6
 
         return {
             "category": "failed_approach" if error_msg else "effective_strategy",
@@ -416,6 +378,7 @@ async def persist_lesson(
     agent_name: str,
     lesson: dict,
     source_session: str = "",
+    workspace_path: str = "",
 ) -> bool:
     if not user_id or not lesson:
         return False
@@ -473,7 +436,7 @@ async def persist_lesson(
     memory_type = lesson.get("memory_type", "agent_lesson")
     scope = "agent" if memory_type == "agent_lesson" else "global"
     recall_policy = "query_only" if scope == "agent" else "always"
-    workspace_path = (lesson.get("workspace_path") or "").strip()
+    workspace_path = (lesson.get("workspace_path") or workspace_path or "").strip()
 
     await agent_memory_upsert(
         user_id=user_id,
@@ -627,6 +590,33 @@ _GENERIC_PRAISE = [
 ]
 
 
+def _lesson_answer(response) -> tuple[str, bool]:
+    """The model's answer for a lesson, and whether it can be used.
+
+    Unusable: no answer, an answer cut off by the token limit, or only reasoning
+    text (the reasoning of a model that ran out of room is not an answer).
+    """
+    choices = getattr(response, "choices", None)
+    if not choices:
+        return "", False
+    choice = choices[0]
+    if getattr(choice, "finish_reason", None) == "length":
+        return "", False
+    text = (getattr(choice.message, "content", "") or "").strip()
+    return text, bool(text)
+
+
+def _looks_unfinished(insight: str) -> bool:
+    """The prompt's placeholder echoed back, or a sentence that stops mid-way."""
+    text = insight.strip()
+    lowered = text.lower()
+    if "one complete sentence" in lowered or "single concrete, actionable sentence" in lowered:
+        return True
+    if text.startswith(("<", "{")):
+        return True
+    return not text.endswith((".", "!", "?", ")", '"', "'", "`"))
+
+
 def _is_generic_praise(insight: str) -> bool:
     tl = insight.lower()
     return any(bw in tl for bw in _GENERIC_PRAISE)
@@ -634,7 +624,6 @@ def _is_generic_praise(insight: str) -> bool:
 
 __all__ = [
     "classify_task",
-    "rule_extract_lesson",
     "llm_reflect_lesson",
     "llm_extract_user_preferences",
     "persist_lesson",

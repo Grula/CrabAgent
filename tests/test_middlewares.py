@@ -541,7 +541,6 @@ class TestReflectMiddlewareBareModel:
         # These are imported into reflect_middleware's namespace: patch the import site.
         monkeypatch.setattr(reflect_mw_mod, "llm_reflect_lesson", fake_llm_reflect_lesson)
         monkeypatch.setattr(reflect_mw_mod, "llm_extract_user_preferences", fake_llm_extract_user_preferences)
-        monkeypatch.setattr(reflect_mw_mod, "rule_extract_lesson", lambda **kwargs: None)
         monkeypatch.setattr(reflect_mw_mod, "persist_lesson", noop_async)
         monkeypatch.setattr(reflect_mw_mod, "persist_preferences", noop_async)
         monkeypatch.setattr(reflect_mw_mod, "asyncio", _FakeAsyncio)
