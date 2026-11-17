@@ -193,7 +193,6 @@ class PromptRequest(BaseModel):
     work_mode: bool = False
 
 
-@router.post("/sessions/{session_id}/prompt", status_code=status.HTTP_202_ACCEPTED)
 async def apply_agent_profile(context, effective_agent: str) -> None:
     """Narrow a chat context's tools and skills to the active agent's profile.
 
@@ -235,6 +234,7 @@ async def apply_agent_profile(context, effective_agent: str) -> None:
         context.model = agent_def["model"]
 
 
+@router.post("/sessions/{session_id}/prompt", status_code=status.HTTP_202_ACCEPTED)
 async def prompt_async(
     session_id: str,
     req: PromptRequest,

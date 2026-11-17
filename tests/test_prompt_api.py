@@ -109,3 +109,17 @@ async def test_finishing_prompt_does_not_accept_followup(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await prompt_api.prompt_async("session", prompt_api.PromptRequest(message="hi"), None, None, None)
     assert exc.value.status_code == 409
+
+
+def test_chat_route_is_served_by_prompt_async():
+    """A helper inserted above prompt_async once took over its @router.post decorator,
+    and every chat message failed with 422 'query.context: Field required'."""
+    from crabagent.serve.api import prompt as prompt_api
+
+    routes = {
+        (route.path, method): route.endpoint
+        for route in prompt_api.router.routes
+        for method in getattr(route, "methods", ())
+    }
+    assert routes[("/sessions/{session_id}/prompt", "POST")] is prompt_api.prompt_async
+    assert all(endpoint is not prompt_api.apply_agent_profile for endpoint in routes.values())
