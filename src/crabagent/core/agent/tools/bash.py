@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -183,6 +184,12 @@ def _find_job(pid: Any, context: Any) -> tuple[BackgroundJob | None, str]:
     return job, ""
 
 
+# The tool is called "bash" and models write bash (pipefail, PIPESTATUS, [[ ]],
+# arrays, `source`, <( )). Without this, /bin/sh runs it, which is dash on Debian,
+# Ubuntu and WSL and rejects all of those. Falls back to /bin/sh without bash.
+_POSIX_SHELL = None if sys.platform == "win32" else shutil.which("bash")
+
+
 def _build_subprocess_kwargs(workdir: str | None = None) -> dict:
     """Build platform-appropriate kwargs for subprocess creation."""
     kwargs: dict[str, Any] = {}
@@ -197,6 +204,8 @@ def _build_subprocess_kwargs(workdir: str | None = None) -> dict:
         )
     else:
         kwargs["start_new_session"] = True
+        if _POSIX_SHELL:
+            kwargs["executable"] = _POSIX_SHELL
     return kwargs
 
 

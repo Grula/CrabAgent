@@ -74,7 +74,7 @@ _AGENT_SYSTEM_HELP_INSTRUCTION = (
     "If part of the task needs expertise or tools you lack (for example documentation from the web), "
     "ask a teammate with `request_help(agent_name, question)` instead of guessing."
 )
-_AGENT_SYSTEM_HELPERS = "Teammates you can ask: {helpers}."
+_AGENT_SYSTEM_HELPERS = "Teammates who can do what you can't: {helpers}."
 _AGENT_SWITCH_HEADER = '[Agent Switch] You are now acting as {icon} **{display_name}**.'
 _AGENT_SWITCH_ROLE = 'Role: {role}'
 _AGENT_SWITCH_GOAL = 'Goal: {goal}'
@@ -84,6 +84,11 @@ _CAPABILITY_BROWSER = (
     "You can operate the visible shared browser on the user's behalf with computer_observe / computer_act: "
     "observe pages, click, type and navigate websites. High-risk actions automatically ask the user for "
     "confirmation, so never refuse on the user's behalf."
+)
+_CAPABILITY_NO_HANDS = (
+    "You can't edit files or run commands. Where any instruction says to do that, hand it to a teammate "
+    "who can (delegate it, or ask with request_help when you were delegated yourself) instead of looking "
+    "for those tools."
 )
 _MEMORY_PROMPT_TITLE = '## Team Knowledge'
 _MEMORY_PROMPT_SAVE_INSTRUCTION = (
@@ -96,7 +101,8 @@ _SHARED_CONTEXT_TITLE = '## Shared Team Knowledge'
 _TEAM_PROMPT_TITLE = '## Agent Team'
 _TEAM_PROMPT_INTRO = (
     'You can delegate work to specialized sub-agents. Use them for parallel work or when a task needs '
-    'a specialist; delegation costs time and tokens, so do small or tightly coupled work yourself.'
+    'a specialist; delegation costs time and tokens, so do small or tightly coupled work yourself when '
+    'your own tools allow it.'
 )
 _TEAM_PROMPT_AVAILABLE_AGENTS = '### Available Agents'
 _TEAM_PROMPT_DELEGATION_TOOLS = '### Delegation Tools'
@@ -144,7 +150,7 @@ _TEAM_PROMPT_WHEN_LINES: tuple[str, ...] = (
     'Multi-step workflow with ordering or data flow (e.g., research -> analyze -> write) -> `run_pipeline`',
     'User asks for multiple sub-agents or parallel execution -> use `delegate_parallel` or `run_pipeline`, not sequential `delegate_task`',
     "Give a step only to an agent whose capabilities above cover it",
-    'A lookup you can do in a few tool calls, or a small edit -> do it yourself',
+    'A lookup you can do in a few tool calls, or a small edit -> do it yourself if you have the tools for it',
 )
 
 # 'Writing the task' bullet lines, in display order.
@@ -378,6 +384,10 @@ def capability_hint_lines(tool_names) -> list[str]:
     lines: list[str] = []
     if _BROWSER_COMPUTER_TOOLS & names:
         lines.append(_CAPABILITY_BROWSER)
+    if names and not {"edit", "write", "bash"} & names:
+        # A planner or read-only agent: the shared instructions still describe
+        # editing and running things, which it must hand off rather than hunt for.
+        lines.append(_CAPABILITY_NO_HANDS)
     return lines
 
 
@@ -412,7 +422,7 @@ def _build_system_prompt(
     if can_request_help:
         parts.append(_AGENT_SYSTEM_HELP_INSTRUCTION)
         if helpers:
-            listed = ", ".join(f"`{h['name']}` ({h['role']})" for h in helpers)
+            listed = ", ".join(f"`{h['name']}` ({', '.join(h['adds'])})" for h in helpers)
             parts.append(_AGENT_SYSTEM_HELPERS.format(helpers=listed))
     return "\n".join(parts)
 
@@ -453,6 +463,60 @@ def agent_capabilities(tool_permissions: dict[str, str] | None) -> list[str]:
             continue
         capabilities.append(label if "auto" in allowed else f"{label} (asks first)")
     return capabilities
+
+
+# Who naturally owns a capability on the default team, best first. Used to pick
+# the teammate a sub-agent should ask; any other teammate with the capability
+# is the fallback.
+_CAPABILITY_OWNERS: dict[str, tuple[str, ...]] = {
+    "web search": ("researcher",),
+    "browser": ("researcher", "tester"),
+    "shared browser": ("tester",),
+    "run commands": ("tester", "coder"),
+    "building tools": ("toolsmith",),
+}
+# Help is for knowledge and tools an agent lacks, not a side door around its
+# role: a read-only reviewer must not get files changed through a helper.
+_NOT_OFFERED_AS_HELP = {"edit files"}
+
+
+def helpers_for(agent_def: dict, team: list[dict]) -> list[dict]:
+    """Who to ask for each capability this agent lacks, for its request_help line.
+
+    A helper can't delegate any further, so only what it can do itself counts.
+    Each missing capability goes to one teammate, preferring in order: one that
+    can use it without asking first, its natural owner (``_CAPABILITY_OWNERS``),
+    and the most specialised (fewest capabilities).
+    Returns ``[{"name": ..., "adds": [...]}]``.
+    """
+    def base(capability: str) -> str:
+        return capability.replace(" (asks first)", "")
+
+    own = {base(c) for c in agent_capabilities(agent_def.get("tool_permissions"))}
+    best: dict[str, tuple[tuple[bool, int, int], str]] = {}
+    for mate in team:
+        if mate["name"] == agent_def.get("name") or is_internal_profile(mate["name"]):
+            continue
+        capabilities = agent_capabilities(mate.get("tool_permissions"))
+        for capability in capabilities:
+            name = base(capability)
+            if name in own or name in _NOT_OFFERED_AS_HELP:
+                continue
+            owners = _CAPABILITY_OWNERS.get(name, ())
+            rank = owners.index(mate["name"]) if mate["name"] in owners else len(owners)
+            score = (capability != name, rank, len(capabilities))
+            if name not in best or score < best[name][0]:
+                best[name] = (score, mate["name"])
+    helpers: list[dict] = []
+    for label, _tools in _CAPABILITIES:
+        if label in best:
+            mate = best[label][1]
+            entry = next((h for h in helpers if h["name"] == mate), None)
+            if entry is None:
+                helpers.append({"name": mate, "adds": [label]})
+            else:
+                entry["adds"].append(label)
+    return helpers
 
 
 def describe_team_capabilities(agents: list[dict]) -> tuple[list[str], dict[str, str]]:
@@ -898,9 +962,8 @@ async def spawn_sub_agent(
         # current profile here in case it changed after the job was queued.
         if background and ((resolve_permission(agent_tool_perms, name) or "auto") != "auto" or tool.requires_permission):
             continue
-        if name in _MEMORY_TOOLS:
-            sub_registry._tools[name] = tool
-            continue
+        # Memory tools are offered like any other tool: a profile that denies
+        # one (memory_forget, say) must not get it anyway.
         if resolve_permission(agent_tool_perms, name) == "deny":
             continue
         sub_registry._tools[name] = tool
@@ -916,10 +979,7 @@ async def spawn_sub_agent(
         if "request_help" in parent_tools:
             sub_registry._tools["request_help"] = parent_tools["request_help"]
             can_request_help = True
-            helpers = [
-                a for a in await load_agent_registry()
-                if a["name"] != agent_name and not is_internal_profile(a["name"])
-            ]
+            helpers = helpers_for(agent_def, await load_agent_registry())
 
     # Resolve sub-agent model+provider via the cost-control map
     # (parent provider|model → child provider|model), then fall back to the

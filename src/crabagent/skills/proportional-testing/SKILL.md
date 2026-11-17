@@ -39,9 +39,13 @@ Guidelines:
 
 ## Step 4: Prove the tests matter
 For a bug fix, the regression test should fail without the fix. If it's cheap:
-1. Temporarily revert the fix. If reverting isn't practical, reason it through from the diff instead.
-2. Confirm the test fails.
-3. Restore the fix and confirm the test passes.
+1. Run the test against the code *without* the fix in a temporary copy (`mktemp -d`,
+   copy the package, undo the fix there). Never revert or stub files in the shared
+   working tree, even briefly, and don't use `git checkout`, `stash` or `reset` on
+   it: other agents may be working in it. If a copy isn't practical, reason it
+   through from the diff instead.
+2. Confirm the test fails there.
+3. Confirm it passes against the real code.
 
 A test that passes either way proves nothing. Rewrite it.
 

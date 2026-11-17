@@ -36,6 +36,7 @@ Keep asking "why?", usually about five times, until the answer points at a decis
 The root cause is where the correct fix belongs, and it is often far from where the error appeared.
 
 ## Step 5: Fix the cause, minimally
+If your role or brief says not to change code (a tester or reviewer), stop here: report the root cause, the evidence and where the fix belongs.
 - State the root cause in one sentence before you edit anything.
 - Make the smallest change that removes the cause.
 - Don't patch the symptom (for example, a None check where the crash happened) unless the cause truly can't be fixed. If so, say that explicitly.

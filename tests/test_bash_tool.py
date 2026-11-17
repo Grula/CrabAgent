@@ -139,6 +139,30 @@ class TestBuildSubprocessKwargs:
         kwargs = bash_tool._build_subprocess_kwargs("/tmp")
         assert kwargs.get("cwd") == "/tmp"
 
+    @_unix_only
+    @pytest.mark.skipif(not bash_tool._POSIX_SHELL, reason="bash not installed")
+    @pytest.mark.asyncio
+    async def test_commands_run_in_bash_not_sh(self, tmp_path: Path):
+        """The tool is called bash; pipefail and PIPESTATUS fail under dash."""
+        context = AgentContext(workspace=tmp_path)
+        result = await bash_command(
+            'set -o pipefail; false | true; echo "status=$?"; false | true; echo "first=${PIPESTATUS[0]}"',
+            context=context,
+        )
+        assert "status=1" in result
+        assert "first=1" in result
+
+    @_unix_only
+    @pytest.mark.skipif(not bash_tool._POSIX_SHELL, reason="bash not installed")
+    @pytest.mark.asyncio
+    async def test_background_commands_run_in_bash_too(self, tmp_path: Path):
+        context = AgentContext(workspace=tmp_path)
+        result = await bash_command('[[ -n "$BASH_VERSION" ]] && echo in-bash', background=True, context=context)
+        if "in-bash" not in result:  # still running when the tool returned: read its log
+            pid = result.split("PID=", 1)[1].split()[0]
+            result = await bash_tool.bash_output(pid, wait_seconds=5, context=context)
+        assert "in-bash" in result
+
     def test_includes_process_group_flag(self):
         kwargs = bash_tool._build_subprocess_kwargs()
         if not bash_tool.IS_WINDOWS:

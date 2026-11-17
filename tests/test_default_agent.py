@@ -76,7 +76,8 @@ class TestRemovedBuiltins:
         assert set(rows) == {"architect", "coder", "tester", "the_reviewer", "researcher"}
         assert "plan" in json.loads(rows["architect"].skills)
         assert "docx" not in json.loads(rows["architect"].skills)
-        assert json.loads(rows["the_reviewer"].skills) == ["strict-review", "code-review", "security-review", "git-workflow"]
+        assert json.loads(rows["the_reviewer"].skills) == [
+            "strict-review", "code-review", "security-review", "git-workflow", "docs-lookup", "run-app"]
 
     async def test_seeding_never_changes_an_existing_agents_skills(self, agents_db):
         custom = _profile("architect", builtin=True)
@@ -153,3 +154,10 @@ class TestDefaultTeamCapabilities:
         assert "edit files" not in self._caps("the_reviewer")
         assert "web search" in self._caps("researcher")
         assert not {"edit files", "run commands", "web search"} & set(self._caps("architect"))
+
+    def test_coder_tester_and_reviewer_lack_organiser_admin_and_rollback_tools(self):
+        for name in ("coder", "tester", "the_reviewer"):
+            perms = next(a for a in db.DEFAULT_AGENTS if a["name"] == name)["tool_permissions"]
+            for tool in ("molt_rollback", "memory_forget", "task_add", "todo_add", "conversation_search", "office_edit"):
+                assert perms.get(tool) == "deny", (name, tool)
+            assert perms.get("bash") == "auto"

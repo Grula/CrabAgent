@@ -24,6 +24,17 @@ and only with a concrete trigger.
 - `JSON.parse` on unvalidated input; `Object` used as a map with user keys (`__proto__`).
 - TypeScript `as` casts and non-null `!` assertions that hide a real undefined.
 
+## C / C++
+- Use after free and dangling references: a reference, pointer, `string_view` or `span` that outlives its owner; returning a reference to a local.
+- Iterators, pointers and references invalidated by `push_back`, `insert`, `erase` or `rehash`, then used.
+- Signed integer overflow, shifts past the width, out-of-bounds indexing, reads of uninitialised variables: all undefined behaviour.
+- Ownership: a raw `new` without a matching `delete` on every path (exceptions included); a moved-from object used afterwards; double free.
+- Rule of 0/3/5 broken: a resource-owning class with a default copy constructor or assignment.
+- Data races; a lock held while calling unknown code; static initialisation order across translation units.
+- A non-inline definition in a header (ODR, "multiple definition"); a template defined only in a `.cpp`.
+- Implicit conversions: signed/unsigned comparisons, narrowing, `size_t` underflow (`v.size() - 1` on an empty vector).
+- `std::vector<bool>` is not a container of `bool&`; `operator[]` on a `std::map` inserts.
+
 ## Go
 - Writing to a nil map; range-variable capture in goroutines (pre-1.22); ignoring returned `err`.
 - `defer` inside loops; `defer` capturing values at call time.

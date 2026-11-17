@@ -51,10 +51,11 @@ def filter_tool_registry(
             continue
         if name in session_gated:
             continue
+        if resolve_permission(tool_permissions, name) == "deny":
+            continue
+        # Memory tools survive a whitelist, but an explicit deny still wins.
         if name in get_memory_tools():
             filtered._tools[name] = tool
-            continue
-        if resolve_permission(tool_permissions, name) == "deny":
             continue
         if use_whitelist and name not in allowed:
             continue

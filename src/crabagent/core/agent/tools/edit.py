@@ -1,4 +1,4 @@
-from crabagent.core.agent.tools.path_utils import resolve_tool_path
+from crabagent.core.agent.tools.path_utils import file_lock, resolve_tool_path
 from crabagent.core.agent.tools.registry import registry
 
 
@@ -55,30 +55,31 @@ def edit_file(
     if old_string == new_string:
         return "Error: old_string and new_string are identical; nothing to change."
 
-    try:
-        content = path.read_text(encoding="utf-8")
-    except Exception as e:
-        return f"Error reading file: {e}"
+    with file_lock(path):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except Exception as e:
+            return f"Error reading file: {e}"
 
-    # Count occurrences first (safe — returns 0 instead of raising)
-    count = content.count(old_string)
-    if count == 0:
-        return f"Error: old_string not found in {file_path}"
-    if count > 1 and not replace_all:
-        return (
-            f"Error: old_string found {count} times in {file_path}. Provide more context to make it unique, "
-            "or set replace_all=true to replace every occurrence."
-        )
+        # Count occurrences first (safe — returns 0 instead of raising)
+        count = content.count(old_string)
+        if count == 0:
+            return f"Error: old_string not found in {file_path}"
+        if count > 1 and not replace_all:
+            return (
+                f"Error: old_string found {count} times in {file_path}. Provide more context to make it unique, "
+                "or set replace_all=true to replace every occurrence."
+            )
 
-    # Now safe to compute line number
-    index = content.index(old_string)
-    line_num = content[:index].count("\n") + 1
+        # Now safe to compute line number
+        index = content.index(old_string)
+        line_num = content[:index].count("\n") + 1
 
-    if replace_all:
-        new_content = content.replace(old_string, new_string)
-    else:
-        new_content = content.replace(old_string, new_string, 1)
-    path.write_text(new_content, encoding="utf-8")
+        if replace_all:
+            new_content = content.replace(old_string, new_string)
+        else:
+            new_content = content.replace(old_string, new_string, 1)
+        path.write_text(new_content, encoding="utf-8")
     if count == 1:
         return f"Successfully replaced 1 occurrence in {file_path} @ L{line_num}"
     return f"Successfully replaced {count} occurrences in {file_path} (first @ L{line_num})"

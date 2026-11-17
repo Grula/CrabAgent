@@ -1,4 +1,4 @@
-from crabagent.core.agent.tools.path_utils import resolve_tool_path
+from crabagent.core.agent.tools.path_utils import file_lock, resolve_tool_path
 from crabagent.core.agent.tools.registry import registry
 
 
@@ -37,7 +37,8 @@ def write_file(file_path: str, content: str, context=None) -> str:
     assert path is not None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        with file_lock(path):
+            path.write_text(content, encoding="utf-8")
         return f"Successfully wrote {len(content)} bytes to {file_path}"
     except Exception as e:
         return f"Error writing file: {e}"

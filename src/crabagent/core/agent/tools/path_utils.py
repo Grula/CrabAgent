@@ -1,7 +1,22 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
+
+_file_locks: dict[str, threading.Lock] = {}
+_file_locks_guard = threading.Lock()
+
+
+def file_lock(path: Path) -> threading.Lock:
+    """One lock per file, held across a tool's read-modify-write.
+
+    Tools in one batch run in parallel threads. Without this, two edits to the
+    same file both read the original and the second write erases the first.
+    """
+    key = str(Path(path).resolve())
+    with _file_locks_guard:
+        return _file_locks.setdefault(key, threading.Lock())
 
 
 def get_workspace_root(context: Any = None) -> Path | None:

@@ -5,7 +5,9 @@ description: Diagnose slow web pages and memory leaks: measure LCP, FCP, CLS, TT
 
 # Web Performance
 
-Measure first, find the single biggest bottleneck, fix it, measure again. The `browser_*` tools
+Measure first, find the single biggest bottleneck, fix it, measure again. If your role or
+brief says not to change code, stop after finding the bottleneck and report it with the
+numbers. The `browser_*` tools
 can't read performance timings, throttle, or take heap snapshots, so all measurement here runs
 through `bash` with the bundled Playwright scripts (or Lighthouse when Node is available).
 

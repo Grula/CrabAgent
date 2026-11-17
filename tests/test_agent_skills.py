@@ -217,7 +217,8 @@ async def test_delegated_agent_can_ask_a_teammate_once(monkeypatch: pytest.Monke
 
     team = {
         "coder": {"name": "coder", "display_name": "Coder", "role": "Software Engineer", "goal": "g",
-                  "backstory": "", "tool_permissions": {}, "allow_delegation": True},
+                  "backstory": "", "allow_delegation": True,
+                  "tool_permissions": {"web_search": "deny", "web_scrape": "deny"}},
         "researcher": {"name": "researcher", "display_name": "Researcher", "role": "Web Researcher", "goal": "g",
                        "backstory": "", "tool_permissions": {}, "allow_delegation": True},
     }
@@ -259,7 +260,116 @@ async def test_delegated_agent_can_ask_a_teammate_once(monkeypatch: pytest.Monke
 
     coder = seen["coder"]
     assert "request_help" in coder.tool_registry._tools
-    assert "Teammates you can ask: `researcher` (Web Researcher)." in coder.system_prompt
+    assert "Teammates who can do what you can't: `researcher` (web search)." in coder.system_prompt
     assert "researcher done" in seen["answer"]
     assert "request_help" not in seen["researcher"].tool_registry._tools
     assert seen["helper_asks"].startswith("Error: cannot request help")
+
+
+# --- Deny means deny, memory tools included -------------------------------------------
+
+
+def _memory_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    for name in ("memory_save", "memory_recall", "memory_forget", "read"):
+        registry._tools[name] = type("T", (), {"name": name, "requires_permission": False})()
+    return registry
+
+
+def test_chat_agent_does_not_get_a_denied_memory_tool():
+    from crabagent.core.agent.agent_switch import filter_tool_registry
+
+    narrowed = filter_tool_registry(_memory_registry(), tool_permissions={"memory_forget": "deny"}, allow_delegation=True)
+
+    assert "memory_forget" not in narrowed._tools
+    assert {"memory_save", "memory_recall"} <= set(narrowed._tools)
+
+
+def test_memory_tools_still_survive_a_tool_whitelist():
+    from crabagent.core.agent.agent_switch import filter_tool_registry
+
+    narrowed = filter_tool_registry(_memory_registry(), agent_tools=["read"], allow_delegation=True)
+
+    assert {"read", "memory_save", "memory_forget"} <= set(narrowed._tools)
+
+
+async def test_sub_agent_does_not_get_a_denied_memory_tool(monkeypatch: pytest.MonkeyPatch):
+    from crabagent.core.agent.context import AgentContext
+
+    agent_def = {"name": "coder", "display_name": "Coder", "role": "r", "goal": "g", "backstory": "",
+                 "tool_permissions": {"memory_forget": "deny"}, "allow_delegation": False}
+
+    async def returns(value):
+        return value
+
+    monkeypatch.setattr(agents_module, "get_agent", lambda *a, **k: returns(agent_def))
+    monkeypatch.setattr(agents_module, "_load_shared_context", lambda *a, **k: returns(""))
+    monkeypatch.setattr(agents_module, "load_sub_agent_model_map", lambda *a, **k: returns({}))
+    seen = {}
+
+    async def run_agent(sub_context, task, *args, **kwargs):
+        seen["tools"] = set(sub_context.tool_registry._tools)
+        sub_context.messages.append({"role": "assistant", "content": "done"})
+        return sub_context.messages
+
+    monkeypatch.setattr(agents_module, "run_agent", run_agent, raising=False)
+    monkeypatch.setattr("crabagent.core.agent.loop.run_agent", run_agent)
+    agents_module._running_sub_agents.clear()
+    parent = AgentContext(workspace=Path("/tmp"), metadata={"user_id": 0})
+    parent.tool_registry = _memory_registry()
+
+    await agents_module.spawn_sub_agent(parent, agent_name="coder", task="x", agent_def=agent_def)
+
+    assert "memory_forget" not in seen["tools"]
+    assert {"memory_save", "memory_recall", "read"} <= seen["tools"]
+
+
+def test_each_missing_capability_goes_to_one_specialist():
+    from crabagent.core.agent.agents import helpers_for
+
+    no_web = {"web_search": "deny", "web_scrape": "deny", "browser": "deny", "create_tool": "deny"}
+    coder = {"name": "coder", "tool_permissions": no_web}
+    team = [
+        coder,
+        {"name": "architect", "tool_permissions": {**no_web, "bash": "deny", "edit": "deny", "write": "deny"}},
+        {"name": "optimizer", "tool_permissions": {"create_tool": "deny"}},  # can search, but does everything
+        {"name": "ml_researcher", "tool_permissions": {"web_search": "confirm", "web_scrape": "confirm",
+                                                       "bash": "deny", "edit": "deny", "write": "deny",
+                                                       "create_tool": "deny"}},  # asks first: not preferred
+        {"name": "researcher", "tool_permissions": {"bash": "deny", "edit": "deny", "write": "deny",
+                                                    "create_tool": "deny", "email_check": "deny",
+                                                    "email_send": "deny"}},
+        {"name": "toolsmith", "tool_permissions": {}},
+    ]
+
+    helpers = helpers_for(coder, team)
+
+    assert helpers == [
+        {"name": "researcher", "adds": ["web search", "browser"]},
+        {"name": "toolsmith", "adds": ["building tools"]},
+    ]
+
+
+def test_an_agent_that_lacks_nothing_gets_no_helper_line():
+    from crabagent.core.agent.agents import helpers_for
+
+    assert helpers_for({"name": "a", "tool_permissions": {}}, [{"name": "b", "tool_permissions": {"bash": "deny"}}]) == []
+
+
+def test_the_natural_owner_wins_a_tie():
+    from crabagent.core.agent.agents import helpers_for
+
+    coder = {"name": "coder", "tool_permissions": {"web_search": "deny", "web_scrape": "deny"}}
+    same_size = {"bash": "deny", "edit": "deny", "write": "deny"}
+    team = [{"name": "optimizer", "tool_permissions": same_size}, {"name": "researcher", "tool_permissions": same_size}]
+
+    assert helpers_for(coder, team) == [{"name": "researcher", "adds": ["web search"]}]
+
+
+def test_a_read_only_agent_is_not_offered_someone_to_edit_files():
+    from crabagent.core.agent.agents import helpers_for
+
+    reviewer = {"name": "the_reviewer", "tool_permissions": {"edit": "deny", "write": "deny"}}
+    coder = {"name": "coder", "tool_permissions": {}}
+
+    assert all("edit files" not in h["adds"] for h in helpers_for(reviewer, [coder]))

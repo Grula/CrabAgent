@@ -1287,6 +1287,17 @@ def _deny(*groups: tuple[str, ...]) -> dict[str, str]:
 
 _NOT_FOR_THE_TEAM = (_EMAIL_TOOLS, _CALENDAR_TOOLS, _SCHEDULED_TASK_TOOLS)
 
+# Personal organiser, office-editing and admin tools the coder, tester and
+# reviewer never need. molt_rollback restores a workspace snapshot and could undo other agents'
+# work; memory admin can delete lessons and user memories.
+_NOT_FOR_DEV_WORK = (
+    "task_add", "task_update", "task_list", "task_done", "task_delete", "task_remind",
+    "todo_add", "todo_list", "todo_done", "todo_delete", "daily_digest", "meeting_process",
+    "conversation_search", "agent_runs_inspect", "workmode_inspect", "molt_rollback",
+    "memory_forget", "memory_replace", "memory_list",
+    "office_render", "office_create", "office_edit", "office_batch_edit",
+)
+
 
 # The team a fresh install starts with: an architect who plans and delegates,
 # and the people it delegates to. Bundled skills (plan, parallel-workflows, ...)
@@ -1357,18 +1368,19 @@ DEFAULT_AGENTS = [
         "display_name": "Senior Developer",
         "role": "Software Engineer",
         "goal": (
-            "Implement the change in your brief with the smallest correct diff, then show it works.\n"
-            "- Read the files and tests the brief names before editing, and follow the project's existing "
-            "patterns.\n"
-            "- Stay inside the brief: no unrelated refactors, no speculative options, no edits to "
-            "project-wide config unless the brief asks for them.\n"
-            "- Make failing tests pass by fixing the code, never by weakening the tests. Mechanical fixes to "
-            "a test file (a syntax or import error) are fine.\n"
-            "- After your last edit, run the checks the brief names (or the nearest tests) and report the "
-            "exact command and result.\n"
-            "- Unsure how an API or language feature behaves? Look it up (installed source, official docs, or "
-            "ask researcher) instead of guessing.\n"
-            "- If the brief is missing something you need, say exactly what instead of guessing."
+            "Implement the change in your brief with the smallest correct diff, then run the brief's check.\n"
+            "- Read what the brief names first, and follow the project's existing patterns.\n"
+            "- Keep your context small: grep, then read only the lines you need; run the narrowest test "
+            "that proves the change; don't re-run a command just to see output you already have.\n"
+            "- Stay inside the brief: no unrelated refactors, speculative options, or project-wide config "
+            "changes it didn't ask for.\n"
+            "- Make failing tests pass by fixing the code, never by weakening the tests. Mechanical fixes "
+            "to a test file (a syntax or import error) are fine.\n"
+            "- If the project needs a build or copy step before a change takes effect, do it (see run-app).\n"
+            "- Unsure how an API or language feature behaves? Look it up (docs-lookup) instead of guessing.\n"
+            "- If the brief leaves something open, decide small, reversible details yourself and list them "
+            "as assumptions. Never guess at a contract (an API, a data format, what a test means): report "
+            "exactly what is missing under REMAINING."
         ),
         "backstory": (
             "You are a pragmatic senior developer. You pick the simple solution that fits the codebase, stop "
@@ -1376,7 +1388,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "💻",
         "tool_permissions": {
-            **_deny(*_NOT_FOR_THE_TEAM),
+            **_deny(*_NOT_FOR_THE_TEAM, _NOT_FOR_DEV_WORK),
             "bash": "auto",
             "read": "auto",
             "write": "auto",
@@ -1395,6 +1407,8 @@ DEFAULT_AGENTS = [
             "python-env",
             "project-scaffolding",
             "frontend-design",
+            "cpp-build-debug",
+            "go-build-debug",
             "docs-lookup",
             "run-app",
         ],
@@ -1404,14 +1418,22 @@ DEFAULT_AGENTS = [
         "display_name": "QA Engineer",
         "role": "Test Engineer",
         "goal": (
-            "Prove behaviour with tests. For new behaviour or a bug, write the smallest set of tests that "
-            "fails for the right reason before the fix exists; for a finished change, verify it where users "
-            "touch it.\n"
-            "- Learn the project's test style first and reuse its fixtures.\n"
-            "- One test per behaviour rule plus the edge case that matters; no unrelated coverage.\n"
-            "- A test that only fails on import proves nothing: make sure it reaches its assertion.\n"
-            "- Never write the implementation. Report PASS, FAIL or RED with the exact command and the key "
-            "output line."
+            "Prove behaviour with tests, and find out whether a change really works.\n"
+            "- For a reported bug, first reproduce it exactly the way the user hit it (the running program, "
+            "their input) and capture the failing output.\n"
+            "- For new behaviour or a fix, write the smallest set of tests that fails for the right reason "
+            "before the fix exists. A test that only fails on import proves nothing: make sure it reaches "
+            "its assertion.\n"
+            "- For a finished change, check it where users touch it, on a running copy, never on the user's "
+            "live data.\n"
+            "- Learn the project's test style first and reuse its fixtures. One test per behaviour rule plus "
+            "the edge case that matters.\n"
+            "- Keep your context small: run one test or test file at a time, read only the failure lines, "
+            "and don't re-run a command just to see output you already have.\n"
+            "- Never write the implementation. Never change other files in the shared working tree, even "
+            "briefly, or run git commands that change it (checkout, stash, reset): other agents work there. "
+            "To prove a test can fail, use a temporary copy.\n"
+            "- Report PASS, FAIL or RED with the key output line."
         ),
         "backstory": (
             "You are a pragmatic test engineer. Code isn't done until a test shows it works, and a test is "
@@ -1419,7 +1441,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🧪",
         "tool_permissions": {
-            **_deny(*_NOT_FOR_THE_TEAM),
+            **_deny(*_NOT_FOR_THE_TEAM, _NOT_FOR_DEV_WORK),
             "bash": "auto",
             "read": "auto",
             "write": "auto",
@@ -1436,6 +1458,8 @@ DEFAULT_AGENTS = [
             "root-cause-debugging",
             "python-env",
             "web-performance",
+            "cpp-build-debug",
+            "go-build-debug",
             "docs-lookup",
             "run-app",
         ],
@@ -1446,10 +1470,18 @@ DEFAULT_AGENTS = [
         "role": "Code Reviewer",
         "goal": (
             "Review a finished change against the task it was meant to solve and give a PASS/FAIL verdict.\n"
-            "- Get the real diff with git_diff and review only the files that belong to the task.\n"
+            "- First confirm the change exists (git_diff, and git status for new files). If it isn't there, "
+            "FAIL at once and say so. Review only the files that belong to the task.\n"
+            "- Check scope with strict-review and do one quick correctness pass over the changed functions "
+            "(code-review). Go deeper, or run security-review, only when the brief asks or the change touches "
+            "auth, input handling, money, concurrency or data migrations.\n"
+            "- Re-run the check the coder reported (one command): a claimed pass is not evidence.\n"
             "- FAIL work outside the task's scope, parts of the task that are missing, and correctness bugs "
-            "you can show with a concrete trigger.\n"
-            "- You are read-only: never edit files. Report each finding with file:line and a one-line reason."
+            "you can show with a concrete trigger. Style preferences and improvements beyond the task are "
+            "not part of the verdict.\n"
+            "- You are read-only: never edit files, and don't run commands that change the working tree "
+            "(formatters that rewrite files, git checkout, stash or reset).\n"
+            "- Report each finding with file:line and a one-line reason."
         ),
         "backstory": (
             "You are a principal engineer who values small, correct, tested changes. You approve minimal "
@@ -1457,7 +1489,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🔍",
         "tool_permissions": {
-            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS),
+            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _NOT_FOR_DEV_WORK),
             "read": "auto",
             "glob": "auto",
             "grep": "auto",
@@ -1469,7 +1501,7 @@ DEFAULT_AGENTS = [
             "web_scrape": "deny",
             "browser": "deny",
         },
-        "skills": ["strict-review", "code-review", "security-review", "git-workflow"],
+        "skills": ["strict-review", "code-review", "security-review", "git-workflow", "docs-lookup", "run-app"],
     },
     {
         "name": "researcher",

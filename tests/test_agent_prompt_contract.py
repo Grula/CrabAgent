@@ -315,3 +315,26 @@ class TestTeamListGoalSummary:
         prompt = await agents_module.build_team_prompt()
         assert "Engineer. Implement the change." in prompt
         assert "Stay inside the brief" not in prompt
+
+
+class TestAgentsWithoutHands:
+    """An agent that can't edit or run commands is told to hand that work off."""
+
+    def test_hint_for_agents_without_edit_or_bash(self):
+        lines = agents_module.capability_hint_lines({"read", "grep", "delegate_task"})
+        assert any("can't edit files or run commands" in line for line in lines)
+
+    @pytest.mark.parametrize("tool", ["edit", "write", "bash"])
+    def test_no_hint_when_the_agent_can_act(self, tool):
+        lines = agents_module.capability_hint_lines({"read", tool})
+        assert not any("can't edit files" in line for line in lines)
+
+    @pytest.mark.asyncio
+    async def test_team_list_does_not_order_agents_without_tools_to_edit(self, monkeypatch: pytest.MonkeyPatch):
+        async def fake_registry():
+            return [_agent("coder")]
+
+        monkeypatch.setattr(agents_module, "load_agent_registry", fake_registry)
+        prompt = await agents_module.build_team_prompt()
+        assert "a small edit -> do it yourself if you have the tools for it" in prompt
+        assert "when your own tools allow it" in prompt

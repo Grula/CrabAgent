@@ -68,6 +68,8 @@ Check these when the cause isn't obvious. Each one is explained, with how to con
 - Changing a list or dict while iterating over it.
 
 ## Fix and verify
+If your role or brief says not to change code (a tester or reviewer), stop here: report the root cause, the evidence and where the fix belongs.
+
 1. Fix the cause, not the symptom, and keep the diff minimal.
 2. Rerun the exact command that failed, then the test file, then the wider suite if it's cheap.
 3. Add a regression test that fails without the fix (see `proportional-testing`).

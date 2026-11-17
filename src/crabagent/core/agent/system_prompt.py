@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 Interface = Literal["web", "terminal"]
 
-PROMPT_REVISION = 5
+PROMPT_REVISION = 6
 
 
 def _local_now() -> datetime:
@@ -51,7 +51,8 @@ _INTERFACE_NOTES: dict[str, str] = {
 _TOOL_LOADING_NOTE = (
     "- Only the core tools are in your tool list at first. Others (office files, browser control, images, "
     "email, calendar, scheduling and more) are loaded on demand: when you need a tool that is not listed, "
-    "call tool_search before concluding that you cannot do something.\n"
+    "call tool_search before concluding that you cannot do something. Tools your agent profile turns off "
+    "can't be loaded that way; hand that work to a teammate instead.\n"
 )
 
 BASE_PROMPT_TEMPLATE = """\
