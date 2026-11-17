@@ -99,7 +99,8 @@ flipped, mutable defaults evaluated once, ordering that depends on hash/dict/set
 iteration, predicates with side effects, error messages that now lie.
 
 **Splitting work on a big diff (Deep).** You may hand passes to read-only sub-agents
-with `delegate_parallel` using the `analyst` agent. Each task must stand alone: the
+with `delegate_parallel` using the read-only `the_reviewer` agent (or another read-only
+agent from your team list). Each task must stand alone: the
 repo path, the exact `git diff` command, the file list, ONE pass description copied
 from above, and the required output (`file:line | claim | trigger -> consequence`).
 Describe the lens, not your suspicion, so the sub-agent is not steered toward

@@ -16,16 +16,15 @@ report where every important fact traces back to a source.
 
 | Mechanism | Behaviour that matters here |
 |---|---|
-| `researcher` agent | Has `web_search`, `web_scrape`, browser tools. **Cannot write files** or run bash. Returns its findings as its reply. |
-| `analyst` / `coder` | No web access. Use them only on material you already gathered. |
-| `writer` | Can write files and run `web_search`, but cannot scrape pages. |
+| `researcher` agent | Has `web_search`, `web_scrape`, browser tools. **Cannot write files** or run commands. Returns its findings as its reply. |
+| `implementer`, `tester`, `the_reviewer` | No web access. Use them only on material you already gathered (`implementer` can save files). |
 | `delegate_parallel(tasks)` | All tasks start together. You receive every reply in full. This is the main fan-out tool. |
 | `run_pipeline(steps)` | A dependent step sees only about the **first 1500 characters** of each dependency's result. Don't use a research → write pipeline for long notes. |
 | `shared_put(key, value)` | Each note (max 10,000 chars) is **injected into every sub-agent spawned later in this session**. Use it for short shared context, like the scope or a glossary. Never put raw notes there. |
-| `delegate_background` / `background_group_*` | Background agents get **no web tools** (at most `read`) and have a 5-minute limit. They can't gather sources, so don't use them for this skill. |
+| Background agents | Get **no web tools** and have a 5-minute limit. They can't gather sources, so don't use them for this skill. |
 
-Run `list_agents` first if the user has custom agents. Another agent with web tools
-may suit a domain better than `researcher` does.
+Check your Agent Team list: any agent with `web_search` (for example a domain
+researcher) can take the `researcher` role, and may suit the topic better.
 
 ## Process
 
@@ -77,12 +76,13 @@ you have.
 
 ### 5. Write the report
 Follow [references/output-format.md](references/output-format.md). Write it
-yourself, because you hold the full notes. If you hand the writing to `writer`, paste
-the claim ledger into its task text. A pipeline dependency would truncate it.
+yourself, because you hold the full notes. Never hand the writing to a pipeline step:
+a dependency excerpt would truncate the claim ledger.
 
 ### 6. Deliver
-- If the report runs longer than about 60 lines, save it with `write` to
-  `reports/<short-title>.md` in the workspace and give the path.
+- If the report runs longer than about 60 lines, save it to
+  `reports/<short-title>.md` in the workspace and give the path. If you can't write
+  files, send the finished report in one `implementer` task that saves it unchanged.
 - In your reply, give the key answer in 3–5 sentences, the overall confidence, the
   biggest open question, and where the full report is.
 

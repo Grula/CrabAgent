@@ -96,3 +96,14 @@ def test_no_resume_for_non_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
         browser._bridge_request("observe")
 
     assert bridge.commands == ["observe"]
+
+
+@pytest.mark.parametrize("command", ["back", "forward", "reload"])
+def test_history_commands_carry_an_action_id(monkeypatch: pytest.MonkeyPatch, command: str) -> None:
+    bridge = _Bridge([_ok({"url": "https://example.test/"})])
+    monkeypatch.setattr(browser, "urlopen", bridge)
+
+    browser._bridge_request(command)
+
+    assert bridge.commands == [command]
+    assert "action_id" in bridge.payloads[0]

@@ -34,6 +34,10 @@ class ActionBody(BaseModel):
     action: Literal["back", "forward", "reload"]
 
 
+class PauseBody(BaseModel):
+    paused: bool
+
+
 def _bridge_endpoint() -> tuple[str, str]:
     """Return (base_url, token) for the local bridge, or 503 if not running."""
     port = os.environ.get("CRAB_COLLAB_BROWSER_PORT")
@@ -146,3 +150,16 @@ async def collab_browser_navigate(body: NavigateBody, user=Depends(get_current_u
 @router.post("/action")
 async def collab_browser_action(body: ActionBody, user=Depends(get_current_user)):
     return await _forward_command(body.action, {"action_id": str(uuid.uuid4())})
+
+
+@router.get("/status")
+async def collab_browser_status(user=Depends(get_current_user)):
+    data = await _forward_command("status", {})
+    return {"paused": bool((data.get("result") or {}).get("paused"))}
+
+
+@router.post("/pause")
+async def collab_browser_pause(body: PauseBody, user=Depends(get_current_user)):
+    """Pause or resume the agents. The person at the viewer can still browse."""
+    await _forward_command("stop" if body.paused else "resume", {})
+    return {"paused": body.paused}

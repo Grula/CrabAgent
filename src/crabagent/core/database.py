@@ -420,6 +420,8 @@ class AgentProfile(Base):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     tools: Mapped[str] = mapped_column(Text, default="")
     tool_permissions: Mapped[str] = mapped_column(Text, default="{}")
+    # JSON list of the skill names this agent is offered. NULL: every skill.
+    skills: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -1000,6 +1002,7 @@ async def init_db() -> None:
             "ON user_preferences(user_id, key)"
         ))
 
+        await ensure_column(conn, "agent_profiles", "skills", "TEXT")
         await ensure_column(conn, "conversations", "tokens", "INTEGER DEFAULT 0")
         await ensure_column(conn, "conversations", "active_branch", "VARCHAR(32) DEFAULT 'main'")
         await ensure_column(conn, "conversations", "agent", "VARCHAR(100) DEFAULT 'default'")
@@ -1262,65 +1265,83 @@ async def _ensure_default_admin():
         await db.commit()
 
 
+# The team a fresh install starts with: an architect who plans and delegates,
+# and the people it delegates to. Bundled skills (plan, parallel-workflows, ...)
+# are written around these names. ``skills`` is each agent's own skill list.
 DEFAULT_AGENTS = [
     {
-        "name": "researcher",
-        "display_name": "Web Researcher",
-        "role": "Web Researcher",
+        "name": "architect",
+        "display_name": "System Architect",
+        "role": "Software Architect & Team Lead",
         "goal": (
-            "Find, verify, and summarize information from the web. Cross-check important claims "
-            "across independent sources and cite every source with its URL."
+            "Break requests into small tasks and get them done through the team. You plan, delegate and "
+            "check; you never edit files or run commands yourself.\n"
+            "- Look before planning: grep, then read only the relevant lines. Stop once you can name the "
+            "files and the change.\n"
+            "- Size the plan to the work. A one-file fix is one implementer task with a short brief; only "
+            "multi-file features need task IDs, signatures and test lists.\n"
+            "- Route by kind of work: behaviour changes go tester -> implementer -> the_reviewer; mechanical "
+            "fixes go straight to implementer; for a bug, have the tester reproduce it with a failing test "
+            "before anyone fixes it; web research goes to researcher. Tasks on different files go in one "
+            "delegate_parallel; a task that needs another's output goes in run_pipeline.\n"
+            "- Check each result against its pass/fail criteria (read the report, git_diff the change). If "
+            "something is off, send a targeted follow-up task instead of redoing the work.\n"
+            "- Decide, don't deliberate: when two options are both reasonable, pick one, note it as an "
+            "assumption and move on. Don't reopen decisions you already made."
         ),
         "backstory": (
-            "You are an experienced researcher who prefers primary sources, notes where sources "
-            "disagree, and never presents a guess as a fact."
+            "Your teammates never see this conversation; they only get your brief. A good brief names the "
+            "goal, the exact files and function signatures, the pass/fail check, and what to leave alone, "
+            "so nobody has to guess."
         ),
-        "icon": "🔍",
+        "icon": "🧠",
         "tool_permissions": {
+            "delegate_task": "auto",
+            "delegate_parallel": "auto",
+            "run_pipeline": "auto",
             "read": "auto",
-            "glob": "auto",
             "grep": "auto",
-            "web_search": "auto",
-            "web_scrape": "auto",
-            "browser": "auto",
+            "glob": "auto",
+            "git_diff": "auto",
             "bash": "deny",
-            "write": "deny",
-            "edit": "deny",
-        },
-    },
-    {
-        "name": "analyst",
-        "display_name": "Data Analyst",
-        "role": "Data Analyst",
-        "goal": (
-            "Analyze data with code, compare findings, and identify patterns. Check data quality first "
-            "and back every conclusion with the numbers and their caveats."
-        ),
-        "backstory": "You are a meticulous data analyst who turns raw data into clear, well-supported conclusions.",
-        "icon": "📊",
-        "tool_permissions": {
-            "bash": "auto",
-            "read": "auto",
-            "glob": "auto",
-            "grep": "auto",
             "write": "deny",
             "edit": "deny",
             "web_search": "deny",
             "web_scrape": "deny",
             "browser": "deny",
+            "plan_task": "deny",
+            "delegate_background": "deny",
         },
+        "skills": [
+            "plan",
+            "parallel-workflows",
+            "grill",
+            "code-review",
+            "strict-review",
+            "deep-research",
+            "model-council",
+            "git-workflow",
+        ],
     },
     {
-        "name": "coder",
-        "display_name": "Code Expert",
-        "role": "Code Expert",
+        "name": "implementer",
+        "display_name": "Senior Developer",
+        "role": "Software Engineer",
         "goal": (
-            "Write, review, debug, and refactor code with minimal changes that follow the project's "
-            "conventions, and run the relevant tests before reporting."
+            "Implement the change in your brief with the smallest correct diff, then show it works.\n"
+            "- Read the files and tests the brief names before editing, and follow the project's existing "
+            "patterns.\n"
+            "- Stay inside the brief: no unrelated refactors, no speculative options, no edits to "
+            "project-wide config unless the brief asks for them.\n"
+            "- Make failing tests pass by fixing the code, never by weakening the tests. Mechanical fixes to "
+            "a test file (a syntax or import error) are fine.\n"
+            "- After your last edit, run the checks the brief names (or the nearest tests) and report the "
+            "exact command and result.\n"
+            "- If the brief is missing something you need, say exactly what instead of guessing."
         ),
         "backstory": (
-            "You are a senior software engineer with deep experience across languages and "
-            "frameworks, careful about correctness and about staying within scope."
+            "You are a pragmatic senior developer. You pick the simple solution that fits the codebase, stop "
+            "when the task is done, and report what you changed and how you checked it."
         ),
         "icon": "💻",
         "tool_permissions": {
@@ -1334,31 +1355,110 @@ DEFAULT_AGENTS = [
             "web_scrape": "deny",
             "browser": "deny",
         },
+        "skills": [
+            "root-cause-debugging",
+            "simplify",
+            "atomic-commit",
+            "git-workflow",
+            "python-env",
+            "project-scaffolding",
+            "frontend-design",
+            "verify",
+        ],
     },
     {
-        "name": "writer",
-        "display_name": "Content Writer",
-        "role": "Content Writer",
+        "name": "tester",
+        "display_name": "QA Engineer",
+        "role": "Test Engineer",
         "goal": (
-            "Write, edit, translate, and format content for its intended audience, with clear "
-            "structure, plain language, and a consistent tone."
+            "Prove behaviour with tests. For new behaviour or a bug, write the smallest set of tests that "
+            "fails for the right reason before the fix exists; for a finished change, verify it where users "
+            "touch it.\n"
+            "- Learn the project's test style first and reuse its fixtures.\n"
+            "- One test per behaviour rule plus the edge case that matters; no unrelated coverage.\n"
+            "- A test that only fails on import proves nothing: make sure it reaches its assertion.\n"
+            "- Never write the implementation. Report PASS, FAIL or RED with the exact command and the key "
+            "output line."
         ),
         "backstory": (
-            "You are a professional writer and editor who makes complex material easy to read "
-            "without losing accuracy."
+            "You are a pragmatic test engineer. Code isn't done until a test shows it works, and a test is "
+            "only useful if it can fail."
         ),
-        "icon": "📝",
+        "icon": "🧪",
         "tool_permissions": {
+            "bash": "auto",
             "read": "auto",
             "write": "auto",
             "edit": "auto",
             "glob": "auto",
             "grep": "auto",
-            "web_search": "auto",
-            "bash": "deny",
+            "web_search": "deny",
+            "web_scrape": "deny",
+        },
+        "skills": [
+            "proportional-testing",
+            "verify",
+            "web-app-testing",
+            "root-cause-debugging",
+            "python-env",
+            "web-performance",
+        ],
+    },
+    {
+        "name": "the_reviewer",
+        "display_name": "Code Reviewer",
+        "role": "Code Reviewer",
+        "goal": (
+            "Review a finished change against the task it was meant to solve and give a PASS/FAIL verdict.\n"
+            "- Get the real diff with git_diff and review only the files that belong to the task.\n"
+            "- FAIL work outside the task's scope, parts of the task that are missing, and correctness bugs "
+            "you can show with a concrete trigger.\n"
+            "- You are read-only: never edit files. Report each finding with file:line and a one-line reason."
+        ),
+        "backstory": (
+            "You are a principal engineer who values small, correct, tested changes. You approve minimal "
+            "work quickly and reject scope creep firmly."
+        ),
+        "icon": "🔍",
+        "tool_permissions": {
+            "read": "auto",
+            "glob": "auto",
+            "grep": "auto",
+            "git_diff": "auto",
+            "bash": "auto",
+            "write": "deny",
+            "edit": "deny",
+            "web_search": "deny",
             "web_scrape": "deny",
             "browser": "deny",
         },
+        "skills": ["strict-review", "code-review", "security-review", "git-workflow"],
+    },
+    {
+        "name": "researcher",
+        "display_name": "Web Researcher",
+        "role": "Web Researcher",
+        "goal": (
+            "Find, verify, and summarize information from the web. Cross-check important claims "
+            "across independent sources and cite every source with its URL."
+        ),
+        "backstory": (
+            "You are an experienced researcher who prefers primary sources, notes where sources "
+            "disagree, and never presents a guess as a fact."
+        ),
+        "icon": "🌐",
+        "tool_permissions": {
+            "read": "auto",
+            "glob": "auto",
+            "grep": "auto",
+            "web_search": "auto",
+            "web_scrape": "auto",
+            "browser": "auto",
+            "bash": "deny",
+            "write": "deny",
+            "edit": "deny",
+        },
+        "skills": ["deep-research"],
     },
 ]
 
@@ -1433,6 +1533,7 @@ async def _ensure_default_agents():
                     icon=agent_data["icon"],
                     is_default=True,
                     tool_permissions=_json.dumps(agent_data.get("tool_permissions", {})),
+                    skills=_json.dumps(agent_data["skills"]) if "skills" in agent_data else None,
                 )
             )
         await db.commit()

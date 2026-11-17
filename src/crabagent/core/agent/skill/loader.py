@@ -109,12 +109,16 @@ def format_skill_content(skill: SkillInfo) -> str:
     return "\n".join(parts)
 
 
-def register_skill_tool(registry, skills: dict[str, SkillInfo]):
-    if not skills:
-        return
+def _skill_tool_info(own: dict[str, SkillInfo], every: dict[str, SkillInfo]):
+    """Build the ``skill`` tool offering only ``own``.
+
+    ``every`` (all discovered skills) rides along in the tool metadata so a
+    narrower copy can be cut for another agent later.
+    """
+    from crabagent.core.agent.tools.registry import ToolInfo
 
     available_lines = "\n".join(
-        f"  - **{s.name}**: {s.description}" for s in sorted(skills.values(), key=lambda s: s.name)
+        f"  - **{s.name}**: {s.description}" for s in sorted(own.values(), key=lambda s: s.name)
     )
     description = (
         "Load a specialized skill that provides domain-specific instructions and workflows. "
@@ -123,9 +127,14 @@ def register_skill_tool(registry, skills: dict[str, SkillInfo]):
         "Available skills:\n" + available_lines
     )
 
-    _skills_ref = skills
+    def load_skill(name: str) -> str:
+        skill = own.get(name)
+        if not skill:
+            names = ", ".join(sorted(own.keys()))
+            return f"Error: skill '{name}' not found. Available skills: {names}"
+        return format_skill_content(skill)
 
-    @registry.register(
+    return ToolInfo(
         name="skill",
         description=description,
         parameters={
@@ -138,10 +147,34 @@ def register_skill_tool(registry, skills: dict[str, SkillInfo]):
             },
             "required": ["name"],
         },
+        handler=load_skill,
+        metadata={"source": "builtin", "all_skills": every},
     )
-    def load_skill(name: str) -> str:
-        skill = _skills_ref.get(name)
-        if not skill:
-            names = ", ".join(sorted(_skills_ref.keys()))
-            return f"Error: skill '{name}' not found. Available skills: {names}"
-        return format_skill_content(skill)
+
+
+def register_skill_tool(registry, skills: dict[str, SkillInfo]):
+    if not skills:
+        return
+    registry._tools["skill"] = _skill_tool_info(skills, skills)
+
+
+def scope_skill_tool(registry, allowed: list[str] | None) -> None:
+    """Narrow ``registry``'s skill tool to one agent's own skills.
+
+    ``allowed`` is the agent profile's ``skills`` list. ``None`` means the
+    profile sets no list, so the agent keeps every skill. An empty list, or a
+    list that names no installed skill, removes the tool. Only call this on a
+    registry built for that agent; it replaces the tool in place.
+    """
+    if allowed is None:
+        return
+    tool = registry._tools.get("skill")
+    if tool is None:
+        return
+    every: dict[str, SkillInfo] = (tool.metadata or {}).get("all_skills") or {}
+    wanted = set(allowed)
+    own = {name: info for name, info in every.items() if name in wanted}
+    if own:
+        registry._tools["skill"] = _skill_tool_info(own, every)
+    else:
+        registry._tools.pop("skill", None)

@@ -70,7 +70,8 @@ deeper. Name the deeper change. Apply it only when it stays small and inside the
 area; otherwise report it as a recommendation.
 
 **Large diffs:** you may run the four lenses in parallel with `delegate_parallel` using
-the read-only `analyst` agent - one task per lens, each including the repo path, the
+the read-only `the_reviewer` agent (or another read-only agent from your team list) - one
+task per lens, each including the repo path, the
 exact diff command, and the lens text above. You still apply the fixes yourself.
 
 ## 3. Decide what to apply

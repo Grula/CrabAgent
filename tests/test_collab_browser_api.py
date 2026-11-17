@@ -134,3 +134,24 @@ def test_crabagent_port_is_never_allowed_by_wildcard_grant(monkeypatch: pytest.M
 
     assert service.local_preview_policy.allows("http://localhost:5173")
     assert not service.local_preview_policy.allows("http://localhost:5210")
+
+
+async def test_pause_and_resume_are_forwarded(bridge):
+    fake = bridge()
+
+    assert await api.collab_browser_pause(api.PauseBody(paused=True), user=None) == {"paused": True}
+    assert await api.collab_browser_pause(api.PauseBody(paused=False), user=None) == {"paused": False}
+
+    assert [c for c, _ in fake.calls] == ["stop", "resume"]
+
+
+async def test_status_reports_paused(bridge):
+    bridge({"status": (200, {"result": {"paused": True, "url": "about:blank"}})})
+
+    assert await api.collab_browser_status(user=None) == {"paused": True}
+
+
+async def test_viewer_commands_speak_for_the_person():
+    from crabagent.core.computer.bridge_service import USER_TASK_ID
+
+    assert api._envelope("navigate", {})["task_id"] == USER_TASK_ID

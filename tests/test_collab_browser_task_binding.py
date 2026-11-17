@@ -51,9 +51,21 @@ async def test_viewer_never_binds_an_idle_browser(bridge):
 
 
 async def test_viewer_is_limited_to_its_own_controls(bridge):
-    for command in ("click", "type", "resume", "stop", "release", "observe"):
+    for command in ("click", "type", "release", "observe"):
         with pytest.raises(BridgeError, match="viewer"):
             await bridge._dispatch(command, _action(), USER_TASK_ID)
+
+
+async def test_viewer_pauses_and_resumes_the_agents(monkeypatch: pytest.MonkeyPatch):
+    service = BrowserBridgeService(headless=True)
+    agent = str(uuid.uuid4())
+
+    await service._dispatch("stop", {}, USER_TASK_ID)
+    with pytest.raises(BridgeError, match="STOPPED"):
+        await service._dispatch("click", _action(), agent)
+
+    await service._dispatch("resume", {}, USER_TASK_ID)
+    assert not service.stopped
 
 
 async def test_pause_holds_agents_but_not_the_person(monkeypatch: pytest.MonkeyPatch):
@@ -129,3 +141,103 @@ async def test_parent_that_never_used_the_browser_releases_nothing(monkeypatch: 
     await delegate()
 
     assert order == ["sub-agent runs"]
+
+
+# --- Every page load is checked, not just typed addresses -----------------------
+
+
+class _Request:
+    def __init__(self, url: str, navigation: bool = True) -> None:
+        self.url = url
+        self._navigation = navigation
+
+    def is_navigation_request(self) -> bool:
+        return self._navigation
+
+
+class _Route:
+    def __init__(self) -> None:
+        self.outcome: str | None = None
+
+    async def continue_(self) -> None:
+        self.outcome = "continued"
+
+    async def fulfill(self, status: int = 200, **kwargs) -> None:
+        self.outcome = f"blocked page ({status})"
+
+
+@pytest.mark.parametrize(
+    ("url", "navigation", "outcome"),
+    [
+        ("http://127.0.0.1:5173/", True, "blocked page (403)"),  # e.g. back to a page whose grant expired
+        ("http://192.168.1.1/admin", True, "blocked page (403)"),  # e.g. a redirect or link into the LAN
+        ("http://93.184.215.14/", True, "continued"),  # public address
+        ("http://127.0.0.1:5173/app.js", False, "continued"),  # subresources are not checked
+    ],
+)
+async def test_page_loads_follow_the_address_rules(url, navigation, outcome):
+    service = BrowserBridgeService(headless=True)
+    route = _Route()
+
+    await service._guard_navigation(route, _Request(url, navigation))
+
+    assert route.outcome == outcome
+
+
+async def test_granted_local_preview_loads():
+    service = BrowserBridgeService(headless=True)
+    service.local_preview_policy.grant("http://127.0.0.1:5173")
+    route = _Route()
+
+    await service._guard_navigation(route, _Request("http://127.0.0.1:5173/page"))
+
+    assert route.outcome == "continued"
+
+
+class _Page:
+    """A page that has already landed somewhere (e.g. through a redirect)."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self.content: str | None = None
+
+    async def set_content(self, html: str) -> None:
+        self.content = html
+
+
+async def test_redirect_into_private_address_is_hidden_before_anyone_reads_it(monkeypatch: pytest.MonkeyPatch):
+    service = BrowserBridgeService(headless=True)
+    service._page = _Page("http://127.0.0.1:5197/secret")
+
+    async def ready():
+        return None
+
+    async def observe():
+        raise AssertionError("the blocked page must not be observed")
+
+    monkeypatch.setattr(service, "_ensure_browser", ready)
+    monkeypatch.setattr(service, "_observe", observe)
+
+    with pytest.raises(BridgeError, match="^PRIVATE_NETWORK_BLOCKED"):
+        await service._dispatch("observe", {}, str(uuid.uuid4()))
+    assert "blocked" in service._page.content
+
+
+async def test_allowed_page_is_left_alone():
+    service = BrowserBridgeService(headless=True)
+    service.local_preview_policy.grant("http://127.0.0.1:5173")
+    service._page = _Page("http://127.0.0.1:5173/")
+
+    await service._enforce_page_policy()
+
+    assert service._page.content is None
+
+
+# --- Agent history tool -----------------------------------------------------------
+
+
+async def test_agent_history_tool_only_takes_browser_buttons():
+    from crabagent.core.agent.tools import collaboration_browser
+
+    with pytest.raises(ValueError):
+        await collaboration_browser.collab_browser_history("close")

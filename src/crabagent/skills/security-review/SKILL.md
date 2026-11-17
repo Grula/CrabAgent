@@ -84,7 +84,7 @@ confidence that it is a real, exploitable issue from 1 to 10:
 
 **Independent check (recommended when you have more than one candidate):** run one
 verification per candidate in parallel with `delegate_parallel` using the read-only
-`analyst` agent. Give each task: the repo path, the diff command, the candidate
+`the_reviewer` agent (or another read-only agent from your team list). Give each task: the repo path, the diff command, the candidate
 (file, line, claimed issue), the absolute path of the false-positive rules file (this
 skill's directory + `references/false-positive-rules.md`), and ask it to try to *refute*
 the finding and return a 1-10 confidence with the line that justifies it. Keep only

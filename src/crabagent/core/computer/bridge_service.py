@@ -71,6 +71,23 @@ FRAME_JPEG_QUALITY = 70
 # Dark stand-in for the white about:blank page, so a freshly launched (or
 # deliberately blank) browser never captures/displays a white canvas.
 BLANK_PAGE_HTML = "<html><body style='background:#0d1117;margin:0'></body></html>"
+BLOCKED_PAGE_HTML = (
+    "<html><head><title>Blocked by CrabAgent</title></head>"
+    "<body style='background:#0d1117;color:#8b949e;font:14px sans-serif;margin:0;height:100vh;"
+    "display:flex;align-items:center;justify-content:center;text-align:center'>"
+    "<p>CrabAgent blocked this page: it is on a local or private network and has not been allowed.</p>"
+    "</body></html>"
+)
+
+# Commands that read or act on the current page. The page's address is checked
+# again before each one, because Playwright does not show redirect hops to the
+# navigation guard, so a redirect can land on an address that is not allowed.
+PAGE_COMMANDS = frozenset(
+    {
+        "observe", "computer_observe", "screenshot", "click", "commit_click", "point",
+        "commit_point", "type", "scroll", "select", "press_key", "wait_for",
+    }
+)
 
 # The envelope regex is deliberately loose (36 hex/dash characters); the
 # action_id regex is a strict UUID v1-8.
@@ -82,9 +99,12 @@ ACTION_ID_RE = re.compile(
 
 # The person using the web viewer. Their commands never bind the browser to a
 # task, are never refused because an agent task holds it, and are not paused by
-# ``stop`` (stop pauses the agent, not the person). Only the viewer's own controls.
+# ``stop`` (stop pauses the agents, not the person). Only the viewer's own
+# controls, plus pausing and resuming the agents.
 USER_TASK_ID = "00000000-0000-0000-0000-000000000000"
-USER_COMMANDS = frozenset({"authorize_local_preview", "navigate", "back", "forward", "reload"})
+USER_COMMANDS = frozenset(
+    {"authorize_local_preview", "navigate", "back", "forward", "reload", "status", "stop", "resume"}
+)
 
 ALLOWED_COMMANDS = frozenset(
     {
@@ -527,6 +547,10 @@ class BrowserBridgeService:
         self._context = await self._playwright.chromium.launch_persistent_context(
             str(profile_dir), **launch_kwargs
         )
+        # Typed addresses are checked in _navigate, but back/forward, reload, link
+        # clicks and redirects load pages too. Check every page load here.
+        # (Playwright turns the HTTP cache off while a route is installed.)
+        await self._context.route("**/*", self._guard_navigation)
         if self._context.pages:
             self._page = self._context.pages[0]
         else:
@@ -534,6 +558,49 @@ class BrowserBridgeService:
         await self._page.set_viewport_size(VIEWPORT)
         # Start on a dark blank page so the screencast never flashes white.
         await self._page.set_content(BLANK_PAGE_HTML)
+
+    async def _guard_navigation(self, route: Any, request: Any) -> None:
+        """Refuse any page load (in any frame) that the address rules forbid.
+
+        The request is never sent; the frame gets a short "blocked" page instead.
+        (Aborting would leave Chromium on its error page and detach Playwright
+        from the tab.) Images, scripts and fetches pass through untouched."""
+        if not request.is_navigation_request():
+            await route.continue_()
+            return
+        try:
+            await allowed_network_url(request.url, self.local_preview_policy)
+        except ValueError as exc:
+            logger.info("Blocked page load: %s", exc)
+            await route.fulfill(status=403, content_type="text/html", body=BLOCKED_PAGE_HTML)
+            return
+        except Exception:
+            # DNS failure and the like: let the browser report it as it normally would.
+            pass
+        await route.continue_()
+
+    async def _enforce_page_policy(self) -> None:
+        """Refuse to work with a page whose address is not allowed.
+
+        Covers redirects (which the guard never sees) and pages whose local
+        preview grant has expired or was cleared. The page content is replaced
+        before anyone reads it."""
+        if self._page is None:
+            return
+        url = self._page.url
+        if not url.lower().startswith(("http://", "https://")):
+            return
+        try:
+            await allowed_network_url(url, self.local_preview_policy)
+        except ValueError as exc:
+            try:
+                await self._page.set_content(BLOCKED_PAGE_HTML)
+            except Exception:
+                logger.debug("Failed to replace a blocked page", exc_info=True)
+            self._invalidate("blocked-page")
+            raise BridgeError(str(exc)) from exc
+        except Exception:
+            return
 
     async def _close_browser(self) -> None:
         try:
@@ -609,6 +676,7 @@ class BrowserBridgeService:
                 "title": await self._page.title(),
                 "loading": await self._page.evaluate('() => document.readyState !== "complete"'),
                 "headless": self._headless,
+                "paused": self.stopped,
             }
 
         if command == "authorize_local_preview":
@@ -619,6 +687,10 @@ class BrowserBridgeService:
 
         if command in ("back", "forward", "reload"):
             return await self._history(command)
+
+        if command in PAGE_COMMANDS:
+            await self._ensure_browser()
+            await self._enforce_page_policy()
 
         if command == "observe":
             return await self._observe()
@@ -690,6 +762,7 @@ class BrowserBridgeService:
         except Exception as exc:
             self._invalidate("navigate")
             raise BridgeError(f"NAVIGATION_FAILED: {exc}") from exc
+        await self._enforce_page_policy()
         return {
             "page_version": self.page_version,
             "url": self._page.url,
@@ -710,6 +783,7 @@ class BrowserBridgeService:
         except Exception as exc:
             self._invalidate(action)
             raise BridgeError(f"HISTORY_FAILED: {exc}") from exc
+        await self._enforce_page_policy()
         return {
             "page_version": self.page_version,
             "url": self._page.url,

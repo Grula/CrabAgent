@@ -14,7 +14,7 @@ vi.mock("../hooks/useSettingsData", () => ({ useSettingsData: () => ({
 }) }));
 const mockSettings = { default_model: "", default_model_provider: "", searxng_url: "old", proxy: "", web_proxy: "", llm_proxy: "", browser_proxy: "", sub_agent_model_map: "", conversation_history_tool_enabled: "false" };
 vi.mock("../api/client", () => ({ api: {} }));
-vi.mock("../api/settings", () => ({ updateSettings: mocks.save }));
+vi.mock("../api/settings", () => ({ updateSettings: mocks.save, getSkills: vi.fn().mockResolvedValue([]) }));
 vi.mock("../components/PushPanel", () => ({ default: () => <div>Push panel</div> }));
 vi.mock("../components/ui/Toast", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("../api/agents", () => ({

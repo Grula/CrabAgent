@@ -38,7 +38,7 @@ import {
   DEFAULT_AGENT_SETTING,
   notifyAgentsChanged,
 } from "../api/agents";
-import { getSettings, updateSettings } from "../api/settings";
+import { getSettings, getSkills, updateSettings, type SkillInfo } from "../api/settings";
 import AgentGrowthChart from "../components/AgentGrowthChart";
 import { Button, Input, Textarea, ConfirmDialog, EmptyState } from "../components/ui";
 import { toast } from "../components/ui/Toast";
@@ -75,6 +75,8 @@ type FormState = {
   model: string;
   icon: string;
   tool_permissions: Record<string, Permission>;
+  /** null: every installed skill. */
+  skills: string[] | null;
 };
 
 const emptyForm: FormState = {
@@ -85,6 +87,7 @@ const emptyForm: FormState = {
   model: "",
   icon: "🤖",
   tool_permissions: {},
+  skills: null,
 };
 
 const PERM_LABELS: Record<Permission, string> = { auto: "Auto", confirm: "Confirm", deny: "Deny" };
@@ -118,6 +121,7 @@ export default function AgentsPage() {
   const [loadingLearn, setLoadingLearn] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [toolInfoList, setToolInfoList] = useState<ToolInfo[]>([]);
+  const [skillList, setSkillList] = useState<SkillInfo[]>([]);
   const [defaultPerms, setDefaultPerms] = useState<Record<string, Permission>>({});
   const [editingDefault, setEditingDefault] = useState(false);
   const [defaultForm, setDefaultForm] = useState<Record<string, Permission>>({});
@@ -157,6 +161,7 @@ export default function AgentsPage() {
     fetchAgents().then(() => setInitialLoading(false));
     listLearningAgents().then(setLearningAgents).catch(() => {});
     listTools().then(setToolInfoList).catch(() => {});
+    getSkills().then(setSkillList).catch(() => {});
     getDefaultToolPermissions().then((r) => setDefaultPerms((r.tool_permissions || {}) as Record<string, Permission>)).catch(() => {});
   }, []);
 
@@ -215,6 +220,7 @@ export default function AgentsPage() {
       model: selected.model || "",
       icon: selected.icon || "🤖",
       tool_permissions: (selected.tool_permissions || {}) as Record<string, Permission>,
+      skills: selected.skills ?? null,
     });
     setEditing(true);
     setError("");
@@ -266,6 +272,7 @@ export default function AgentsPage() {
         model: form.model,
         icon: form.icon,
         tool_permissions: form.tool_permissions,
+        skills: form.skills,
       });
       toast.success("Agent created");
       await fetchAgents();
@@ -328,6 +335,52 @@ export default function AgentsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const renderSkillPicker = () => {
+    const all = form.skills === null;
+    const chosen = new Set(form.skills ?? []);
+    const toggle = (name: string) => {
+      const next = new Set(chosen);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      setForm({ ...form, skills: Array.from(next).sort() });
+    };
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="block text-[11px] font-medium text-[var(--text-secondary)]">
+            {"Skills"}
+          </label>
+          <label className="flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={all}
+              onChange={() => setForm({ ...form, skills: all ? [] : null })}
+            />
+            {"All skills"}
+          </label>
+        </div>
+        {all ? (
+          <p className="text-[11px] text-[var(--text-tertiary)]">
+            {"This agent is offered every installed skill. Turn off \"All skills\" to choose its own set."}
+          </p>
+        ) : (
+          <div className="space-y-0.5 max-h-56 overflow-y-auto pr-1" role="group" aria-label="Skills">
+            {skillList.map((sk) => (
+              <label key={sk.name} className="flex items-start gap-2 text-[11px] cursor-pointer py-0.5" title={sk.description}>
+                <input type="checkbox" className="mt-0.5" checked={chosen.has(sk.name)} onChange={() => toggle(sk.name)} />
+                <span className="font-mono text-[var(--text-secondary)] shrink-0">{sk.name}</span>
+                <span className="text-[var(--text-tertiary)] truncate">{sk.description}</span>
+              </label>
+            ))}
+            {chosen.size === 0 && (
+              <p className="text-[11px] text-[var(--text-tertiary)] pt-1">{"No skills: this agent won't be offered the skill tool."}</p>
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const renderForm = () => (
@@ -439,6 +492,7 @@ export default function AgentsPage() {
           })}
         </div>
       </div>
+      {renderSkillPicker()}
       <div className="flex gap-2 pt-1">
         <Button
           variant="brand"
@@ -704,6 +758,8 @@ export default function AgentsPage() {
                         size="xs"
                         variant="ghost"
                         onClick={() => startEdit()}
+                        aria-label="Edit agent"
+                        title="Edit agent"
                       >
                         <Pencil size={12} />
                       </Button>
@@ -807,6 +863,25 @@ export default function AgentsPage() {
                         </div>
                       );
                     })()}
+
+                    <div>
+                      <label className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+                        {"Skills"}
+                      </label>
+                      <div className="flex flex-wrap gap-1 mt-1.5" aria-label="Agent skills">
+                        {selected.skills == null ? (
+                          <span className="text-[11px] text-[var(--text-tertiary)]">{"All installed skills"}</span>
+                        ) : selected.skills.length === 0 ? (
+                          <span className="text-[11px] text-[var(--text-tertiary)]">{"None"}</span>
+                        ) : (
+                          selected.skills.map((s) => (
+                            <span key={s} className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-[var(--bg-tertiary)] text-[var(--text-secondary)] border border-[var(--border)]">
+                              {s}
+                            </span>
+                          ))
+                        )}
+                      </div>
+                    </div>
 
                     {/* Stats + Growth Chart */}
                     {learningAgents.includes(selected.name) && (

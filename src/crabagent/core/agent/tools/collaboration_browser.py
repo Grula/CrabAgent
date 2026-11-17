@@ -29,6 +29,9 @@ def _bridge_request(command: str, payload: dict[str, Any] | None = None, *, cont
     action_payload = dict(payload or {})
     mutating_commands = {
         "navigate",
+        "back",
+        "forward",
+        "reload",
         "click",
         "commit_click",
         "point",
@@ -226,6 +229,25 @@ async def collab_browser_authorize_local_preview(url: str, context=None, *, all_
 )
 async def collab_browser_open(url: str, context=None) -> str:
     return await _call("navigate", {"url": url}, context)
+
+
+@registry.register(
+    name="collab_browser_history",
+    description=(
+        "Go back, go forward or reload the page in the shared collaboration browser, "
+        "like the browser's own buttons. Observe again afterwards."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {"action": {"type": "string", "enum": ["back", "forward", "reload"]}},
+        "required": ["action"],
+    },
+    metadata={"source": "builtin", "category": "collaboration_browser"},
+)
+async def collab_browser_history(action: str, context=None) -> str:
+    if action not in ("back", "forward", "reload"):
+        raise ValueError("action must be back, forward or reload")
+    return await _call(action, None, context)
 
 
 @registry.register(

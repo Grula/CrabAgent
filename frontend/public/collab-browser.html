@@ -16,7 +16,9 @@
       #msg { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); max-width: 90%; padding: 6px 12px; border-radius: 6px; display: none; z-index: 1; }
       #msg.error { background: #3d1d20; border: 1px solid #f85149; color: #ffdcd7; }
       #msg.info { background: #161b22; border: 1px solid #30363d; color: #8b949e; }
-      #open:disabled { opacity: 0.6; cursor: default; }
+      #open:disabled, #pause:disabled { opacity: 0.6; cursor: default; }
+      #bar #pause.paused { background: #3b2e0a; border-color: #d29922; color: #f2cc60; }
+      #paused-note { position: absolute; bottom: 8px; left: 8px; padding: 4px 10px; border-radius: 6px; background: #3b2e0a; border: 1px solid #d29922; color: #f2cc60; display: none; z-index: 1; }
     </style>
   </head>
   <body>
@@ -26,11 +28,13 @@
       <button data-act="reload" title="Reload">&#8635;</button>
       <input id="url" type="text" placeholder="https://example.com" spellcheck="false" />
       <button id="open">Open</button>
+      <button id="pause" title="Stop the agents from using this browser. You can still browse.">Pause agents</button>
     </div>
     <div id="stage">
       <img id="frame" alt="Collaboration browser" />
       <div id="msg" role="status"></div>
       <div id="status"></div>
+      <div id="paused-note">Agents are paused. They can't use this browser until you resume them.</div>
     </div>
     <script>
       (function () {
@@ -40,6 +44,9 @@
         var urlInput = document.getElementById('url');
         var openBtn = document.getElementById('open');
         var msgBox = document.getElementById('msg');
+        var pauseBtn = document.getElementById('pause');
+        var pausedNote = document.getElementById('paused-note');
+        var paused = false;
         var timer = null, lastUrl = null;
 
         function setStatus(msg) {
@@ -58,7 +65,7 @@
         function explain(detail) {
           var d = String(detail || '');
           if (d.indexOf('LOCAL_PREVIEW_RESERVED') === 0) return 'That port belongs to CrabAgent itself and cannot be opened here.';
-          if (d.indexOf('PRIVATE_NETWORK_BLOCKED') === 0) return 'Private network addresses are blocked. Local dev servers work on localhost, 127.0.0.1 or [::1].';
+          if (d.indexOf('PRIVATE_NETWORK_BLOCKED') === 0) return 'That address is on a private network and is not allowed. To open a local dev server, type its localhost, 127.0.0.1 or [::1] address in the address bar.';
           if (d.indexOf('NAVIGATION_FAILED') === 0) {
             if (/ERR_CONNECTION_REFUSED/.test(d)) return 'Nothing is answering at that address. Is the server running?';
             if (/ERR_NAME_NOT_RESOLVED/.test(d)) return 'That address could not be found.';
@@ -151,6 +158,39 @@
           });
         }
 
+        function showPaused(value) {
+          paused = !!value;
+          pauseBtn.textContent = paused ? 'Resume agents' : 'Pause agents';
+          pauseBtn.classList.toggle('paused', paused);
+          pausedNote.style.display = paused ? 'block' : 'none';
+        }
+
+        function refreshPaused() {
+          fetch('/api/collab-browser/status', { headers: { Authorization: 'Bearer ' + token() } })
+            .then(function (res) { return res.ok ? res.json() : null; })
+            .then(function (data) { if (data) showPaused(data.paused); })
+            .catch(function () {});
+        }
+
+        pauseBtn.addEventListener('click', function () {
+          var want = !paused;
+          pauseBtn.disabled = true;
+          fetch('/api/collab-browser/pause', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+            body: JSON.stringify({ paused: want })
+          }).then(function (res) {
+            if (!res.ok) throw new Error('http ' + res.status);
+            showPaused(want);
+            showMsg(want ? 'Agents paused. Local addresses you allowed were cleared; type them again to reopen.' : 'Agents can use the browser again.', 'info');
+          }).catch(function () {
+            showMsg(want ? 'Could not pause the agents.' : 'Could not resume the agents.');
+          }).then(function () { pauseBtn.disabled = false; });
+        });
+
+        // Another tab may have paused or resumed; check again when this one is shown.
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshPaused(); });
+
         document.getElementById('open').addEventListener('click', navigate);
         urlInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') navigate(); });
         Array.prototype.forEach.call(document.querySelectorAll('#bar button[data-act]'), function (btn) {
@@ -163,6 +203,7 @@
           setStatus('not signed in');
           return;
         }
+        refreshPaused();
         poll();
       })();
     </script>

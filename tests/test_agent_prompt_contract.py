@@ -272,3 +272,40 @@ class TestTeamPromptSharedDenials:
         monkeypatch.setattr(agents_module, "load_agent_registry", fake_registry)
 
         assert "(disabled tools: pay_now, bash)" in await agents_module.build_team_prompt()
+
+
+class TestTeamListGoalSummary:
+    """The team list says what each agent is for; the agent's own rules stay with it."""
+
+    def test_rules_after_the_first_line_stay_out(self):
+        from crabagent.core.agent.agents import goal_summary
+
+        goal = "Implement the change in your brief.\n- Stay inside the brief.\n- Run the tests."
+        assert goal_summary(goal) == "Implement the change in your brief."
+
+    def test_a_long_paragraph_is_cut_at_a_sentence(self):
+        from crabagent.core.agent.agents import goal_summary
+
+        goal = "Analyze past conversations and find failures. " + "Never retry a failed tool call. " * 20
+        summary = goal_summary(goal)
+        assert summary.startswith("Analyze past conversations and find failures. Never retry")
+        assert summary.endswith("call.")  # ends on a whole sentence
+        assert len(summary) <= 240
+
+    def test_one_endless_sentence_is_truncated(self):
+        from crabagent.core.agent.agents import goal_summary
+
+        assert goal_summary("word " * 100).endswith("…")
+        assert len(goal_summary("word " * 100)) <= 240
+
+    async def test_team_list_shows_only_the_summary(self, monkeypatch: pytest.MonkeyPatch):
+        from crabagent.core.agent import agents as agents_module
+
+        async def registry():
+            return [{"name": "implementer", "display_name": "Dev", "role": "Engineer",
+                     "goal": "Implement the change.\n- Stay inside the brief.", "tool_permissions": {}}]
+
+        monkeypatch.setattr(agents_module, "load_agent_registry", registry)
+        prompt = await agents_module.build_team_prompt()
+        assert "Engineer. Implement the change." in prompt
+        assert "Stay inside the brief" not in prompt

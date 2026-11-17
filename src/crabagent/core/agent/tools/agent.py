@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
                 "type": "string",
                 "description": (
                     "Name of the agent to delegate to "
-                    "(e.g., 'researcher', 'analyst', 'coder', 'writer'). "
+                    "(e.g., 'implementer', 'tester', 'the_reviewer', 'researcher'). "
                     "Use list_agents to see available agents."
                 ),
             },

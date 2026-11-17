@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from crabagent.core.agent.agents import invalidate_cache
+from crabagent.core.agent.agents import invalidate_cache, parse_agent_skills
 from crabagent.core.database import (
     AgentProfile,
     AgentRun,
@@ -27,9 +27,6 @@ from crabagent.serve.deps import get_current_user
 router = APIRouter(prefix="/agents", tags=["agents"])
 logger = logging.getLogger(__name__)
 
-DEFAULT_AGENT_NAMES = {"researcher", "analyst", "coder", "writer"}
-
-
 class AgentProfileResponse(BaseModel):
     id: int
     name: str
@@ -44,6 +41,8 @@ class AgentProfileResponse(BaseModel):
     is_default: bool
     tools: list[str]
     tool_permissions: dict[str, str]
+    # Skill names this agent is offered; None means every installed skill.
+    skills: list[str] | None = None
     created_at: str
 
 
@@ -57,6 +56,7 @@ class CreateAgentRequest(BaseModel):
     icon: str = "🤖"
     allow_delegation: bool = True
     tool_permissions: dict[str, str] | None = None
+    skills: list[str] | None = None
 
 
 class UpdateAgentRequest(BaseModel):
@@ -69,6 +69,15 @@ class UpdateAgentRequest(BaseModel):
     allow_delegation: bool | None = None
     enabled: bool | None = None
     tool_permissions: dict[str, str] | None = None
+    # Sending ``"skills": null`` gives the agent every skill again; leaving the
+    # field out keeps its current list.
+    skills: list[str] | None = None
+
+
+def _skills_column(skills: list[str] | None) -> str | None:
+    import json as _json
+
+    return None if skills is None else _json.dumps(sorted({s.strip() for s in skills if s.strip()}))
 
 
 def _to_response(a: AgentProfile) -> AgentProfileResponse:
@@ -100,6 +109,7 @@ def _to_response(a: AgentProfile) -> AgentProfileResponse:
         is_default=a.is_default or False,
         tools=tools_list,
         tool_permissions=tool_perms,
+        skills=parse_agent_skills(a.skills),
         created_at=a.created_at.isoformat() if a.created_at else "",
     )
 
@@ -142,6 +152,7 @@ async def create_agent_profile(
         allow_delegation=req.allow_delegation,
         is_default=False,
         tool_permissions=_json.dumps(req.tool_permissions) if req.tool_permissions else "{}",
+        skills=_skills_column(req.skills),
     )
     db.add(profile)
     await db.commit()
@@ -182,6 +193,8 @@ async def update_agent_profile(
         import json as _json
 
         profile.tool_permissions = _json.dumps(req.tool_permissions)
+    if "skills" in req.model_fields_set:
+        profile.skills = _skills_column(req.skills)
 
     await db.commit()
     await db.refresh(profile)

@@ -69,6 +69,34 @@ class TestRemovedBuiltins:
         builtin = {item["name"] for item in db.DEFAULT_AGENTS}
         assert names == builtin - set(removed)
 
+    async def test_seeded_team_gets_its_own_skills(self, agents_db):
+        await db._ensure_default_agents()
+        async with agents_db() as session:
+            rows = {r.name: r for r in (await session.execute(select(db.AgentProfile))).scalars()}
+        assert set(rows) == {"architect", "implementer", "tester", "the_reviewer", "researcher"}
+        assert "plan" in json.loads(rows["architect"].skills)
+        assert "docx" not in json.loads(rows["architect"].skills)
+        assert json.loads(rows["the_reviewer"].skills) == ["strict-review", "code-review", "security-review", "git-workflow"]
+
+    async def test_seeding_never_changes_an_existing_agents_skills(self, agents_db):
+        custom = _profile("architect", builtin=True)
+        custom.skills = None
+        await _add(agents_db, custom)
+        await db._ensure_default_agents()
+        async with agents_db() as session:
+            row = (await session.execute(select(db.AgentProfile).where(db.AgentProfile.name == "architect"))).scalar_one()
+        assert row.skills is None
+
+    def test_every_default_skill_is_bundled(self):
+        from pathlib import Path
+
+        from crabagent.core.agent.skill.loader import discover_skills
+
+        bundled = discover_skills([Path(db.__file__).resolve().parents[1] / "skills"])
+        for agent in db.DEFAULT_AGENTS:
+            missing = set(agent.get("skills", [])) - set(bundled)
+            assert not missing, f"{agent['name']} lists skills that are not bundled: {missing}"
+
 
 class TestDeleteEndpoint:
     async def _delete(self, factory, name: str):
@@ -78,20 +106,20 @@ class TestDeleteEndpoint:
             return await delete_agent_profile(name, user=None, db=session)
 
     async def test_deleting_a_builtin_is_remembered_and_clears_the_default(self, agents_db):
-        await _add(agents_db, _profile("coder", builtin=True), _profile("architect"),
-                   db.AppSetting(key="default_agent", value="coder"))
-        assert (await self._delete(agents_db, "coder"))["status"] == "deleted"
+        await _add(agents_db, _profile("implementer", builtin=True), _profile("architect"),
+                   db.AppSetting(key="default_agent", value="implementer"))
+        assert (await self._delete(agents_db, "implementer"))["status"] == "deleted"
         async with agents_db() as session:
             settings = {row.key: row.value for row in (await session.execute(select(db.AppSetting))).scalars()}
             names = set((await session.execute(select(db.AgentProfile.name))).scalars())
         assert names == {"architect"}
-        assert json.loads(settings[db.REMOVED_BUILTIN_AGENTS_SETTING]) == ["coder"]
+        assert json.loads(settings[db.REMOVED_BUILTIN_AGENTS_SETTING]) == ["implementer"]
         assert settings["default_agent"] == ""
 
         # and it stays gone after the startup seeding
         await db._ensure_default_agents()
         async with agents_db() as session:
-            assert not (await session.execute(select(db.AgentProfile).where(db.AgentProfile.name == "coder"))).first()
+            assert not (await session.execute(select(db.AgentProfile).where(db.AgentProfile.name == "implementer"))).first()
 
     async def test_internal_profile_cannot_be_deleted(self, agents_db):
         from fastapi import HTTPException

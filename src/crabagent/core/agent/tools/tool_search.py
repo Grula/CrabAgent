@@ -76,7 +76,7 @@ GROUPS: tuple[ToolGroup, ...] = (
         name="shared_browser",
         summary="operate the visible browser the user can watch and take over",
         tools=(
-            "collab_browser_open", "collab_browser_observe", "collab_browser_click",
+            "collab_browser_open", "collab_browser_history", "collab_browser_observe", "collab_browser_click",
             "collab_browser_type", "collab_browser_press_key", "collab_browser_scroll",
             "collab_browser_select", "collab_browser_wait_for", "collab_browser_wait_for_user",
             "collab_browser_screenshot", "collab_browser_authorize_local_preview",

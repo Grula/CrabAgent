@@ -1,0 +1,183 @@
+"""Each agent is offered only its own skills (agent_profiles.skills)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from crabagent.core.agent import agents as agents_module
+from crabagent.core.agent.agents import parse_agent_skills
+from crabagent.core.agent.skill.loader import SkillInfo, register_skill_tool, scope_skill_tool
+from crabagent.core.agent.tools.registry import ToolRegistry
+
+
+def _skills(*names: str) -> dict[str, SkillInfo]:
+    return {
+        n: SkillInfo(name=n, description=f"{n} playbook", content=f"# {n} body", location=Path(f"/skills/{n}"))
+        for n in names
+    }
+
+
+def _registry(*names: str) -> ToolRegistry:
+    registry = ToolRegistry()
+    register_skill_tool(registry, _skills(*names))
+    return registry
+
+
+def _offered(registry: ToolRegistry) -> list[str]:
+    tool = registry.get("skill")
+    if tool is None:
+        return []
+    listing = tool.description.split("Available skills:\n", 1)[1]
+    return [line.split("**")[1] for line in listing.splitlines()]
+
+
+class TestScopeSkillTool:
+    def test_no_list_keeps_every_skill(self):
+        registry = _registry("plan", "docx", "verify")
+        scope_skill_tool(registry, None)
+        assert _offered(registry) == ["docx", "plan", "verify"]
+
+    def test_list_narrows_what_is_offered_and_loadable(self):
+        registry = _registry("plan", "docx", "verify")
+        scope_skill_tool(registry, ["plan", "verify"])
+
+        assert _offered(registry) == ["plan", "verify"]
+        load = registry.get("skill").handler
+        assert "# plan body" in load("plan")
+        assert load("docx").startswith("Error: skill 'docx' not found. Available skills: plan, verify")
+
+    def test_empty_list_or_unknown_names_remove_the_tool(self):
+        for allowed in ([], ["not-installed"]):
+            registry = _registry("plan", "docx")
+            scope_skill_tool(registry, allowed)
+            assert registry.get("skill") is None
+
+    def test_a_narrowed_tool_can_be_scoped_again_from_the_full_pool(self):
+        # The chat agent narrows its copy; a sub-agent built from that tool must
+        # still be able to get skills the chat agent was not offered.
+        chat = _registry("plan", "docx", "verify")
+        scope_skill_tool(chat, ["plan"])
+        sub = chat.clone()
+
+        scope_skill_tool(sub, ["verify"])
+
+        assert _offered(chat) == ["plan"]
+        assert _offered(sub) == ["verify"]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(None, None), ("", None), ("not json", None), ('{"a": 1}', None), ("[]", []), ('["plan"]', ["plan"])],
+)
+def test_parse_agent_skills(raw, expected):
+    assert parse_agent_skills(raw) == expected
+
+
+async def test_sub_agent_gets_only_its_own_skills(monkeypatch: pytest.MonkeyPatch):
+    from crabagent.core.agent.context import AgentContext
+
+    agent_def = {
+        "name": "the_reviewer", "display_name": "Reviewer", "role": "r", "goal": "g", "backstory": "b",
+        "tool_permissions": {}, "skills": ["strict-review", "code-review"],
+    }
+
+    async def returns(value):
+        return value
+
+    monkeypatch.setattr(agents_module, "get_agent", lambda *a, **k: returns(agent_def))
+    monkeypatch.setattr(agents_module, "_load_shared_context", lambda *a, **k: returns(""))
+    monkeypatch.setattr(agents_module, "load_sub_agent_model_map", lambda *a, **k: returns({}))
+    seen: list[list[str]] = []
+
+    async def run_agent(sub_context, task, *args, **kwargs):
+        seen.append(_offered(sub_context.tool_registry))
+        sub_context.messages.append({"role": "assistant", "content": "done"})
+        return sub_context.messages
+
+    monkeypatch.setattr(agents_module, "run_agent", run_agent, raising=False)
+    monkeypatch.setattr("crabagent.core.agent.loop.run_agent", run_agent)
+    agents_module._running_sub_agents.clear()
+    parent = AgentContext(workspace=Path("/tmp"), metadata={"user_id": 0})
+    parent.tool_registry = _registry("plan", "docx", "strict-review", "code-review")
+
+    await agents_module.spawn_sub_agent(parent, agent_name="the_reviewer", task="x", agent_def=agent_def)
+
+    assert seen == [["code-review", "strict-review"]]
+    assert _offered(parent.tool_registry) == ["code-review", "docx", "plan", "strict-review"]
+
+
+# --- API --------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def agents_db(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from crabagent.core import database as db
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'agents.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(db.Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    yield factory
+    await engine.dispose()
+
+
+async def test_api_sets_narrows_and_resets_skills(agents_db):
+    from crabagent.serve.api import agent as api
+
+    async with agents_db() as session:
+        created = await api.create_agent_profile(
+            api.CreateAgentRequest(name="helper", display_name="Helper", role="r", goal="g", skills=["verify", "plan", "plan"]),
+            user=type("U", (), {"id": 1})(), db=session,
+        )
+    assert created.skills == ["plan", "verify"]
+
+    async with agents_db() as session:
+        kept = await api.update_agent_profile("helper", api.UpdateAgentRequest(goal="g2"), user=None, db=session)
+    assert kept.skills == ["plan", "verify"]  # leaving the field out keeps the list
+
+    async with agents_db() as session:
+        reset = await api.update_agent_profile("helper", api.UpdateAgentRequest(skills=None), user=None, db=session)
+    assert reset.skills is None  # explicit null: every skill again
+
+    async with agents_db() as session:
+        none = await api.update_agent_profile("helper", api.UpdateAgentRequest(skills=[]), user=None, db=session)
+    assert none.skills == []
+
+
+# --- Chat mode ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("agent", "profile", "offered", "sub_pool"),
+    [
+        ("architect", {"name": "architect", "tool_permissions": {"bash": "deny"}, "skills": ["plan"]},
+         ["plan"], ["docx", "plan", "verify"]),
+        ("architect", {"name": "architect", "tool_permissions": {}, "skills": None},
+         ["docx", "plan", "verify"], ["docx", "plan", "verify"]),
+        ("default", {"name": "__default__", "tool_permissions": {}, "skills": ["docx"]},
+         ["docx"], ["docx", "plan", "verify"]),
+    ],
+)
+async def test_chat_agent_sees_only_its_skills(monkeypatch: pytest.MonkeyPatch, agent, profile, offered, sub_pool):
+    from crabagent.core.agent.context import AgentContext
+    from crabagent.serve.api import prompt as prompt_api
+
+    async def get_agent(name):
+        return profile
+
+    monkeypatch.setattr(agents_module, "get_agent", get_agent)
+    context = AgentContext(workspace=Path("/tmp"))
+    context.tool_registry = _registry("plan", "docx", "verify")
+    context.tool_registry._tools["bash"] = context.tool_registry.get("skill")  # any second tool
+
+    await prompt_api.apply_agent_profile(context, agent)
+
+    assert _offered(context.tool_registry) == offered
+    # sub-agents are cut from the unnarrowed pool
+    assert _offered(context.base_tool_registry or context.tool_registry) == sub_pool
+    if profile["tool_permissions"].get("bash") == "deny":
+        assert context.tool_registry.get("bash") is None

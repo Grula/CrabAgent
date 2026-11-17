@@ -19,6 +19,7 @@ from crabagent.core.agent.reflect import (
 from crabagent.core.agent.reflect import (
     rule_extract_lesson as _rule_extract_lesson,
 )
+from crabagent.core.agent.skill.loader import scope_skill_tool
 from crabagent.core.database import AgentProfile, async_session_factory
 
 logger = logging.getLogger(__name__)
@@ -130,7 +131,11 @@ _TEAM_PROMPT_SHARED_LINES: tuple[str, ...] = (
 # Routing hints for the built-in agents. A hint is shown only while its agent is
 # enabled; otherwise the main agent would be sent to an agent that does not exist.
 _TEAM_PROMPT_AGENT_ROUTES: tuple[tuple[str, str], ...] = (
+    ('implementer', 'Writing, fixing or refactoring code -> `implementer`'),
+    ('tester', 'Writing tests, reproducing a bug, verifying a change end to end -> `tester`'),
+    ('the_reviewer', 'Reviewing a finished change before it is committed -> `the_reviewer`'),
     ('researcher', 'Web research, searching, browsing -> `researcher`'),
+    # Agents from older installs, still routed while they exist.
     ('analyst', 'Data analysis, comparison, report generation -> `analyst`'),
     ('coder', 'Code writing, debugging, refactoring -> `coder`'),
     ('writer', 'Content writing, editing, translation -> `writer`'),
@@ -154,6 +159,19 @@ _TEAM_PROMPT_BRIEFING_LINES: tuple[str, ...] = (
     'Results can be wrong or incomplete. Check important claims and code changes before you rely on them or '
     'pass them on to the user.',
 )
+
+
+def parse_agent_skills(raw: str | None) -> list[str] | None:
+    """An agent profile's ``skills`` column: None (every skill) or a list of names."""
+    if raw is None or raw == "":
+        return None
+    try:
+        value = _json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(value, list):
+        return None
+    return [str(name) for name in value]
 
 
 async def load_agent_registry() -> list[dict]:
@@ -192,6 +210,7 @@ async def load_agent_registry() -> list[dict]:
                     "is_default": r.is_default,
                     "tools": tools_list,
                     "tool_permissions": tool_perms,
+                    "skills": parse_agent_skills(r.skills),
                 }
             )
     _registry_loaded = True
@@ -438,6 +457,25 @@ def summarize_denied_tools(denied: list[str]) -> str:
     return ", ".join(parts)
 
 
+_GOAL_SUMMARY_MAX = 240
+
+
+def goal_summary(goal: str) -> str:
+    """What an agent is for, in one line, for the team list.
+
+    A goal's later lines are working rules for the agent itself; pasted into the
+    orchestrator's prompt they would read as rules for the orchestrator. Only the
+    first line is kept, shortened to its first sentences when it is long.
+    """
+    first = (goal or "").strip().split("\n", 1)[0].strip()
+    if len(first) <= _GOAL_SUMMARY_MAX:
+        return first
+    cut = first.rfind(". ", 0, _GOAL_SUMMARY_MAX)
+    if cut > 0:
+        return first[: cut + 1]
+    return first[: _GOAL_SUMMARY_MAX - 1].rstrip() + "…"
+
+
 async def build_team_prompt() -> str:
     """Render the "## Agent Team" delegation prompt."""
     agents = [a for a in await load_agent_registry() if not is_internal_profile(a["name"])]
@@ -465,7 +503,7 @@ async def build_team_prompt() -> str:
         if denied:
             perm_info = " " + _TEAM_PROMPT_RESTRICTED.format(tools=summarize_denied_tools(denied))
         lines.append(
-            f"- **{a['display_name']}** (`{a['name']}`): {a['role']}. {a['goal']}{perm_info}"
+            f"- **{a['display_name']}** (`{a['name']}`): {a['role']}. {goal_summary(a['goal'])}{perm_info}"
         )
     lines.extend(["", _TEAM_PROMPT_DELEGATION_TOOLS, ""])
     for line in _TEAM_PROMPT_TOOL_LINES:
@@ -808,6 +846,9 @@ async def spawn_sub_agent(
         if resolve_permission(agent_tool_perms, name) == "deny":
             continue
         sub_registry._tools[name] = tool
+
+    # Each agent sees only its own skills (None in the profile: all of them).
+    scope_skill_tool(sub_registry, agent_def.get("skills"))
 
     has_shared = bool(_SHARED_TOOLS & set(sub_registry._tools.keys()))
 

@@ -194,6 +194,47 @@ class PromptRequest(BaseModel):
 
 
 @router.post("/sessions/{session_id}/prompt", status_code=status.HTTP_202_ACCEPTED)
+async def apply_agent_profile(context, effective_agent: str) -> None:
+    """Narrow a chat context's tools and skills to the active agent's profile.
+
+    The unnarrowed pool is kept in ``context.base_tool_registry`` so sub-agents
+    can still be given tools and skills this agent does not see.
+    """
+    from crabagent.core.agent.agent_switch import filter_tool_registry
+    from crabagent.core.agent.agents import get_agent
+    from crabagent.core.agent.skill.loader import scope_skill_tool
+
+    if effective_agent == "default":
+        profile = await get_agent("__default__")
+        if not profile:
+            return
+        tp = profile.get("tool_permissions", {})
+        context.tool_permissions = tp if isinstance(tp, dict) else {}
+        if profile.get("skills") is not None:
+            context.base_tool_registry = context.base_tool_registry or context.tool_registry
+            context.tool_registry = context.tool_registry.clone()
+            scope_skill_tool(context.tool_registry, profile["skills"])
+        return
+
+    agent_def = await get_agent(effective_agent)
+    if not agent_def:
+        return
+    tp = agent_def.get("tool_permissions", {})
+    context.tool_permissions = tp if isinstance(tp, dict) else {}
+    # Snapshot the unpruned pool first: the main agent may only expose a
+    # narrowed tool list to the model, but sub-agents must still be able
+    # to inherit tools this profile denies.
+    context.base_tool_registry = context.tool_registry
+    context.tool_registry = filter_tool_registry(
+        context.tool_registry,
+        tool_permissions=context.tool_permissions,
+        allow_delegation=True,
+    )
+    scope_skill_tool(context.tool_registry, agent_def.get("skills"))
+    if agent_def.get("model"):
+        context.model = agent_def["model"]
+
+
 async def prompt_async(
     session_id: str,
     req: PromptRequest,
@@ -576,32 +617,10 @@ Use ordinary Markdown when a visualization is not helpful.
     context.current_agent = effective_agent
     context.metadata["_current_agent"] = effective_agent
 
-    from crabagent.core.agent.agent_switch import filter_tool_registry
     from crabagent.core.agent.agents import build_agent_switch_msg, get_agent
-    from crabagent.core.agent.agents import get_agent as _get_agent
     from crabagent.core.agent.agents import inject_agent_lessons as _inject_lessons
 
-    if effective_agent == "default":
-        _default_profile = await _get_agent("__default__")
-        if _default_profile:
-            tp = _default_profile.get("tool_permissions", {})
-            context.tool_permissions = tp if isinstance(tp, dict) else {}
-    else:
-        agent_def = await get_agent(effective_agent)
-        if agent_def:
-            tp = agent_def.get("tool_permissions", {})
-            context.tool_permissions = tp if isinstance(tp, dict) else {}
-            # Snapshot the unpruned pool first: the main agent may only expose a
-            # narrowed tool list to the model, but sub-agents must still be able
-            # to inherit tools this profile denies.
-            context.base_tool_registry = context.tool_registry
-            context.tool_registry = filter_tool_registry(
-                context.tool_registry,
-                tool_permissions=context.tool_permissions,
-                allow_delegation=True,
-            )
-            if agent_def.get("model"):
-                context.model = agent_def["model"]
+    await apply_agent_profile(context, effective_agent)
 
     # Add history messages first (any persisted agent_switch messages are included
     # in their correct positions via message_to_dict which converts them to user role)

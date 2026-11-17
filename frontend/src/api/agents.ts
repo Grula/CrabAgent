@@ -14,6 +14,8 @@ export interface AgentProfile {
   is_default: boolean;
   tools: string[];
   tool_permissions: Record<string, string>;
+  /** Skills this agent is offered; null means every installed skill. */
+  skills?: string[] | null;
   created_at: string;
 }
 
@@ -27,6 +29,7 @@ export interface CreateAgentRequest {
   icon?: string;
   allow_delegation?: boolean;
   tool_permissions?: Record<string, string>;
+  skills?: string[] | null;
 }
 
 export interface UpdateAgentRequest {
@@ -39,6 +42,8 @@ export interface UpdateAgentRequest {
   allow_delegation?: boolean;
   enabled?: boolean;
   tool_permissions?: Record<string, string>;
+  /** null gives the agent every skill again; leave it out to keep the current list. */
+  skills?: string[] | null;
 }
 
 export function listAgentProfiles(): Promise<AgentProfile[]> {

@@ -43,7 +43,9 @@ Do the applicable steps in order and write no plan prose until they are done.
    otherwise ask in your reply. If a safe, reversible default exists, state it as an
    assumption and continue instead of asking.
 4. **Research external facts when they matter.** For unfamiliar or greenfield work, check
-   current libraries, APIs, platforms, or standards before recommending one:
+   current libraries, APIs, platforms, or standards before recommending one. If you have
+   no web tools, send these lookups to `researcher` (step 5) with the rules below in the
+   brief:
    - `web_search` only *finds* candidates; it is not evidence.
    - Open the authoritative source (official docs, the project repo, the standard) with
      `web_scrape` or the browser tools, and base claims on what the page actually says.
@@ -52,10 +54,10 @@ Do the applicable steps in order and write no plan prose until they are done.
      Don't invent versions, limits, or performance numbers.
    - Skip external research when the workspace already settles the question.
 5. **Parallel research (optional).** When several independent questions need digging, run
-   them with `delegate_parallel` (e.g. `researcher` for web sources, `analyst` for code
-   surveys). Don't use background agents for this: they have no web, search or shell
-   tools. Before drafting, collect every result. Record failed research as an evidence
-   gap.
+   them in one `delegate_parallel`: `researcher` for web sources; code questions you can
+   answer with `read`/`grep` yourself, or give to `the_reviewer` (read-only) when they
+   need commands. Before drafting, collect every result. Record failed research as an
+   evidence gap.
 6. **Synthesize.** For every external choice that will appear in the plan (recommended,
    alternative, or rejected), you should have an inspected source URL. Drop candidates you
    cannot back up. Then choose the approach that fits existing patterns with the least new
@@ -101,11 +103,11 @@ Don't invent issues, PRs, or file paths to fill a section, and don't add empty s
 
 ## Multi-agent plans
 
-When the work will clearly be carried out by several agents (research + coding + writing,
-or many independent parts), call `plan_task` with a precise task description to get a
-proposed agent breakdown. Treat its output as a draft: check it against your research,
-fix agent assignments and dependencies, and fold it into the **Steps** section with the
-agent named on each step and `depends_on` relationships explicit.
+When the work will be carried out by the team, name the agent on each step and make
+`depends_on` explicit, using the shapes in `parallel-workflows`: behaviour changes go
+`tester` -> `implementer` -> `the_reviewer`, mechanical fixes go to `implementer`
+alone, web research goes to `researcher`. Use the agent names from your Agent Team
+list if they differ.
 
 ## Delivering the plan
 
@@ -118,7 +120,8 @@ success criteria, steps, and validation agree with each other and with the user'
 constraints. End by repeating the `go` line, and point out the riskiest validation step.
 
 **Saving to a file:** deliver inline by default. Write a file only when the user asks or
-a workspace convention requires it. Use the path they give, else an existing convention
+a workspace convention requires it; if you cannot write files, make saving it the first
+`implementer` task after `go`. Use the path they give, else an existing convention
 (e.g. `docs/plans/`, `specs/<feature>/plan.md`), else
 `.crabagent/plans/YYYY-MM-DD-<slug>.md`. Never overwrite an unrelated existing file. The
 file content must be identical to the plan you show in the reply; mention its path after
@@ -132,7 +135,8 @@ Then stop. Do not begin implementation in the planning turn.
 - Execute the plan as written, without regenerating it.
 - Multi-agent plans: run dependent steps with `run_pipeline` (each step's `id`,
   `agent_name`, `task`, `depends_on`); fully independent steps can go through
-  `delegate_parallel`. Single-agent plans: just do the work.
+  `delegate_parallel`. Work you can do with your own tools, do yourself; anything that
+  needs edits or commands you cannot run goes to the team.
 - The plan's structure is binding: if it splits the work into several commits or PRs, keep
   that split and order when publishing. If one file spans units, split by hunk
   (`git add -p`) or assign it to the earliest unit and say so.

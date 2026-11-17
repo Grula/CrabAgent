@@ -46,7 +46,8 @@ Read, in roughly this order, whichever exist:
 9. Existing workspace skills in `.crabagent/skills/` - don't duplicate their content.
 
 For a large monorepo you may survey packages in parallel with `delegate_parallel` using
-the read-only `analyst` agent - one task per package, each asking for: commands, entry
+the read-only `the_reviewer` agent (or another read-only agent from your team list) - one
+task per package, each asking for: commands, entry
 points, internal dependencies, unusual conventions, and gotchas, with file references.
 
 ## 3. Confirm the commands
