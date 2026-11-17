@@ -1287,10 +1287,10 @@ def _deny(*groups: tuple[str, ...]) -> dict[str, str]:
 
 _NOT_FOR_THE_TEAM = (_EMAIL_TOOLS, _CALENDAR_TOOLS, _SCHEDULED_TASK_TOOLS)
 
-# Personal organiser, office-editing and admin tools the coder, tester and
-# reviewer never need. molt_rollback restores a workspace snapshot and could undo other agents'
+# Personal organiser, office-editing and admin tools the working agents (coder,
+# tester, reviewer, researcher) never need. molt_rollback restores a workspace snapshot and could undo other agents'
 # work; memory admin can delete lessons and user memories.
-_NOT_FOR_DEV_WORK = (
+_ORGANISER_AND_ADMIN_TOOLS = (
     "task_add", "task_update", "task_list", "task_done", "task_delete", "task_remind",
     "todo_add", "todo_list", "todo_done", "todo_delete", "daily_digest", "meeting_process",
     "conversation_search", "agent_runs_inspect", "workmode_inspect", "molt_rollback",
@@ -1388,7 +1388,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "💻",
         "tool_permissions": {
-            **_deny(*_NOT_FOR_THE_TEAM, _NOT_FOR_DEV_WORK),
+            **_deny(*_NOT_FOR_THE_TEAM, _ORGANISER_AND_ADMIN_TOOLS),
             "bash": "auto",
             "read": "auto",
             "write": "auto",
@@ -1441,7 +1441,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🧪",
         "tool_permissions": {
-            **_deny(*_NOT_FOR_THE_TEAM, _NOT_FOR_DEV_WORK),
+            **_deny(*_NOT_FOR_THE_TEAM, _ORGANISER_AND_ADMIN_TOOLS),
             "bash": "auto",
             "read": "auto",
             "write": "auto",
@@ -1489,7 +1489,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🔍",
         "tool_permissions": {
-            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _NOT_FOR_DEV_WORK),
+            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS),
             "read": "auto",
             "glob": "auto",
             "grep": "auto",
@@ -1508,8 +1508,15 @@ DEFAULT_AGENTS = [
         "display_name": "Web Researcher",
         "role": "Web Researcher",
         "goal": (
-            "Find, verify, and summarize information from the web. Cross-check important claims "
-            "across independent sources and cite every source with its URL."
+            "Find, verify and summarize information from the web, and cite every source you rely on with "
+            "its URL.\n"
+            "- Size the work to the question: a lookup (one fact, an API's documented behaviour) takes a few "
+            "calls and a quoted answer; a broader question gets the web-research method, within about 15 "
+            "tool calls.\n"
+            "- Prefer primary sources, and read the page you cite: search snippets are not evidence.\n"
+            "- Date anything that changes over time, report disagreements between sources instead of picking "
+            "one, and write 'not found' rather than guessing.\n"
+            "- Answer only what was asked, leading with the answer."
         ),
         "backstory": (
             "You are an experienced researcher who prefers primary sources, notes where sources "
@@ -1517,7 +1524,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🌐",
         "tool_permissions": {
-            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS),
+            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS, ("git_diff", "molt_diff")),
             "read": "auto",
             "glob": "auto",
             "grep": "auto",
@@ -1528,7 +1535,7 @@ DEFAULT_AGENTS = [
             "write": "deny",
             "edit": "deny",
         },
-        "skills": ["deep-research"],
+        "skills": ["web-research", "docs-lookup", "deep-research"],
     },
 ]
 

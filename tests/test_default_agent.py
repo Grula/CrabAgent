@@ -155,9 +155,13 @@ class TestDefaultTeamCapabilities:
         assert "web search" in self._caps("researcher")
         assert not {"edit files", "run commands", "web search"} & set(self._caps("architect"))
 
-    def test_coder_tester_and_reviewer_lack_organiser_admin_and_rollback_tools(self):
-        for name in ("coder", "tester", "the_reviewer"):
+    def test_working_agents_lack_organiser_admin_and_rollback_tools(self):
+        for name in ("coder", "tester", "the_reviewer", "researcher"):
             perms = next(a for a in db.DEFAULT_AGENTS if a["name"] == name)["tool_permissions"]
             for tool in ("molt_rollback", "memory_forget", "task_add", "todo_add", "conversation_search", "office_edit"):
                 assert perms.get(tool) == "deny", (name, tool)
-            assert perms.get("bash") == "auto"
+
+    def test_researcher_reads_the_web_but_changes_nothing(self):
+        caps = self._caps("researcher")
+        assert {"web search", "browser", "read files"} <= set(caps)
+        assert not {"edit files", "run commands", "git diff"} & set(caps)

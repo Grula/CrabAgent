@@ -52,7 +52,8 @@ strongest evidence against the likely conclusion.
 
 ### 3. Fan out
 Send one `delegate_parallel` call with a self-contained brief per researcher. Build
-each brief from [references/researcher-brief.md](references/researcher-brief.md). A
+each brief from [references/researcher-brief.md](references/researcher-brief.md);
+researchers that have the `web-research` skill already follow its method. A
 brief must carry the user's constraints, because researchers never see the
 conversation. For more than 6 sub-questions, run waves of up to 6 and finish each
 wave before starting the next.
