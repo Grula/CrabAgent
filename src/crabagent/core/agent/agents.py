@@ -55,7 +55,7 @@ _AGENT_EXECUTION_CONTRACT = (
     "a bundle is approved or denied as a unit.\n"
     "- Don't stop to ask questions: work independently, make reasonable assumptions, and state them in "
     "your report.\n"
-    "Finish with a short report:\n"
+    "Finish with a short report, written in the language of your task brief:\n"
     "- Outcome in one or two sentences.\n"
     "- Files changed (paths), or key findings with their sources.\n"
     "- Verification: the exact command you ran and its exit code, or why none applied.\n"

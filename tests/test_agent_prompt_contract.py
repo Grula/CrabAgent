@@ -20,6 +20,8 @@ EXECUTION_CONTRACT_PHRASES: tuple[str, ...] = (
     "never print tool-call markup as text",
     "REMAINING list",
     "work independently",
+    # A long report once came back in Chinese for an English brief.
+    "in the language of your task brief",
 )
 
 # Wording that must be gone from the prompt fragments.
