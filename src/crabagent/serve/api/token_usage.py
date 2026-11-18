@@ -33,11 +33,12 @@ async def list_sessions_usage(
     offset: int = Query(0, ge=0),
     days: int = Query(30, ge=1, le=365, description="Lookback days (365 = all)"),
     workspace: str = Query("", description="Filter by workspace path"),
+    agent: str = Query("", description="Filter by agent name"),
     user: User = Depends(get_current_user),
 ):
     """Per-session aggregated token usage."""
     sessions, total = await token_usage_sessions(
-        user.id, limit=limit, offset=offset, days=days, workspace=workspace
+        user.id, limit=limit, offset=offset, days=days, workspace=workspace, agent=agent
     )
     return {"sessions": sessions, "total": total}
 

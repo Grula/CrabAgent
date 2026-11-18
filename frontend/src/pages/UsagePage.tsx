@@ -20,6 +20,7 @@ import {
   getSessionUsageDetail,
   getSessionsUsage,
   getWorkspacesUsage,
+  type AgentUsage,
   type SessionUsage,
   type SessionUsageDetail,
   type TokenUsageOverview,
@@ -45,6 +46,7 @@ function formatDate(value: string): string {
 export default function UsagePage() {
   const [days, setDays] = useState(30);
   const [workspace, setWorkspace] = useState("");
+  const [agent, setAgent] = useState("");
   const [overview, setOverview] = useState<TokenUsageOverview | null>(null);
   const [sessions, setSessions] = useState<SessionUsage[]>([]);
   const [sessionsTotal, setSessionsTotal] = useState(0);
@@ -65,7 +67,7 @@ export default function UsagePage() {
     try {
       const [ov, sess] = await Promise.all([
         getOverview(days, workspace),
-        getSessionsUsage(PAGE_SIZE, 0, days, workspace),
+        getSessionsUsage(PAGE_SIZE, 0, days, workspace, agent),
       ]);
       setOverview(ov);
       setSessions(sess.sessions);
@@ -73,7 +75,7 @@ export default function UsagePage() {
     } finally {
       setLoading(false);
     }
-  }, [days, workspace]);
+  }, [days, workspace, agent]);
 
   useEffect(() => { void fetchData(); }, [fetchData]);
   useEffect(() => { getWorkspacesUsage().then(setWorkspaces).catch(() => {}); }, []);
@@ -81,7 +83,7 @@ export default function UsagePage() {
   const loadMore = async () => {
     setLoadingMore(true);
     try {
-      const result = await getSessionsUsage(PAGE_SIZE, sessions.length, days, workspace);
+      const result = await getSessionsUsage(PAGE_SIZE, sessions.length, days, workspace, agent);
       setSessions((current) => [...current, ...result.sessions]);
     } finally {
       setLoadingMore(false);
@@ -105,6 +107,8 @@ export default function UsagePage() {
     }
   };
 
+  const toggleAgent = (name: string) => setAgent((current) => (current === name ? "" : name));
+
   const visibleSessions = useMemo(() => {
     const query = search.trim().toLowerCase();
     return sessions
@@ -123,6 +127,8 @@ export default function UsagePage() {
   ];
   const wsLabel = (value: string) => value.split("/").filter(Boolean).pop() || value;
   const largestSessionShare = overview && sessions[0] ? sessions[0].total_tokens / overview.total_tokens : 0;
+  const selectedAgentTotal = agent && overview ? overview.by_agent.find((item) => item.agent_name === agent)?.total_tokens ?? 0 : 0;
+  const sessionShareTotal = selectedAgentTotal > 0 ? selectedAgentTotal : overview?.total_tokens ?? 0;
   const cacheStatus = overview && overview.cache_hit_rate >= 0.7 ? "Cache is healthy" : "Cache can improve";
 
   return (
@@ -169,10 +175,16 @@ export default function UsagePage() {
             </AreaChart>}</MeasuredChartContainer>
           </Card>}
 
-          <section className="grid lg:grid-cols-2 gap-4">
+          <section className="grid gap-4">
             <RankedDistribution title={"By Model"} data={overview.by_model} nameKey="model" total={overview.total_tokens} callsLabel={"calls"} />
-            <RankedDistribution title={"By Agent"} data={overview.by_agent} nameKey="agent_name" total={overview.total_tokens} callsLabel={"calls"} />
+            <AgentBreakdown data={overview.by_agent} total={overview.total_tokens} selected={agent} onSelect={toggleAgent} />
           </section>
+
+          {agent && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--brand-border)] bg-[var(--brand-bg)] px-3 py-2">
+            <span className="text-xs text-[var(--text-secondary)]">{"Filtered by agent"}</span>
+            <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-[var(--bg-secondary)] border border-[var(--brand-border)]">{agent}</span>
+            <button type="button" onClick={() => setAgent("")} className="ml-auto text-xs font-semibold text-[var(--brand)] hover:underline">{"Clear"}</button>
+          </div>}
 
           <Card title={`${"Session Details"} (${sessionsTotal})`} action={<span className="hidden sm:flex items-center gap-1.5 text-xs text-[var(--text-tertiary)]"><Sparkles size={13} /> {"Expand for session summary"}</span>}>
             <div className="flex flex-col sm:flex-row gap-2 mb-4">
@@ -181,7 +193,7 @@ export default function UsagePage() {
             </div>
             <div className="space-y-2 sm:hidden">{visibleSessions.map((session) => <MobileSessionCard key={session.session_id} session={session} expanded={expandedSession === session.session_id} detail={expandedSession === session.session_id ? sessionDetail : null} detailLoading={expandedSession === session.session_id && detailLoading} onToggle={() => void handleExpand(session.session_id)}  />)}</div>
             <div className="hidden sm:block overflow-x-auto"><table className="w-full min-w-[650px] text-sm"><thead><tr className="border-b border-[var(--border)] text-[var(--text-tertiary)] text-xs"><th className="w-8" /><th className="text-left font-medium py-2 px-2">{"Session"}</th><th className="text-right font-medium py-2 px-2">{"Total"}</th><th className="text-right font-medium py-2 px-2">{"Share"}</th><th className="text-right font-medium py-2 px-2">{"Cache"}</th><th className="text-right font-medium py-2 px-2">{"calls"}</th><th className="text-right font-medium py-2 px-2">{"Last active"}</th></tr></thead>
-              <tbody>{visibleSessions.map((session) => <SessionRow key={session.session_id} session={session} overviewTotal={overview.total_tokens} expanded={expandedSession === session.session_id} detail={expandedSession === session.session_id ? sessionDetail : null} detailLoading={expandedSession === session.session_id && detailLoading} onToggle={() => void handleExpand(session.session_id)}  />)}</tbody>
+              <tbody>{visibleSessions.map((session) => <SessionRow key={session.session_id} session={session} shareTotal={sessionShareTotal} expanded={expandedSession === session.session_id} detail={expandedSession === session.session_id ? sessionDetail : null} detailLoading={expandedSession === session.session_id && detailLoading} onToggle={() => void handleExpand(session.session_id)}  />)}</tbody>
             </table></div>
             {visibleSessions.length === 0 && <p className="py-8 text-center text-sm text-[var(--text-tertiary)]">{"No matching sessions"}</p>}
             {sessions.length < sessionsTotal && <button onClick={() => void loadMore()} disabled={loadingMore} className="mt-4 w-full py-2 text-sm font-semibold rounded-lg border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] disabled:opacity-50">{loadingMore ? "Loading…" : "Load more sessions"}</button>}
@@ -199,7 +211,21 @@ function Card({ title, children, action }: { title: string; children: React.Reac
 function MetricCard({ icon, label, value, detail, progress, emphasis = false }: { icon: React.ReactNode; label: string; value: string; detail?: string; progress?: number; emphasis?: boolean }) { return <div className={cn("rounded-2xl border p-4 min-h-32", emphasis ? "border-[var(--brand-border)] bg-[var(--brand-bg)]" : "border-[var(--border)] bg-[var(--bg-secondary)]")}><div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text-secondary)]">{icon}{label}</div><p className="mt-3 text-2xl font-semibold tracking-tight">{value}</p>{detail && <p className="mt-1 text-xs text-[var(--text-tertiary)] truncate">{detail}</p>}{progress !== undefined && <div className="mt-3 h-1.5 rounded-full bg-[var(--bg-tertiary)] overflow-hidden"><div className="h-full rounded-full bg-[var(--success)]" style={{ width: `${progress * 100}%` }} /></div>}</div>; }
 function TrendTabs({ mode, onChange }: { mode: TrendMode; onChange: (mode: TrendMode) => void }) { return <div className="flex gap-1 p-0.5 bg-[var(--bg-tertiary)] rounded-lg">{(["total", "input-output", "cache"] as TrendMode[]).map((item) => <button key={item} onClick={() => onChange(item)} className={cn("px-2 py-1 rounded-md text-[11px] font-medium", mode === item ? "bg-[var(--bg-secondary)] text-[var(--text-primary)]" : "text-[var(--text-tertiary)]")}>{item === "total" ? "Total" : item === "cache" ? "Cache" : "Input/output"}</button>)}</div>; }
 function RankedDistribution({ title, data, nameKey, total, callsLabel }: { title: string; data: Record<string, unknown>[]; nameKey: string; total: number; callsLabel: string }) { return <Card title={title}>{data.slice(0, 5).map((item, index) => { const value = Number(item.total_tokens); const share = total ? value / total : 0; return <div key={String(item[nameKey])} className="py-2.5 border-b last:border-0 border-[var(--border-subtle)]"><div className="flex justify-between gap-3 text-xs mb-1.5"><span className="text-[var(--text-primary)] font-medium truncate">{String(item[nameKey] || "Unknown")}</span><span className="text-[var(--text-secondary)] shrink-0">{formatTokens(value)} <span className="text-[var(--text-tertiary)]">{(share * 100).toFixed(0)}%</span></span></div><div className="h-1.5 rounded-full bg-[var(--bg-tertiary)] overflow-hidden"><div className="h-full rounded-full" style={{ width: `${share * 100}%`, background: DISTRIBUTION_COLORS[index] }} /></div><p className="mt-1 text-[11px] text-[var(--text-tertiary)]">{Number(item.calls)} {callsLabel}</p></div>; })}</Card>; }
-function SessionRow({ session, overviewTotal, expanded, detail, detailLoading, onToggle }: { session: SessionUsage; overviewTotal: number; expanded: boolean; detail: SessionUsageDetail | null; detailLoading: boolean; onToggle: () => void }) { const share = overviewTotal ? session.total_tokens / overviewTotal : 0; return <><tr onClick={onToggle} className="cursor-pointer border-b border-[var(--border-subtle)] hover:bg-[var(--bg-tertiary)]/50"><td className="px-2 text-[var(--text-tertiary)]">{expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</td><td className="py-3 px-2 max-w-64"><p className="font-medium truncate">{session.title || session.session_id.slice(0, 12)}</p><p className="text-[11px] text-[var(--text-tertiary)]">{formatTokens(session.prompt_tokens)} {"input / output"} {formatTokens(session.completion_tokens)}</p></td><td className="py-3 px-2 text-right font-semibold">{formatTokens(session.total_tokens)}</td><td className="py-3 px-2 text-right text-[var(--text-secondary)]">{(share * 100).toFixed(0)}%</td><td className="py-3 px-2 text-right"><CacheBadge rate={session.cache_hit_rate} /></td><td className="py-3 px-2 text-right text-[var(--text-secondary)]">{session.calls}</td><td className="py-3 px-2 text-right text-xs text-[var(--text-tertiary)]">{formatDate(session.last_active)}</td></tr>{expanded && <tr><td colSpan={7} className="px-5 py-4 bg-[var(--bg-tertiary)]/35">{detailLoading ? <p className="text-center text-sm text-[var(--text-tertiary)]">{"Loading…"}</p> : detail ? <div className="grid sm:grid-cols-3 gap-3"><DetailMetric label={"Total"} value={formatTokens(detail.total.total_tokens)} /><DetailMetric label={"calls"} value={String(detail.total.calls)} /><DetailMetric label={"Cache Hit Rate"} value={`${(detail.total.cache_hit_rate * 100).toFixed(0)}%`} /><div className="sm:col-span-3 text-xs text-[var(--text-secondary)]">{"Recent calls"}: {detail.records.slice(0, 5).map((record) => `${record.model} ${formatTokens(record.total_tokens)}`).join(" · ")}{detail.records.length > 5 ? " ..." : ""}</div></div> : <p className="text-center text-sm text-[var(--text-tertiary)]">{"No usage data yet"}</p>}</td></tr>}</>; }
+function AgentBreakdown({ data, total, selected, onSelect }: { data: AgentUsage[]; total: number; selected: string; onSelect: (name: string) => void }) { return <Card title={"By Agent"} action={<span className="text-xs text-[var(--text-tertiary)]">{data.length} {"agents"}</span>}>
+  <div className="space-y-2 sm:hidden">{data.map((item) => <AgentMobileCard key={item.agent_name} agent={item} total={total} selected={selected === item.agent_name} onSelect={() => onSelect(item.agent_name)} />)}</div>
+  <div className="hidden sm:block">{data.map((item) => { const share = total ? item.total_tokens / total : 0; const active = selected === item.agent_name; return <button key={item.agent_name} type="button" onClick={() => onSelect(item.agent_name)} aria-pressed={active} className={cn("w-full text-left py-2.5 px-2 -mx-2 rounded-lg border-b last:border-0 border-[var(--border-subtle)] transition-colors", active ? "bg-[var(--brand-bg)]" : "hover:bg-[var(--bg-tertiary)]/50")}>
+    <div className="flex items-center justify-between gap-3 text-xs mb-1.5"><span className="font-medium truncate">{item.agent_name || "Unknown"}</span><span className="shrink-0 text-[var(--text-secondary)]">{formatTokens(item.total_tokens)} <span className="text-[var(--text-tertiary)]">{(share * 100).toFixed(0)}%</span></span></div>
+    <div className="h-1.5 rounded-full bg-[var(--bg-tertiary)] overflow-hidden"><div className="h-full rounded-full bg-[var(--brand)]" style={{ width: `${share * 100}%` }} /></div>
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--text-tertiary)]"><span>{formatTokens(item.prompt_tokens)} {"in"} / {formatTokens(item.completion_tokens)} {"out"}</span><span>{"Cache"} <CacheBadge rate={item.cache_hit_rate} /></span><span>{item.calls} {"calls"}</span>{active && <span className="font-semibold text-[var(--brand)]">{"Filtering sessions"}</span>}</div>
+  </button>; })}</div>
+</Card>; }
+function AgentMobileCard({ agent: item, total, selected, onSelect }: { agent: AgentUsage; total: number; selected: boolean; onSelect: () => void }) { const share = total ? item.total_tokens / total : 0; return <button type="button" onClick={onSelect} aria-pressed={selected} className={cn("w-full text-left rounded-xl border p-3 transition-colors", selected ? "border-[var(--brand-border)] bg-[var(--brand-bg)]" : "border-[var(--border)]")}>
+  <div className="flex items-start justify-between gap-2"><span className="min-w-0 font-medium break-words">{item.agent_name || "Unknown"}</span><span className="shrink-0 text-sm font-semibold">{formatTokens(item.total_tokens)}</span></div>
+  <p className="mt-1 text-xs text-[var(--text-tertiary)]">{(share * 100).toFixed(0)}% {"of total"}</p>
+  <div className="mt-2 h-1.5 rounded-full bg-[var(--bg-tertiary)] overflow-hidden"><div className="h-full rounded-full bg-[var(--brand)]" style={{ width: `${share * 100}%` }} /></div>
+  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--text-tertiary)]"><span>{formatTokens(item.prompt_tokens)} {"in"} / {formatTokens(item.completion_tokens)} {"out"}</span><CacheBadge rate={item.cache_hit_rate} /><span>{item.calls} {"calls"}</span></div>
+</button>; }
+function SessionRow({ session, shareTotal, expanded, detail, detailLoading, onToggle }: { session: SessionUsage; shareTotal: number; expanded: boolean; detail: SessionUsageDetail | null; detailLoading: boolean; onToggle: () => void }) { const share = shareTotal ? session.total_tokens / shareTotal : 0; return <><tr onClick={onToggle} className="cursor-pointer border-b border-[var(--border-subtle)] hover:bg-[var(--bg-tertiary)]/50"><td className="px-2 text-[var(--text-tertiary)]">{expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</td><td className="py-3 px-2 max-w-64"><p className="font-medium truncate">{session.title || session.session_id.slice(0, 12)}</p><p className="text-[11px] text-[var(--text-tertiary)]">{formatTokens(session.prompt_tokens)} {"input / output"} {formatTokens(session.completion_tokens)}</p></td><td className="py-3 px-2 text-right font-semibold">{formatTokens(session.total_tokens)}</td><td className="py-3 px-2 text-right text-[var(--text-secondary)]">{(share * 100).toFixed(0)}%</td><td className="py-3 px-2 text-right"><CacheBadge rate={session.cache_hit_rate} /></td><td className="py-3 px-2 text-right text-[var(--text-secondary)]">{session.calls}</td><td className="py-3 px-2 text-right text-xs text-[var(--text-tertiary)]">{formatDate(session.last_active)}</td></tr>{expanded && <tr><td colSpan={7} className="px-5 py-4 bg-[var(--bg-tertiary)]/35">{detailLoading ? <p className="text-center text-sm text-[var(--text-tertiary)]">{"Loading…"}</p> : detail ? <div className="grid sm:grid-cols-3 gap-3"><DetailMetric label={"Total"} value={formatTokens(detail.total.total_tokens)} /><DetailMetric label={"calls"} value={String(detail.total.calls)} /><DetailMetric label={"Cache Hit Rate"} value={`${(detail.total.cache_hit_rate * 100).toFixed(0)}%`} /><div className="sm:col-span-3 text-xs text-[var(--text-secondary)]">{"Recent calls"}: {detail.records.slice(0, 5).map((record) => `${record.model} ${formatTokens(record.total_tokens)}`).join(" · ")}{detail.records.length > 5 ? " ..." : ""}</div></div> : <p className="text-center text-sm text-[var(--text-tertiary)]">{"No usage data yet"}</p>}</td></tr>}</>; }
 export function MobileSessionCard({ session, expanded, detail, detailLoading, onToggle }: { session: SessionUsage; expanded: boolean; detail: SessionUsageDetail | null; detailLoading: boolean; onToggle: () => void }) {
   return <article className="rounded-xl border border-[var(--border)] overflow-hidden">
     <button type="button" onClick={onToggle} aria-expanded={expanded} className="w-full text-left p-3 flex items-start gap-2">
@@ -210,4 +236,4 @@ export function MobileSessionCard({ session, expanded, detail, detailLoading, on
   </article>;
 }
 function DetailMetric({ label, value }: { label: string; value: string }) { return <div className="rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] px-3 py-2"><p className="text-[11px] text-[var(--text-tertiary)]">{label}</p><p className="font-semibold">{value}</p></div>; }
-function CacheBadge({ rate }: { rate: number }) { const color = rate >= 0.7 ? "var(--success)" : rate >= 0.4 ? "var(--warning)" : "var(--danger)"; return <span className="inline-block px-1.5 py-0.5 rounded text-xs font-semibold" style={{ color, background: `color-mix(in srgb, ${color} 14%, transparent)` }}>{(rate * 100).toFixed(0)}%</span>; }
+function CacheBadge({ rate }: { rate: number }) { const safe = Number.isFinite(rate) ? rate : 0; const color = safe >= 0.7 ? "var(--success)" : safe >= 0.4 ? "var(--warning)" : "var(--danger)"; return <span className="inline-block px-1.5 py-0.5 rounded text-xs font-semibold" style={{ color, background: `color-mix(in srgb, ${color} 14%, transparent)` }}>{(safe * 100).toFixed(0)}%</span>; }

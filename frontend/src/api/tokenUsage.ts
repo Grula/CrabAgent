@@ -11,6 +11,18 @@ export interface TrendPoint {
   total_tokens: number;
 }
 
+export interface AgentUsage {
+  agent_name: string;
+  total_tokens: number;
+  prompt_tokens: number;
+  non_cached_tokens: number;
+  cached_tokens: number;
+  completion_tokens: number;
+  reasoning_tokens: number;
+  cache_hit_rate: number;
+  calls: number;
+}
+
 export interface TokenUsageOverview {
   total_tokens: number;
   prompt_tokens: number;
@@ -24,14 +36,7 @@ export interface TokenUsageOverview {
   sessions_count: number;
   hourly: boolean;
   trend: TrendPoint[];
-  by_agent: {
-    agent_name: string;
-    total_tokens: number;
-    prompt_tokens: number;
-    cached_tokens: number;
-    completion_tokens: number;
-    calls: number;
-  }[];
+  by_agent: AgentUsage[];
   by_model: {
     model: string;
     total_tokens: number;
@@ -115,12 +120,13 @@ export function getOverview(days = 30, workspace = "") {
   });
 }
 
-export function getSessionsUsage(limit = 20, offset = 0, days = 30, workspace = "") {
+export function getSessionsUsage(limit = 20, offset = 0, days = 30, workspace = "", agent = "") {
   return api.get<{ sessions: SessionUsage[]; total: number }>("/token-usage/sessions", {
     limit: String(limit),
     offset: String(offset),
     days: String(days),
     ...(workspace ? { workspace } : {}),
+    ...(agent ? { agent } : {}),
   });
 }
 

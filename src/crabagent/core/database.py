@@ -2688,7 +2688,9 @@ async def token_usage_overview(
                 func.sum(TokenUsage.total_tokens).label("total"),
                 func.sum(TokenUsage.prompt_tokens).label("prompt"),
                 func.sum(TokenUsage.cached_tokens).label("cached"),
+                func.sum(TokenUsage.non_cached_tokens).label("non_cached"),
                 func.sum(TokenUsage.completion_tokens).label("completion"),
+                func.sum(TokenUsage.reasoning_tokens).label("reasoning"),
                 func.count(TokenUsage.id).label("calls"),
             )
             .where(*conds)
@@ -2701,8 +2703,13 @@ async def token_usage_overview(
                 "total_tokens": r[1] or 0,
                 "prompt_tokens": r[2] or 0,
                 "cached_tokens": r[3] or 0,
-                "completion_tokens": r[4] or 0,
-                "calls": r[5] or 0,
+                "non_cached_tokens": r[4] or 0,
+                "completion_tokens": r[5] or 0,
+                "reasoning_tokens": r[6] or 0,
+                "cache_hit_rate": (
+                    round((r[3] or 0) / r[2], 4) if (r[2] or 0) > 0 else 0
+                ),
+                "calls": r[7] or 0,
             }
             for r in agent_result.fetchall()
         ]
@@ -2829,7 +2836,12 @@ def _cutoff_filter(cutoff_dt):
 
 
 async def token_usage_sessions(
-    user_id: int, limit: int = 20, offset: int = 0, days: int = 30, workspace: str = ""
+    user_id: int,
+    limit: int = 20,
+    offset: int = 0,
+    days: int = 30,
+    workspace: str = "",
+    agent: str = "",
 ) -> tuple[list[dict], int]:
     """Per-session aggregated token usage."""
     from sqlalchemy import func, select
@@ -2848,6 +2860,8 @@ async def token_usage_sessions(
             if not ws_session_ids:
                 return [], 0
             conds.append(TokenUsage.session_id.in_(ws_session_ids))
+        if agent:
+            conds.append(TokenUsage.agent_name == agent)
 
         # Get aggregated stats per session
         result = await db.execute(
