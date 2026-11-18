@@ -122,7 +122,8 @@ class ToolRegistry:
                     "type": "string",
                     "description": (
                         "Briefly explain to the user what this tool call is about to do, "
-                        "in the user's language (one short sentence, at most 40 characters). "
+                        "in English unless the user writes in another language "
+                        "(one short sentence, at most 40 characters). "
                         "Describe the action, not a claimed result; do not include secrets."
                     ),
                     "maxLength": 40,

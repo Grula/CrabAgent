@@ -42,6 +42,9 @@ A scanner only finds names nobody mentions. Before you call anything dead, check
   - **One method at a time:** a path can be live for POST and dead for DELETE. Grep the
     client calls (`api.del(`, `method: "DELETE"`).
 - **Only tests use it:** it's dead in production. List its tests as part of the removal.
+- **Tests for code that is gone:** list every file in the test folders, in any language (a
+  `.cjs` or shell test next to Python ones), and check that what each imports still exists.
+  The scripts above only read Python and TypeScript.
 - **The whole symbol, not just its name:** state that is written but never read (a
   list appended to, a field set) is dead too, along with whatever fills it.
 - **The chain:** each removal can orphan helpers, types, settings and dependencies.
