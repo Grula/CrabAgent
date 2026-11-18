@@ -174,8 +174,8 @@ class TestDefaultTeamCapabilities:
 
     def test_scout_reads_code_and_changes_nothing(self):
         caps = self._caps("scout")
-        assert {"read files", "run commands", "git diff"} <= set(caps)
-        assert not {"edit files", "web search", "browser", "shared browser"} & set(caps)
+        assert {"read files", "git diff"} <= set(caps)
+        assert not {"edit files", "run commands", "web search", "browser", "shared browser"} & set(caps)
 
     def test_architect_and_coder_are_told_to_use_the_scout(self):
         goals = {a["name"]: a["goal"] for a in db.DEFAULT_AGENTS}
