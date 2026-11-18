@@ -55,6 +55,8 @@ _AGENT_EXECUTION_CONTRACT = (
     "a bundle is approved or denied as a unit.\n"
     "- Don't stop to ask questions: work independently, make reasonable assumptions, and state them in "
     "your report.\n"
+    "- Before you finish, stop any server or background process you started and delete the temporary "
+    "files and folders you created, unless the task asked you to keep them.\n"
     "Finish with a short report, written in the language of your task brief:\n"
     "- Outcome in one or two sentences.\n"
     "- Files changed (paths), or key findings with their sources.\n"

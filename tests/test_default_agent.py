@@ -216,6 +216,17 @@ def test_architect_checks_a_feature_the_way_the_user_will_use_it():
     assert "web-app-testing" in tester["skills"]  # the skill the rule points at is really the tester's
 
 
+def test_architect_briefs_only_seen_facts_and_recommends_what_the_request_promises():
+    # Milestone 8: a brief claimed "version 1" (it was 2) and kept "git stash? no -" in its text,
+    # and the option listed first broke existing ledger files although the request said
+    # "keeping behaviour identical".
+    goal = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")["goal"]
+    assert "State a fact about the code only if you or a scout saw it" in goal
+    assert "no thinking aloud" in goal
+    assert 'marked "(recommended)"' in goal
+    assert "Recommend the option that keeps what the request already promises" in goal
+
+
 def test_architect_prompt_matches_the_sub_agent_step_cap():
     architect = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")
     assert f"stops after about {agents.SUB_AGENT_MAX_STEPS} steps" in architect["goal"]

@@ -22,6 +22,8 @@ EXECUTION_CONTRACT_PHRASES: tuple[str, ...] = (
     "work independently",
     # A long report once came back in Chinese for an English brief.
     "in the language of your task brief",
+    # Milestones 7 and 8 left about 30 scratch folders in /tmp.
+    "delete the temporary files and folders you created",
 )
 
 # Wording that must be gone from the prompt fragments.
