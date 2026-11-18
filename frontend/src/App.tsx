@@ -17,10 +17,10 @@ import { MobileConsole } from "./pages/mobile/MobileConsole";
 export type PageId = "chat" | "work" | "agents" | "memory" | "usage" | "settings";
 
 /** Tabs of the Work page. */
-export type WorkTab = "documents" | "browser" | "meeting" | "calendar";
+export type WorkTab = "documents" | "browser" | "meeting" | "calendar" | "timeline";
 
 const pageIds: readonly PageId[] = ["chat", "work", "agents", "memory", "usage", "settings"];
-const workTabs: readonly WorkTab[] = ["documents", "browser", "meeting", "calendar"];
+const workTabs: readonly WorkTab[] = ["documents", "browser", "meeting", "calendar", "timeline"];
 
 const PAGE_STORAGE_KEY = "crabagent_mode";
 const WORK_TAB_STORAGE_KEY = "crabagent_work_tab";

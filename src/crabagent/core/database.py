@@ -2436,6 +2436,38 @@ async def run_record_finalize(
         await db.commit()
 
 
+async def agent_runs_for_session(session_id: str, user_id: int, limit: int = 300) -> list[dict]:
+    """The newest ``limit`` agent runs of one chat, oldest first, with their recorded steps."""
+    from sqlalchemy import select
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(AgentRun)
+            .where(AgentRun.session_id == session_id, AgentRun.user_id == user_id)
+            .order_by(AgentRun.id.desc())
+            .limit(limit)
+        )
+        rows = list(result.scalars().all())
+    rows.reverse()
+    return [
+        {
+            "id": r.id,
+            "parent_run_id": r.parent_run_id,
+            "agent_name": r.agent_name,
+            "model": r.model or "",
+            "status": r.status,
+            "task_summary": r.task_summary or "",
+            "started_at": r.started_at,
+            "finished_at": r.finished_at,
+            "elapsed": r.elapsed or 0.0,
+            "tool_calls": r.tool_calls if isinstance(r.tool_calls, list) else [],
+            "error": r.error or "",
+            "metadata": r.metadata_ if isinstance(r.metadata_, dict) else {},
+        }
+        for r in rows
+    ]
+
+
 async def run_record_list(
     user_id: int,
     agent_name: str = "",

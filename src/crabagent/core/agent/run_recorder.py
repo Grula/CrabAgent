@@ -53,8 +53,10 @@ class RunRecorder:
             await self._on_agent_start(d)
         elif t == EventType.TOOL_CALL and self._main_run_id:
             self._on_tool_call(d, self._main_tool_buf)
+            await self._save_live(self._main_run_id, self._main_tool_buf)
         elif t == EventType.TOOL_RESULT and self._main_run_id:
             entry = self._on_tool_result(d, self._main_tool_buf)
+            await self._save_live(self._main_run_id, self._main_tool_buf)
             await self._capture_artifact(d, entry, self._main_run_id)
             for run_id in tuple(self._linked_task_run_ids):
                 await self._capture_artifact(d, entry, run_id)
@@ -68,11 +70,15 @@ class RunRecorder:
             await self._on_sub_start(d)
         elif t == EventType.SUB_AGENT_TOOL_CALL:
             self._on_sub_tool_call(d)
+            entry = self._sub_runs.get(d.get("sub_agent_id", ""))
+            if entry:
+                await self._save_live(entry.get("run_id"), entry["tool_buf"])
         elif t == EventType.SUB_AGENT_TOOL_RESULT:
             sub_id = d.get("sub_agent_id", "")
             entry = self._sub_runs.get(sub_id)
             if entry:
                 matched = self._on_tool_result(d, entry["tool_buf"])
+                await self._save_live(entry.get("run_id"), entry["tool_buf"])
                 await self._capture_artifact(d, matched, entry.get("run_id"))
         elif t == EventType.SUB_AGENT_END:
             await self._on_sub_end(d)
@@ -100,6 +106,21 @@ class RunRecorder:
             session_id=self._session_id,
             task_summary=data.get("query", "")[:200],
         )
+
+    async def _save_live(self, run_id: int | None, buf: list) -> None:
+        """Save a running agent's steps so far, so the timeline can follow it live.
+
+        Done inline (not in a background task) so a late write can never land
+        after the run's final save and overwrite it with fewer steps.
+        """
+        if not run_id or not buf:
+            return
+        from crabagent.core.database import run_record_update
+
+        try:
+            await run_record_update(run_id, tool_calls=[dict(step) for step in buf])
+        except Exception:
+            logger.debug("RunRecorder: live save failed for run %s", run_id, exc_info=True)
 
     def _on_tool_call(self, data: dict, buf: list) -> None:
         buf.append(
@@ -197,6 +218,7 @@ class RunRecorder:
             run_id=self._main_run_id,
             status="failed",
             elapsed=elapsed,
+            tool_calls=self._main_tool_buf[:] if self._main_tool_buf else None,
             error=str(data.get("error", ""))[:500],
         )
         self._main_run_id = None
@@ -232,7 +254,8 @@ class RunRecorder:
                 session_id=data.get("session_id", self._session_id),
                 parent_run_id=pipeline_run_id,
                 task_summary=data.get("task", "")[:200],
-                metadata={"pipeline_step_id": data.get("pipeline_step_id")} if data.get("pipeline_step_id") else None,
+                # sub_agent_id lets the UI match this run to its live card in the Agents panel.
+                metadata={"sub_agent_id": sub_id, **({"pipeline_step_id": data["pipeline_step_id"]} if data.get("pipeline_step_id") else {})},
             ),
         }
 
@@ -275,6 +298,7 @@ class RunRecorder:
             run_id=entry["run_id"],
             status="failed",
             elapsed=elapsed,
+            tool_calls=entry["tool_buf"][:] if entry["tool_buf"] else None,
             error=str(data.get("error", ""))[:500],
         )
 

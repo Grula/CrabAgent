@@ -1,14 +1,25 @@
 import { useState } from "react";
 import { ClipboardList, ChevronRight, X } from "lucide-react";
+import type { SessionTimeline, TimelineStep } from "../api/timeline";
+import { runForTask } from "../lib/timelineSteps";
 import { TaskInfo } from "./AgentRunBoard.types";
 import { TaskCard } from "./AgentRunCard";
 
 interface Props {
   tasks: TaskInfo[];
   onTaskClick: (task: TaskInfo) => void;
+  /** The chat's recorded steps; each card shows its own run's. */
+  timeline?: SessionTimeline | null;
+  onOpenTimeline?: (agent: string) => void;
 }
 
-function DesktopAgentRunBoard({ tasks, onTaskClick }: Props) {
+function stepsFor(timeline: SessionTimeline | null | undefined, task: TaskInfo): TimelineStep[] | undefined {
+  if (!timeline) return undefined;
+  const run = runForTask(timeline.runs, task);
+  return run ? timeline.steps.filter((step) => step.run_id === run.run_id) : undefined;
+}
+
+function DesktopAgentRunBoard({ tasks, onTaskClick, timeline, onOpenTimeline }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const runningCount = tasks.filter((t) => t.status === "running").length;
 
@@ -60,6 +71,8 @@ function DesktopAgentRunBoard({ tasks, onTaskClick }: Props) {
               key={t.subId}
               task={t}
               onClick={() => onTaskClick(t)}
+              steps={stepsFor(timeline, t)}
+              onOpenTimeline={onOpenTimeline ? () => onOpenTimeline(t.agentName) : undefined}
             />
           ))}
         </div>
@@ -68,7 +81,7 @@ function DesktopAgentRunBoard({ tasks, onTaskClick }: Props) {
   );
 }
 
-function MobileTaskDrawer({ tasks, onTaskClick }: Props) {
+function MobileTaskDrawer({ tasks, onTaskClick, timeline, onOpenTimeline }: Props) {
   const [open, setOpen] = useState(false);
   const runningCount = tasks.filter((t) => t.status === "running").length;
 
@@ -120,6 +133,8 @@ function MobileTaskDrawer({ tasks, onTaskClick }: Props) {
                     onTaskClick(t);
                     setOpen(false);
                   }}
+                  steps={stepsFor(timeline, t)}
+                  onOpenTimeline={onOpenTimeline ? () => { onOpenTimeline(t.agentName); setOpen(false); } : undefined}
                 />
               ))}
             </div>

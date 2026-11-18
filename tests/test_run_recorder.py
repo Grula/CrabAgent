@@ -221,7 +221,7 @@ async def test_on_event_records_sub_agent_lifecycle(recorder, monkeypatch: pytes
 
     assert created["agent_name"] == "coder"
     assert created["parent_run_id"] == 500
-    assert created["metadata"] == {"pipeline_step_id": "step-a"}
+    assert created["metadata"] == {"sub_agent_id": "sub-1", "pipeline_step_id": "step-a"}
     assert finalized["run_id"] == 88
     assert finalized["status"] == "completed"
     assert finalized["tokens_used"] == 8
@@ -284,3 +284,51 @@ async def test_on_event_creates_pipeline_run_and_marks_end(recorder, monkeypatch
 @pytest.mark.asyncio
 async def test_pipeline_run_id_property(recorder):
     assert recorder.pipeline_run_id is None
+
+
+# ── steps are saved while a run is still going (the timeline follows them live) ──
+
+
+@pytest.mark.asyncio
+async def test_main_run_steps_are_saved_before_the_run_ends(recorder, monkeypatch: pytest.MonkeyPatch):
+    saved = []
+
+    async def fake_update(run_id, **kwargs):
+        saved.append((run_id, kwargs["tool_calls"]))
+
+    monkeypatch.setattr("crabagent.core.database.run_record_update", fake_update)
+    recorder._main_run_id = 5
+
+    await recorder.on_event(AgentEvent(type=EventType.TOOL_CALL, data={"name": "bash", "arguments": {"command": "pytest -q"}}))
+    await recorder.on_event(AgentEvent(type=EventType.TOOL_RESULT, data={"name": "bash", "result": "3 passed"}))
+
+    assert [run_id for run_id, _ in saved] == [5, 5]
+    assert saved[0][1][0]["result_summary"] is None  # visible as "running" while the command runs
+    assert saved[1][1][0]["result_summary"] == "3 passed"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_sub_agent_keeps_the_steps_it_took(recorder, monkeypatch: pytest.MonkeyPatch):
+    saved, finalized = [], {}
+
+    async def fake_create(**kwargs):
+        return 7
+
+    async def fake_update(run_id, **kwargs):
+        saved.append(run_id)
+
+    async def fake_finalize(**kwargs):
+        finalized.update(kwargs)
+
+    monkeypatch.setattr("crabagent.core.database.run_record_create", fake_create)
+    monkeypatch.setattr("crabagent.core.database.run_record_update", fake_update)
+    monkeypatch.setattr("crabagent.core.database.run_record_finalize", fake_finalize)
+
+    await recorder.on_event(AgentEvent(type=EventType.SUB_AGENT_START, data={"sub_agent_id": "a", "agent_name": "coder"}))
+    await recorder.on_event(AgentEvent(type=EventType.SUB_AGENT_TOOL_CALL,
+                                       data={"sub_agent_id": "a", "name": "edit", "arguments": {"file_path": "x.py"}}))
+    await recorder.on_event(AgentEvent(type=EventType.SUB_AGENT_ERROR, data={"sub_agent_id": "a", "error": "budget"}))
+
+    assert saved == [7]
+    assert finalized["status"] == "failed"
+    assert finalized["tool_calls"][0]["args"] == {"file_path": "x.py"}

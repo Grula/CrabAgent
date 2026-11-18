@@ -504,6 +504,19 @@ async def delete_session(
     await conv_svc.delete_conversation(db, session_id)
 
 
+@router.get("/{session_id}/timeline")
+async def get_session_timeline(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every agent step in this chat (commands run, files read and changed), oldest first."""
+    from crabagent.serve.services.timeline import build_timeline
+
+    conv = await get_owned_conversation(db, session_id, user)
+    return await build_timeline(session_id, user.id, chat_agent=conv.agent or "")
+
+
 @router.get("/{session_id}/report", response_class=PlainTextResponse)
 async def get_session_report(
     session_id: str,

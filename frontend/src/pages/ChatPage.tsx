@@ -21,6 +21,7 @@ import {
   Archive,
   Globe,
   Mic,
+  Activity,
   Calendar as CalendarIcon,
 } from "lucide-react";
 import type { WorkTab } from "../App";
@@ -56,6 +57,8 @@ import TaskPanel from "../components/TaskPanel";
 import EmailPanel from "../components/EmailPanel";
 import SkillsPanel from "../components/SkillsPanel";
 import { AgentRunBoard } from "../components/AgentRunBoard";
+import { AgentTimeline } from "../components/AgentTimeline";
+import { useSessionTimeline } from "../hooks/useSessionTimeline";
 import { SessionStatsBar } from "../components/SessionStatsBar";
 import { DelegateModal } from "../components/DelegateModal";
 import { ResultCompare } from "../components/ResultCompare";
@@ -92,6 +95,7 @@ const WORK_TABS: { id: WorkTab; label: string; icon: React.ReactNode }[] = [
   { id: "browser", label: "Browser", icon: <Globe size={13} /> },
   { id: "meeting", label: "Meeting", icon: <Mic size={13} /> },
   { id: "calendar", label: "Calendar", icon: <CalendarIcon size={13} /> },
+  { id: "timeline", label: "Timeline", icon: <Activity size={13} /> },
 ];
 
 const STARTER_PROMPTS = [
@@ -125,6 +129,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     : (defaultAgent?.name ?? "default");
   const { agentRunBoardRuns, handleAgentRunBoardEvent, clearAgentRunBoard } =
     useAgentRunBoard();
+  const [timelineAgent, setTimelineAgent] = useState("");
 
   const {
     providers,
@@ -202,8 +207,10 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
 
   // What the agent is told about the Work page with each prompt: the open
   // file's kind on the Documents tab, otherwise the tab itself.
-  const promptWorkspaceType = mode === "work" ? (workTab === "documents" ? workspaceType : workTab) : undefined;
-  const promptWorkMode = mode === "work" && workTab === "documents";
+  // The Timeline tab only watches the agents; prompts sent from it behave as from Documents.
+  const docsLikeTab = workTab === "documents" || workTab === "timeline";
+  const promptWorkspaceType = mode === "work" ? (docsLikeTab ? workspaceType : workTab) : undefined;
+  const promptWorkMode = mode === "work" && docsLikeTab;
 
   const docPanelWidthRef = useRef(docPanelWidth);
   docPanelWidthRef.current = docPanelWidth;
@@ -336,6 +343,18 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     getSubAgentContent,
     requestMessageImages,
   } = useChatState(wrappedOnEvent, workspace, onAutoLoadSession);
+
+  // The Timeline tab and the agent cards' step lists both read this; it only
+  // loads while one of them can be seen, and refreshes while agents work.
+  const timelineEnabled = mode === "work" && !!activeSession && (workTab === "timeline" || agentRunBoardRuns.length > 0);
+  const { timeline, error: timelineError } = useSessionTimeline(
+    activeSession?.session_id ?? null,
+    timelineEnabled,
+    sending || agentRunBoardRuns.some((t) => t.status === "running"),
+  );
+  useEffect(() => {
+    setTimelineAgent("");
+  }, [activeSession?.session_id]);
 
   // ── Open Office document from file tree ───────────────────────
   const handleOpenDoc = useCallback(async (path: string, name: string) => {
@@ -1543,6 +1562,15 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
               {/* Content area (left) */}
               <div className="flex-1 min-h-0 overflow-hidden">
                 {workTab === "browser" && <BrowserPanel />}
+                {workTab === "timeline" && (
+                  <AgentTimeline
+                    timeline={timeline}
+                    error={timelineError}
+                    hasSession={!!activeSession}
+                    agentFilter={timelineAgent}
+                    onAgentFilterChange={setTimelineAgent}
+                  />
+                )}
                 {workTab === "calendar" && <CalendarPage />}
                 {/* Stays mounted while the meeting runs, so switching tabs does not end it. */}
                 {meetingActive && activeSession && (
@@ -1939,6 +1967,11 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
         <AgentRunBoard
           tasks={agentRunBoardRuns}
           onTaskClick={(t) => setViewingSubAgent(t.subId)}
+          timeline={timeline}
+          onOpenTimeline={(agent) => {
+            setTimelineAgent(agent);
+            onWorkTabChange("timeline");
+          }}
         />
       )}
 
