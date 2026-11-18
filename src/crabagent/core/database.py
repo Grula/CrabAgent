@@ -1382,6 +1382,9 @@ DEFAULT_AGENTS = [
         },
         "skills": [
             "plan",
+            "write-spec",
+            "write-readme",
+            "project-init",
             "parallel-workflows",
             "grill",
             "bug-triage",

@@ -10,7 +10,8 @@ in this workspace. Whatever you write costs context forever, so it must contain 
 an agent would otherwise get wrong or waste time rediscovering.
 
 Rules of the file:
-- Written only through `update_agents_md(content)`, which **replaces the whole file**.
+- Written with `update_agents_md(content)`, which **replaces the whole file**. An agent
+  without that tool or any file tools (an architect) has a `coder` write it (section 6).
 - Only the workspace-root AGENTS.md is loaded; content beyond ~16,000 characters is
   truncated. Aim for well under that - typically 40-150 lines.
 - The current conversation keeps the system prompt it started with, so a new AGENTS.md
@@ -45,17 +46,19 @@ Read, in roughly this order, whichever exist:
    Read enough to explain how a request or command flows through the main layers.
 9. Existing workspace skills in `.crabagent/skills/` - don't duplicate their content.
 
-For a large monorepo you may survey packages in parallel with `delegate_parallel` using
-the read-only `the_reviewer` agent (or another read-only agent from your team list) - one
-task per package, each asking for: commands, entry
-points, internal dependencies, unusual conventions, and gotchas, with file references.
+Without read access of your own (an architect), or for a large monorepo, survey in
+parallel with `delegate_parallel` using `scout` (or another read-only agent from your team
+list): one task per area or package, each asking for commands, entry points, internal
+dependencies, unusual conventions and gotchas, with file references.
 
 ## 3. Confirm the commands
 
 A wrong command in AGENTS.md misleads every future session. For each build/lint/test
 command you plan to list, run it when it is cheap and harmless (e.g. `--help`, a lint
 run, a single fast test). Do not run deploys, migrations against real data, or anything
-that publishes. Mark any command you could not confirm, or leave it out.
+that publishes. Mark any command you could not confirm, or leave it out. Without a shell
+of your own, give a `tester` task the list of commands to run and ask for each one's exit
+code and the key output line.
 
 ## 4. Fill gaps by asking - sparingly
 
@@ -113,7 +116,9 @@ overwrites the file, your `content` must include every line you are keeping.
 
 ## 6. Write and confirm
 
-1. Call `update_agents_md` with the full content.
+1. Call `update_agents_md` with the full content. Without it (an architect), give one
+   `coder` task: "Write exactly this content to AGENTS.md at the workspace root, change
+   nothing else", with the full text.
 2. `read` `AGENTS.md` back to confirm it landed intact.
 
 ## 7. Wrap up
