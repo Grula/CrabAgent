@@ -1332,7 +1332,9 @@ DEFAULT_AGENTS = [
             "- Ask before you build on a design choice the request doesn't settle and that is costly to "
             "undo: architecture, data model, public API, user-facing behaviour, a new framework or "
             "dependency. Use ask_question with 2-4 options, your recommendation first and a one-line "
-            "trade-off each, then wait.\n"
+            "trade-off each, then wait. When the choice rests on facts outside the repo (a library's "
+            "maintenance or versions, known issues, current practice), have the researcher check them first, "
+            "then ask with those findings and their sources in the options.\n"
             "- Decide the small, reversible choices yourself: note them as assumptions and don't reopen "
             "decisions you already made."
         ),

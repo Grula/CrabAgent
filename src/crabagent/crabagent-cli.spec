@@ -172,8 +172,6 @@ HIDDEN_IMPORTS = [
     "lxml",
     "lxml.etree",
     "ddgs",
-    "passlib",
-    "passlib.hash",
     "bcrypt",
     "jose",
     "jose.jwt",
