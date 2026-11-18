@@ -57,9 +57,9 @@ Do the applicable steps in order and write no plan prose until they are done.
      Don't invent versions, limits, or performance numbers.
    - Skip external research when the workspace already settles the question.
 5. **Parallel research (optional).** When several independent questions need digging, run
-   them in one `delegate_parallel`: `researcher` for web sources; code questions you can
-   answer with `read`/`grep` yourself, or give to `the_reviewer` (read-only) when they
-   need commands. Before drafting, collect every result. Record failed research as an
+   them in one `delegate_parallel`: `researcher` for web sources, `scout` for code
+   questions wider than a quick `read`/`grep` of your own (one scout per area). Before
+   drafting, collect every result. Record failed research as an
    evidence gap.
 6. **Synthesize.** For every external choice that will appear in the plan (recommended,
    alternative, or rejected), you should have an inspected source URL. Drop candidates you
@@ -109,7 +109,7 @@ Don't invent issues, PRs, or file paths to fill a section, and don't add empty s
 When the work will be carried out by the team, name the agent on each step and make
 `depends_on` explicit, using the shapes in `parallel-workflows`: behaviour changes go
 `tester` -> `coder` -> `the_reviewer`, mechanical fixes go to `coder`
-alone, web research goes to `researcher`. Use the agent names from your Agent Team
+alone, web research goes to `researcher`, code questions go to `scout`. Use the agent names from your Agent Team
 list if they differ.
 
 ## Delivering the plan

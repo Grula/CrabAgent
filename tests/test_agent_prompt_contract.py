@@ -215,7 +215,19 @@ class TestTeamPromptAgents:
 
         assert "-> `researcher`" in prompt
         assert "`coder`" not in prompt and "`writer`" not in prompt and "`analyst`" not in prompt
+        assert "`scout`" not in prompt
         assert "pick the agent whose role and goal above fit it best" in prompt
+
+    @pytest.mark.asyncio
+    async def test_code_questions_are_routed_to_the_scout(self, monkeypatch: pytest.MonkeyPatch):
+        async def fake_registry():
+            return [_agent("scout"), _agent("coder")]
+
+        monkeypatch.setattr(agents_module, "load_agent_registry", fake_registry)
+
+        prompt = await agents_module.build_team_prompt()
+
+        assert "how it works in the code -> `scout`" in prompt
 
     @pytest.mark.asyncio
     async def test_spawning_an_internal_profile_is_refused(self):

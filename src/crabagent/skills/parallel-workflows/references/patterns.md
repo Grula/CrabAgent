@@ -65,6 +65,6 @@ Fits large or risky changes.
 | A pipeline step that needs long upstream output | It sees 1500 characters of each. Merge yourself, or pass files |
 | Raw data in `shared_put` | Bloats every later sub-agent's prompt |
 | Two parallel steps editing one file | Conflicting writes |
-| Web work given to `coder`, or edits given to `researcher` or `the_reviewer` | The step fails on missing permissions |
+| Web work given to `coder`, or edits given to `researcher`, `scout` or `the_reviewer` | The step fails on missing permissions |
 | A checker asked "is it good?" | Rubber stamp. Ask for defects instead |
 | Unbounded retries | Burned budget. Retry once, then report the gap |

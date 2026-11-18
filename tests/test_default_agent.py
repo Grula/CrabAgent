@@ -73,11 +73,14 @@ class TestRemovedBuiltins:
         await db._ensure_default_agents()
         async with agents_db() as session:
             rows = {r.name: r for r in (await session.execute(select(db.AgentProfile))).scalars()}
-        assert set(rows) == {"architect", "coder", "tester", "the_reviewer", "researcher"}
+        assert set(rows) == {"architect", "coder", "tester", "the_reviewer", "researcher", "scout"}
         assert "plan" in json.loads(rows["architect"].skills)
         assert "docx" not in json.loads(rows["architect"].skills)
         assert json.loads(rows["the_reviewer"].skills) == [
-            "strict-review", "code-review", "security-review", "git-workflow", "docs-lookup", "run-app"]
+            "strict-review", "code-review", "security-review", "dead-code-audit", "git-workflow", "docs-lookup",
+            "run-app"]
+        # An empty list means no skills at all (None would mean every skill).
+        assert json.loads(rows["scout"].skills) == []
 
     async def test_seeding_never_changes_an_existing_agents_skills(self, agents_db):
         custom = _profile("architect", builtin=True)
@@ -138,10 +141,11 @@ class TestDefaultTeamCapabilities:
         agent = next(a for a in db.DEFAULT_AGENTS if a["name"] == name)
         return agents.agent_capabilities(agent["tool_permissions"])
 
-    def test_no_default_agent_handles_email_calendar_or_schedules(self):
+    def test_no_default_agent_handles_organiser_or_extra_tools(self):
+        unneeded = {"email", "calendar", "scheduled tasks", "images", "computer control", "building tools"}
         for agent in db.DEFAULT_AGENTS:
             caps = self._caps(agent["name"])
-            assert not {"email", "calendar", "scheduled tasks"} & set(caps), (agent["name"], caps)
+            assert not unneeded & set(caps), (agent["name"], caps)
 
     def test_only_implementer_and_tester_use_the_shared_browser(self):
         users = {a["name"] for a in db.DEFAULT_AGENTS if "shared browser" in self._caps(a["name"])}
@@ -156,7 +160,7 @@ class TestDefaultTeamCapabilities:
         assert not {"edit files", "run commands", "web search"} & set(self._caps("architect"))
 
     def test_working_agents_lack_organiser_admin_and_rollback_tools(self):
-        for name in ("coder", "tester", "the_reviewer", "researcher"):
+        for name in ("coder", "tester", "the_reviewer", "researcher", "scout"):
             perms = next(a for a in db.DEFAULT_AGENTS if a["name"] == name)["tool_permissions"]
             for tool in ("molt_rollback", "memory_forget", "task_add", "todo_add", "conversation_search", "office_edit"):
                 assert perms.get(tool) == "deny", (name, tool)
@@ -165,3 +169,13 @@ class TestDefaultTeamCapabilities:
         caps = self._caps("researcher")
         assert {"web search", "browser", "read files"} <= set(caps)
         assert not {"edit files", "run commands", "git diff"} & set(caps)
+
+    def test_scout_reads_code_and_changes_nothing(self):
+        caps = self._caps("scout")
+        assert {"read files", "run commands", "git diff"} <= set(caps)
+        assert not {"edit files", "web search", "browser", "shared browser"} & set(caps)
+
+    def test_architect_and_coder_are_told_to_use_the_scout(self):
+        goals = {a["name"]: a["goal"] for a in db.DEFAULT_AGENTS}
+        assert "scout" in goals["architect"]
+        assert "request_help" in goals["coder"] and "scout" in goals["coder"]

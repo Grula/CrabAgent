@@ -139,6 +139,7 @@ _TEAM_PROMPT_SHARED_LINES: tuple[str, ...] = (
 # Routing hints for the built-in agents. A hint is shown only while its agent is
 # enabled; otherwise the main agent would be sent to an agent that does not exist.
 _TEAM_PROMPT_AGENT_ROUTES: tuple[tuple[str, str], ...] = (
+    ('scout', 'Finding where something is or how it works in the code -> `scout`'),
     ('coder', 'Writing, fixing or refactoring code -> `coder`'),
     ('tester', 'Writing tests, reproducing a bug, verifying a change end to end -> `tester`'),
     ('the_reviewer', 'Reviewing a finished change before it is committed -> `the_reviewer`'),

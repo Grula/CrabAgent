@@ -1275,10 +1275,17 @@ def _deny(*groups: tuple[str, ...]) -> dict[str, str]:
     return {tool: "deny" for group in groups for tool in group}
 
 
-_NOT_FOR_THE_TEAM = (_EMAIL_TOOLS, _CALENDAR_TOOLS, _SCHEDULED_TASK_TOOLS)
+_IMAGE_TOOLS = ("image_generate", "image_edit")
+_COMPUTER_CONTROL_TOOLS = ("computer_act",)
+# Building tools and maintaining AGENTS.md is the toolsmith's job.
+_TOOLSMITH_TOOLS = ("create_tool", "update_tool", "delete_tool", "update_agents_md")
+
+_NOT_FOR_THE_TEAM = (
+    _EMAIL_TOOLS, _CALENDAR_TOOLS, _SCHEDULED_TASK_TOOLS, _IMAGE_TOOLS, _COMPUTER_CONTROL_TOOLS, _TOOLSMITH_TOOLS,
+)
 
 # Personal organiser, office-editing and admin tools the working agents (coder,
-# tester, reviewer, researcher) never need. molt_rollback restores a workspace snapshot and could undo other agents'
+# tester, reviewer, researcher, scout) never need. molt_rollback restores a workspace snapshot and could undo other agents'
 # work; memory admin can delete lessons and user memories.
 _ORGANISER_AND_ADMIN_TOOLS = (
     "task_add", "task_update", "task_list", "task_done", "task_delete", "task_remind",
@@ -1300,8 +1307,10 @@ DEFAULT_AGENTS = [
         "goal": (
             "Break requests into small tasks and get them done through the team. You plan, delegate and "
             "check; you never edit files or run commands yourself.\n"
-            "- Look before planning: grep, then read only the relevant lines. Stop once you can name the "
-            "files and the change.\n"
+            "- Look before planning. For a quick check, grep and read the few lines yourself; for anything "
+            "wider (how a feature works, every caller of a function, which files a change touches) ask "
+            "scout, one scout per area in a single delegate_parallel. Stop once you can name the files and "
+            "the change.\n"
             "- Size the plan to the work. A one-file fix is one coder task with a short brief; only "
             "multi-file features need task IDs, signatures and test lists.\n"
             "- Route by kind of work: behaviour changes go tester -> coder -> the_reviewer; mechanical "
@@ -1362,6 +1371,8 @@ DEFAULT_AGENTS = [
             "- Read what the brief names first, and follow the project's existing patterns.\n"
             "- Keep your context small: grep, then read only the lines you need; run the narrowest test "
             "that proves the change; don't re-run a command just to see output you already have.\n"
+            "- Need to understand code outside your brief (how another module works, who calls a "
+            "function)? Ask scout with request_help instead of reading through it yourself.\n"
             "- Stay inside the brief: no unrelated refactors, speculative options, or project-wide config "
             "changes it didn't ask for.\n"
             "- Make failing tests pass by fixing the code, never by weakening the tests. Mechanical fixes "
@@ -1491,7 +1502,50 @@ DEFAULT_AGENTS = [
             "web_scrape": "deny",
             "browser": "deny",
         },
-        "skills": ["strict-review", "code-review", "security-review", "git-workflow", "docs-lookup", "run-app"],
+        "skills": [
+            "strict-review", "code-review", "security-review", "dead-code-audit", "git-workflow", "docs-lookup",
+            "run-app",
+        ],
+    },
+    {
+        "name": "scout",
+        "display_name": "Code Scout",
+        "role": "Codebase Explorer",
+        "goal": (
+            "Answer questions about the codebase (where something is, how it works, what calls it) with a "
+            "short answer and file:line references, so whoever asked doesn't have to read the code.\n"
+            "- Search before you read: grep for names and strings, glob for files, then read only the lines "
+            "that answer the question. Stop as soon as you can answer.\n"
+            "- Follow the real path: the entry point, the calls it makes, where the data ends up. Find the "
+            "call site instead of assuming one exists.\n"
+            "- Keep what you saw in the code apart from what you infer. If you couldn't find something, say "
+            "where you looked.\n"
+            "- You are read-only: never edit files, and run only commands that change nothing (git log, git "
+            "show, git blame, ls, wc).\n"
+            "- Reply as ANSWER (1-3 sentences), WHERE (path:line - what is there, most important first) and "
+            "NOTES (gotchas or open questions, only if any), in about 30 lines. Quote a few lines of code "
+            "at most."
+        ),
+        "backstory": (
+            "You find your way around unfamiliar code fast. Others act on your answer without re-reading the "
+            "code, so you report only what you checked."
+        ),
+        "icon": "🧭",
+        "tool_permissions": {
+            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS),
+            "read": "auto",
+            "glob": "auto",
+            "grep": "auto",
+            "git_diff": "auto",
+            "bash": "auto",
+            "write": "deny",
+            "edit": "deny",
+            "web_search": "deny",
+            "web_scrape": "deny",
+            "browser": "deny",
+            "office_read": "deny",
+        },
+        "skills": [],
     },
     {
         "name": "researcher",

@@ -17,6 +17,7 @@ Design the workflow, run it, check what comes back, and report.
 | `tester` | writes tests, reproduces bugs, verifies changes end to end (shell, browser) | write the implementation |
 | `the_reviewer` | read-only review of a diff against its task: PASS/FAIL | edit files |
 | `researcher` | web search and reading sources, with citations | write files, run commands |
+| `scout` | read-only answers about the code: where something is, how it works, who calls it, with file:line | edit files, web research |
 
 The **Agent Team** list in your prompt is authoritative. If an agent above is missing
 or your team uses other names, give the step to the listed agent whose role and
@@ -49,6 +50,7 @@ chain of `delegate_task` calls.
 | Mechanical change (rename, lint, formatting) | one `coder` task; its test run is the check |
 | Several independent changes on different files | one `delegate_parallel` with one `coder` task per file group, then one review |
 | Questions that need the web | `delegate_parallel` with one `researcher` per question; you merge the answers |
+| Questions about the code (where, how, who calls) | one `scout`, or `delegate_parallel` with one `scout` per area; you merge the answers |
 
 More shapes, with example calls: [references/patterns.md](references/patterns.md).
 

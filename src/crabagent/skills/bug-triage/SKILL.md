@@ -39,7 +39,7 @@ capture the failing output.
 
 ## 3. Find the cause
 Read the code along the failing path yourself (`grep`, `read`), or send a
-read-only investigation to `the_reviewer`.
+read-only investigation to `scout`.
 - Test one hypothesis at a time, each with a probe that could prove it wrong.
 - You have the cause when you can state it in one sentence, point at the line,
   and it explains **every** symptom in the report. A cause that explains only part
