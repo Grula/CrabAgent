@@ -7,6 +7,7 @@ frontend:
 
 static: frontend
 	@mkdir -p src/crabagent/static
+	rm -rf src/crabagent/static/assets
 	cp -R frontend/dist/index.html frontend/dist/collab-browser.html frontend/dist/assets src/crabagent/static/
 
 install: static

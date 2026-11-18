@@ -75,6 +75,10 @@ _AGENT_SYSTEM_HELP_INSTRUCTION = (
     "ask a teammate with `request_help(agent_name, question)` instead of guessing."
 )
 _AGENT_SYSTEM_HELPERS = "Teammates who can do what you can't: {helpers}."
+# A delegated agent stops after this many steps (model calls). The architect's
+# prompt sizes tasks for it, so change both together.
+SUB_AGENT_MAX_STEPS = 80
+
 _AGENT_SWITCH_HEADER = '[Agent Switch] You are now acting as {icon} **{display_name}**.'
 _AGENT_SWITCH_ROLE = 'Role: {role}'
 _AGENT_SWITCH_GOAL = 'Goal: {goal}'
@@ -1043,7 +1047,7 @@ async def spawn_sub_agent(
     sub_context = AgentContext(
         workspace=shared_workspace,
         tool_registry=sub_registry,
-        max_iterations=min(parent_context.max_iterations, 50),
+        max_iterations=min(parent_context.max_iterations, SUB_AGENT_MAX_STEPS),
         model=_sub_model,
         provider_name=_sub_provider,
         current_agent=agent_name,

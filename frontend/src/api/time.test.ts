@@ -6,7 +6,6 @@
 import { describe, expect, it } from "vitest";
 import {
   formatDate,
-  formatLocalDateTime,
   formatTime,
   parseDateTime,
   toLocalDateStr,
@@ -73,17 +72,11 @@ describe("local rendering", () => {
 
   it("keeps a date-only value on its own day", () => {
     expect(toLocalDateStr("2026-11-18")).toBe("2026-11-18");
-    // No invented "00:00": a date-only field stays date-only.
-    expect(formatLocalDateTime("2026-11-18")).toBe("2026-11-18");
-    expect(formatLocalDateTime("2026-11-18T17:30:00Z")).toBe(
-      formatLocalDateTime("2026-11-18T17:30:00"),
-    );
   });
 
   it("returns empty strings instead of Invalid Date", () => {
     expect(formatTime(null)).toBe("");
     expect(formatDate(undefined)).toBe("");
-    expect(formatLocalDateTime("garbage")).toBe("");
     expect(toLocalDateStr("")).toBe("");
   });
 });

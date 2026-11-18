@@ -51,17 +51,6 @@ export function toLocalDateStr(isoStr: string | null | undefined): string {
   return d ? localDatePart(d) : "";
 }
 
-/**
- * Local date and time ("YYYY-MM-DD HH:MM") of a wire value; "" when unusable.
- * Date-only values stay date-only — they carry no time of day.
- */
-export function formatLocalDateTime(isoStr: string | null | undefined): string {
-  const d = parseDateTime(isoStr);
-  if (!d) return "";
-  if (DATE_ONLY_RE.test((isoStr ?? "").trim())) return localDatePart(d);
-  return `${localDatePart(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 export function formatTime(isoStr: string | null | undefined): string {
   const d = parseDateTime(isoStr);
   return d ? d.toLocaleString() : "";

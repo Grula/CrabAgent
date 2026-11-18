@@ -200,3 +200,9 @@ def test_architect_briefs_the_what_and_leaves_the_how_to_the_coder():
     assert "don't add a separate test step after the review" in architect["goal"]
     assert "the coder steps depend on the tester step" in architect["goal"]
     assert "have the researcher check them first" in architect["goal"]
+    assert "at most about 8 files" in architect["goal"]
+
+
+def test_architect_prompt_matches_the_sub_agent_step_cap():
+    architect = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")
+    assert f"stops after about {agents.SUB_AGENT_MAX_STEPS} steps" in architect["goal"]
