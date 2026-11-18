@@ -16,6 +16,7 @@ from crabagent.core.goals.service import (
     goal_to_dict,
     update_goal,
 )
+from crabagent.core.timeutil import iso_utc
 from crabagent.serve.deps import get_current_user, get_owned_conversation
 
 router = APIRouter(prefix="/sessions/{session_id}/goal", tags=["goals"])
@@ -160,11 +161,11 @@ async def get_goal_history(session_id: str, user: User = Depends(get_current_use
     return {
         "goal": goal_to_dict(goal),
         "events": [
-            {"type": e.event_type, "detail": e.detail, "data": e.data, "created_at": e.created_at.isoformat()}
+            {"type": e.event_type, "detail": e.detail, "data": e.data, "created_at": iso_utc(e.created_at)}
             for e in events
         ],
         "checkpoints": [
-            {"id": c.id, "summary": c.summary, "next_step": c.next_step, "created_at": c.created_at.isoformat()}
+            {"id": c.id, "summary": c.summary, "next_step": c.next_step, "created_at": iso_utc(c.created_at)}
             for c in checkpoints
         ],
     }

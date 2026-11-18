@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api/client";
 import { getAgentMonitor, AgentMonitorInfo } from "../../api/monitor";
 import { listTasks, Task } from "../../api/tasks";
+import { parseDateTime, toLocalDateStr } from "../../api/time";
 import { displayTitle } from "../../lib/userMessageText";
 
 export interface TaskRequestItem {
@@ -59,8 +60,9 @@ function elapsedLabel(startedAt: number): string {
 }
 
 function waitedLabel(iso: string | null): string {
-  if (!iso) return "";
-  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  const at = parseDateTime(iso);
+  if (!at) return "";
+  const s = Math.max(0, Math.floor((Date.now() - at.getTime()) / 1000));
   if (s < 60) return `${s}s`;
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}`;
@@ -248,7 +250,7 @@ export function MobileTaskFlow({ focusKey, onOpenSession }: Props) {
                 <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-zinc-500/15 text-zinc-400">
                   {task.status}
                 </span>
-                {task.deadline && <span className="text-[11px] text-zinc-500">📅 {task.deadline.slice(0, 10)}</span>}
+                {task.deadline && <span className="text-[11px] text-zinc-500">📅 {toLocalDateStr(task.deadline)}</span>}
               </div>
               <h3 className="text-[14px] font-semibold leading-snug">{task.title}</h3>
               {task.result_summary && (

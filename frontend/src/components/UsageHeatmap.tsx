@@ -3,6 +3,7 @@ import { Area, AreaChart, Tooltip, XAxis, YAxis } from "recharts";
 import { CalendarDays, RefreshCw } from "lucide-react";
 
 import { getOverview } from "../api/tokenUsage";
+import { parseDateTime } from "../api/time";
 import { MeasuredChartContainer } from "./charts/MeasuredChartContainer";
 import { cn } from "../lib/cn";
 
@@ -36,6 +37,14 @@ function formatTokens(value: number): string {
 
 function toDateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Local Date for a date-only "YYYY-MM-DD" key. `new Date(key)` would mean UTC
+ * midnight and would label the previous day in negative-offset zones.
+ */
+function localDayOf(key: string): Date {
+  return parseDateTime(key) ?? new Date(NaN);
 }
 
 interface GridCell {
@@ -162,7 +171,7 @@ export default function UsageHeatmap({ workspace }: { workspace: string }) {
           tokens: week.reduce((sum, c) => sum + Math.max(0, c.tokens), 0),
           label:
             first && last
-              ? `${dayLabel.format(new Date(first.date))} - ${dayLabel.format(new Date(last.date))}`
+              ? `${dayLabel.format(localDayOf(first.date))} - ${dayLabel.format(localDayOf(last.date))}`
               : "",
         };
       }),
@@ -271,7 +280,7 @@ export default function UsageHeatmap({ workspace }: { workspace: string }) {
                       onMouseEnter={(e) =>
                         cell.tokens >= 0 &&
                         setHover({
-                          label: `${dayLabel.format(new Date(cell.date))} · ${formatTokens(cell.tokens)} tokens`,
+                          label: `${dayLabel.format(localDayOf(cell.date))} · ${formatTokens(cell.tokens)} tokens`,
                           x: e.clientX,
                           y: e.clientY,
                         })
@@ -342,7 +351,7 @@ function weeklyMonthMarks(
   weekly.forEach((week, index) => {
     // startDate is a real YYYY-MM-DD — never parse the formatted label back
     if (!week.startDate) return;
-    const month = monthLabel.format(new Date(week.startDate));
+    const month = monthLabel.format(localDayOf(week.startDate));
     if (month !== last) {
       marks.push({ weekIndex: index, label: month });
       last = month;

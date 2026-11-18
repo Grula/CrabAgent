@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import datetime
 from types import SimpleNamespace
 
 import pytest
 
 from crabagent.core.agent.tools.registry import ToolRegistry
 from crabagent.core.task import tools as task_tools
+from crabagent.core.timeutil import from_local, iso_utc
 
 
 def _get_tool(registry: ToolRegistry, name: str):
@@ -45,9 +47,72 @@ async def test_task_add_parses_datetime_deadline(monkeypatch: pytest.MonkeyPatch
         context=context,
     )
 
-    assert captured["deadline"].hour == 10
+    # Storage is naive UTC: the local wall clock 10:30 is converted on write.
+    assert captured["deadline"] == from_local(datetime.datetime(2026, 7, 2, 10, 30))
+    assert captured["deadline"].tzinfo is None
+    # ...and the text shown back to the model/user keeps the local 10:30.
+    assert "📅 2026-07-02 10:30" in result
     assert "id=12" in result
     assert "🏷️ high" in result
+
+
+@pytest.mark.asyncio
+async def test_task_add_accepts_iso_t_deadline(monkeypatch: pytest.MonkeyPatch):
+    """The API path and task_update take the ISO T form; task_add must too."""
+    registry = ToolRegistry()
+    task_tools.register_task_tools(registry)
+    handler = _get_tool(registry, "task_add")
+    captured = {}
+
+    async def fake_add(db, **kwargs):
+        captured.update(kwargs)
+        return {"id": 21, "title": kwargs["title"]}
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("crabagent.core.task.store.add_task", fake_add)
+    monkeypatch.setattr("crabagent.core.database.async_session_factory", lambda: FakeSession())
+
+    result = await handler(title="Ship report", deadline="2026-11-20T14:30")
+
+    # Stored as naive UTC, exactly like the space-separated form.
+    assert captured["deadline"] == from_local(datetime.datetime(2026, 11, 20, 14, 30))
+    assert captured["deadline"].tzinfo is None
+    # The echo stays the local wall clock the caller supplied.
+    assert "📅 2026-11-20T14:30" in result
+
+
+@pytest.mark.asyncio
+async def test_task_add_does_not_echo_unparsed_deadline(monkeypatch: pytest.MonkeyPatch):
+    registry = ToolRegistry()
+    task_tools.register_task_tools(registry)
+    handler = _get_tool(registry, "task_add")
+    captured = {}
+
+    async def fake_add(db, **kwargs):
+        captured.update(kwargs)
+        return {"id": 22, "title": kwargs["title"]}
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("crabagent.core.task.store.add_task", fake_add)
+    monkeypatch.setattr("crabagent.core.database.async_session_factory", lambda: FakeSession())
+
+    result = await handler(title="Ship report", deadline="next friday")
+
+    assert captured["deadline"] is None
+    assert "📅" not in result
+    assert "next friday" not in result
 
 
 @pytest.mark.asyncio
@@ -153,6 +218,50 @@ async def test_task_list_formats_empty_and_populated_results(monkeypatch: pytest
 
 
 @pytest.mark.asyncio
+async def test_task_list_renders_deadline_in_local_time(monkeypatch: pytest.MonkeyPatch):
+    """A timed deadline is stored as naive UTC but listed on the local day."""
+    registry = ToolRegistry()
+    task_tools.register_task_tools(registry)
+    handler = _get_tool(registry, "task_list")
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    # 23:30 on the user's local 2026-07-02 is already 2026-07-03 in UTC on hosts
+    # west of Greenwich, so a raw UTC slice would print the wrong day.
+    stored = from_local(datetime.datetime(2026, 7, 2, 23, 30))
+    monkeypatch.setattr("crabagent.core.database.async_session_factory", lambda: FakeSession())
+    monkeypatch.setattr(
+        "crabagent.core.task.store.list_tasks",
+        _async_return(
+            [
+                {
+                    "id": 2,
+                    "status": "pending",
+                    "priority": "medium",
+                    "title": "Ship release",
+                    "deadline": iso_utc(stored),
+                    "project": "",
+                    "assignee": "",
+                    "description": "",
+                }
+            ]
+        ),
+    )
+
+    listed = await handler(status="pending")
+
+    assert "📅2026-07-02" in listed
+    utc_day = iso_utc(stored)[:10]
+    if utc_day != "2026-07-02":  # hosts west of UTC: the raw UTC day must not leak
+        assert utc_day not in listed, "the raw UTC day leaked into the local task listing"
+
+
+@pytest.mark.asyncio
 async def test_task_done_and_delete_report_missing(monkeypatch: pytest.MonkeyPatch):
     registry = ToolRegistry()
     task_tools.register_task_tools(registry)
@@ -197,7 +306,9 @@ async def test_task_update_reports_changed_fields(monkeypatch: pytest.MonkeyPatc
 
     result = await handler(id=1, deadline="2026-07-02T10:30", status="in_progress", priority="low")
 
-    assert captured["deadline"].hour == 10
+    # The store takes naive UTC; the tool keeps the local render in its text.
+    assert captured["deadline"] == from_local(datetime.datetime(2026, 7, 2, 10, 30))
+    assert captured["deadline"].tzinfo is None
     assert "deadline, status, priority" in result
 
 

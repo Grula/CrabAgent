@@ -7,6 +7,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import Task
 from crabagent.core.task.status import OPEN_TASK_STATUSES, TaskStatus, validate_task_status
+from crabagent.core.timeutil import iso_utc, to_local, utcnow
+
+
+def _deadline_to_wire(value: datetime.datetime | None) -> str | None:
+    """Render a stored UTC deadline; a date-only one stays a bare local date.
+
+    A date-only deadline is stored as the UTC instant of local midnight, so the
+    date-only form is recovered by looking at the local rendering (the same rule
+    ``core/calendar/store.py`` uses for all-day task entries).
+    """
+    if value is None:
+        return None
+    local = to_local(value)
+    if (
+        local.hour == 0
+        and local.minute == 0
+        and local.second == 0
+        and local.microsecond == 0
+    ):
+        return local.date().isoformat()
+    return iso_utc(value)
 
 
 def _task_to_dict(t: Task) -> dict:
@@ -16,7 +37,7 @@ def _task_to_dict(t: Task) -> dict:
         "title": t.title,
         "description": t.description,
         "assignee": t.assignee,
-        "deadline": t.deadline.isoformat() if t.deadline else None,
+        "deadline": _deadline_to_wire(t.deadline),
         "source": t.source,
         "source_ref": t.source_ref,
         "source_session": t.source_session,
@@ -32,11 +53,11 @@ def _task_to_dict(t: Task) -> dict:
         "verification_status": t.verification_status,
         "active_run_id": t.active_run_id,
         "last_run_id": t.last_run_id,
-        "started_at": t.started_at.isoformat() if t.started_at else None,
-        "completed_at": t.completed_at.isoformat() if t.completed_at else None,
-        "result_viewed_at": t.result_viewed_at.isoformat() if t.result_viewed_at else None,
-        "created_at": t.created_at.isoformat() if t.created_at else None,
-        "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+        "started_at": iso_utc(t.started_at),
+        "completed_at": iso_utc(t.completed_at),
+        "result_viewed_at": iso_utc(t.result_viewed_at),
+        "created_at": iso_utc(t.created_at),
+        "updated_at": iso_utc(t.updated_at),
     }
 
 
@@ -117,7 +138,7 @@ async def list_tasks(
     elif status_filter == "done":
         stmt = stmt.where(Task.status == TaskStatus.DONE.value)
     elif status_filter == "overdue":
-        now = datetime.datetime.now()
+        now = utcnow()
         stmt = stmt.where(
             Task.status.in_(OPEN_TASK_STATUSES),
             Task.deadline < now,
@@ -136,7 +157,7 @@ async def list_tasks_due_soon(
     within_hours: int = 24,
 ) -> list[dict]:
     """List tasks with deadlines within the next N hours."""
-    now = datetime.datetime.now()
+    now = utcnow()
     deadline_end = now + datetime.timedelta(hours=within_hours)
     stmt = (
         select(Task)
@@ -160,7 +181,7 @@ async def get_task_summary(
     """Get summary counts for tasks."""
     from sqlalchemy import func
 
-    now = datetime.datetime.now()
+    now = utcnow()
     total = await db.execute(select(func.count(Task.id)).where(Task.user_id == user_id))
     pending = await db.execute(
         select(func.count(Task.id)).where(
@@ -227,7 +248,7 @@ async def update_task(
         updates["status"] = validate_task_status(updates["status"])
     if not updates:
         return await get_task(db, task_id, user_id)
-    now = datetime.datetime.now()
+    now = utcnow()
     updates["updated_at"] = now
     # Maintain lifecycle timestamps alongside status changes
     if updates.get("status") in (TaskStatus.DONE.value, TaskStatus.PARTIAL.value):

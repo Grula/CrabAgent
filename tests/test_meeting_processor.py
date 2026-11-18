@@ -19,6 +19,7 @@ import pytest
 import crabagent.core.database as db_module
 import crabagent.core.task.store as task_store
 from crabagent.core.meeting import processor
+from crabagent.core.timeutil import from_local, iso_utc
 
 
 class FakeSession:
@@ -144,7 +145,9 @@ async def test_action_item_creates_task_with_metadata(monkeypatch: pytest.Monkey
     assert isinstance(created["deadline"], datetime.datetime), (
         f"deadline must be parsed to a datetime, got {created['deadline']!r}"
     )
-    assert created["deadline"] == datetime.datetime(2026, 11, 20)
+    # Storage is naive UTC: the extracted local date 2026-11-20 is converted on write.
+    assert created["deadline"] == from_local(datetime.datetime(2026, 11, 20))
+    assert created["deadline"].tzinfo is None
 
     assert len(result["created_tasks"]) == 1
     assert result["created_tasks"][0]["title"] == "T"
@@ -225,7 +228,8 @@ def test_format_meeting_result_with_created_tasks():
                 "title": "Ship it",
                 "assignee": "alice",
                 "priority": "high",
-                "deadline": "2026-11-20T00:00:00",  # add_task returns ISO text
+                # Stored UTC instant of the user's local 23:30 on 2026-11-19.
+                "deadline": iso_utc(from_local(datetime.datetime(2026, 11, 19, 23, 30))),
             }
         ],
     }
@@ -236,6 +240,8 @@ def test_format_meeting_result_with_created_tasks():
     assert "Weekly sync" in text
     assert "Budget approved." in text
     assert "1 action items created:" in text
+    # The printed deadline is the user's local day, not the UTC one.
+    assert "📅 2026-11-19" in text
     assert "No action items found in the notes." not in text
 
 

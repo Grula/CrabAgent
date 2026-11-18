@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import datetime
 import logging
+
+from crabagent.core.timeutil import to_local, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -468,7 +469,7 @@ def register_mail_tools(registry):
             due_soon = await list_tasks_due_soon(db, user_id, within_hours=24)
             done = await _list(db, user_id, "done")
 
-        today = datetime.datetime.now().strftime("%Y-%m-%d %A")
+        today = to_local(utcnow()).strftime("%Y-%m-%d %A")
         lines = [
             f"📋 **Daily Digest — {today}**",
             "",

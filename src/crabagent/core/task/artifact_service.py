@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import AgentRun, TaskArtifact
+from crabagent.core.timeutil import iso_utc
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,8 @@ def _artifact_to_dict(a: TaskArtifact) -> dict:
         "external_id": a.external_id,
         "version": a.version,
         "metadata": a.metadata_,
-        "created_at": a.created_at.isoformat() if a.created_at else None,
-        "updated_at": a.updated_at.isoformat() if a.updated_at else None,
+        "created_at": iso_utc(a.created_at),
+        "updated_at": iso_utc(a.updated_at),
     }
 
 

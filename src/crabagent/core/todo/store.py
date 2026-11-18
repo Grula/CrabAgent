@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import Todo
+from crabagent.core.timeutil import iso_utc
 
 
 async def add_todo(db: AsyncSession, session_id: str, task: str) -> dict:
@@ -49,5 +50,5 @@ def _todo_to_dict(t: Todo) -> dict:
         "id": t.id,
         "task": t.task,
         "done": t.done,
-        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "created_at": iso_utc(t.created_at),
     }

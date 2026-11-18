@@ -42,6 +42,7 @@ from crabagent import __version__
 from crabagent.cli.tui import SLASH_COMMANDS, TuiSession
 from crabagent.core.agent.loop import run_agent
 from crabagent.core.event import AgentEvent, EventType
+from crabagent.core.timeutil import to_local
 
 _MAX_SEGMENTS = 2000
 
@@ -1577,7 +1578,7 @@ class DualPanelTui(TuiSession):
         items = []
         for c in convs[:20]:
             title = c.title or "(untitled)"
-            ts = c.updated_at.strftime("%m-%d %H:%M") if c.updated_at else ""
+            ts = to_local(c.updated_at).strftime("%m-%d %H:%M") if c.updated_at else ""
             cur = " ←" if c.id == self._conversation_id else ""
             display = f"{c.session_id[:8]} {title} [{ts}]{cur}"
             items.append((c.session_id, display))

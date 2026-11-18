@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 import re
 from typing import Any
 
@@ -8,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import Goal, GoalCheckpoint, GoalEvent
+from crabagent.core.timeutil import iso_utc, utcnow
 
 OPEN_STATUSES = {"active", "paused", "budget_limited", "unmet"}
 CLOSED_STATUSES = {"complete", "cleared"}
@@ -42,9 +42,9 @@ def goal_to_dict(goal: Goal) -> dict[str, Any]:
         "latest_checkpoint": goal.latest_checkpoint or "",
         "next_step": goal.next_step or "",
         "stop_reason": goal.stop_reason or "",
-        "created_at": goal.created_at.isoformat() if goal.created_at else None,
-        "updated_at": goal.updated_at.isoformat() if goal.updated_at else None,
-        "closed_at": goal.closed_at.isoformat() if goal.closed_at else None,
+        "created_at": iso_utc(goal.created_at),
+        "updated_at": iso_utc(goal.updated_at),
+        "closed_at": iso_utc(goal.closed_at),
     }
 
 
@@ -123,7 +123,7 @@ async def checkpoint_goal(db: AsyncSession, goal: Goal, summary: str, next_step:
     goal.latest_checkpoint = summary
     if next_step.strip():
         goal.next_step = next_step.strip()
-    goal.updated_at = datetime.now()
+    goal.updated_at = utcnow()
     await record_event(db, goal, "checkpoint", summary, {"next_step": checkpoint.next_step})
     return checkpoint
 
@@ -132,7 +132,7 @@ async def account_goal_usage(db: AsyncSession, goal: Goal, tokens_used: int) -> 
     """Record one execution turn and return whether the goal reached a safety limit."""
     goal.tokens_used += max(0, tokens_used)
     goal.auto_turns += 1
-    goal.updated_at = datetime.now()
+    goal.updated_at = utcnow()
     limited = (goal.token_budget is not None and goal.tokens_used >= goal.token_budget) or (
         goal.max_auto_turns is not None and goal.auto_turns >= goal.max_auto_turns
     )
@@ -171,7 +171,7 @@ async def update_goal(
             raise ValueError("Unmet goals require a concrete blocker")
         goal.status = status
         if status in CLOSED_STATUSES:
-            goal.closed_at = datetime.now()
+            goal.closed_at = utcnow()
     if objective is not None:
         objective = objective.strip()
         if not objective:
@@ -206,7 +206,7 @@ async def update_goal(
     if reasoning_effort is not None and reasoning_effort.strip() != goal.reasoning_effort:
         goal.reasoning_effort = reasoning_effort.strip()
         execution_changed = True
-    goal.updated_at = datetime.now()
+    goal.updated_at = utcnow()
     if execution_changed:
         await record_event(
             db,

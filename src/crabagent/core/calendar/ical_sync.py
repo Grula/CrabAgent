@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import CalendarEvent, CalendarIcalSource
+from crabagent.core.timeutil import as_utc, from_local, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -125,13 +126,14 @@ async def _sync_caldav_source(db: AsyncSession, source: CalendarIcalSource, defa
         await db.commit()
         return 0
 
-    now = datetime.datetime.now()
+    # The CalDAV time-range cursor is an explicit UTC stamp ("...Z"), so it has
+    # to be built from the UTC clock; a local date here names the wrong day
+    # whenever local and UTC fall on different dates.
+    now = utcnow()
     lookback = now - datetime.timedelta(days=source.lookback_days)
     lookahead = now + datetime.timedelta(days=source.lookahead_days)
-    lookback_naive = lookback.replace(tzinfo=None)
-    lookahead_naive = lookahead.replace(tzinfo=None)
-    lookback_str = lookback_naive.strftime("%Y%m%dT000000Z")
-    lookahead_str = lookahead_naive.strftime("%Y%m%dT235959Z")
+    lookback_str = as_utc(lookback).strftime("%Y%m%dT000000Z")
+    lookahead_str = as_utc(lookahead).strftime("%Y%m%dT235959Z")
 
     def _fetch():
         """Synchronous CalDAV fetch — runs in thread pool."""
@@ -263,12 +265,9 @@ async def _upsert_events(
     Returns:
         Number of events synced.
     """
-    now = datetime.datetime.now()
+    now = utcnow()
     lookback = now - datetime.timedelta(days=source.lookback_days)
     lookahead = now + datetime.timedelta(days=source.lookahead_days)
-    # Compare using naive datetimes (VEVENT may be offset-aware)
-    lookback_naive = lookback.replace(tzinfo=None)
-    lookahead_naive = lookahead.replace(tzinfo=None)
 
     synced = 0
     for component in vevents:
@@ -287,17 +286,24 @@ async def _upsert_events(
         dtstart = dtstart_val.dt
         dtend = dtend_val.dt if dtend_val else None
 
-        # Normalize date to datetime
+        # Normalize date to datetime. A DATE value is a calendar day, not an
+        # instant: anchor it at local midnight so it stays the same day once
+        # stored as UTC (storage is naive UTC since the tz migration).
         all_day = False
         if isinstance(dtstart, datetime.date) and not isinstance(dtstart, datetime.datetime):
-            dtstart = datetime.datetime.combine(dtstart, datetime.time.min)
+            dtstart = from_local(datetime.datetime.combine(dtstart, datetime.time.min))
             all_day = True
         if dtend and isinstance(dtend, datetime.date) and not isinstance(dtend, datetime.datetime):
-            dtend = datetime.datetime.combine(dtend, datetime.time.min)
+            dtend = from_local(datetime.datetime.combine(dtend, datetime.time.min))
 
-        # Time range filter — strip timezone for naive comparison
-        dtstart_naive = dtstart.replace(tzinfo=None) if hasattr(dtstart, 'tzinfo') and dtstart.tzinfo else dtstart
-        if dtstart_naive < lookback_naive or dtstart_naive > lookahead_naive:
+        # VEVENT timestamps may carry an offset; storage is naive UTC. A naive
+        # value is kept as-is (an all-day DTSTART above is local midnight
+        # already expressed the way the rest of the app stores it).
+        dtstart = as_utc(dtstart)
+        dtend = as_utc(dtend)
+
+        # Time range filter — same frame on both sides now (naive UTC)
+        if dtstart < lookback or dtstart > lookahead:
             continue
 
         # Upsert by ical_uid + source_id

@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 import * as goalsApi from "../api/goals";
+import { formatTime, parseDateTime } from "../api/time";
 import { Goal } from "../types/Goal";
 import { Modal } from "./ui";
+
+/** Local time of day for a UTC wire timestamp; "" when unusable. */
+function localTimeOfDay(iso: string): string {
+  const d = parseDateTime(iso);
+  return d ? d.toLocaleTimeString() : "";
+}
 
 interface Props {
   open: boolean;
@@ -43,7 +50,7 @@ export function GoalTimeline({ open, sessionId, goal, onOpenChange }: Props) {
             <i className="absolute -left-[21px] top-1.5 h-2 w-2 rounded-full bg-[var(--brand)]" />
             <p className="text-sm text-[var(--text-primary)]">{checkpoint.summary}</p>
             {checkpoint.next_step && <p className="mt-0.5 text-xs text-[var(--text-tertiary)]">Next step: {checkpoint.next_step}</p>}
-            <time className="mt-1 block text-[11px] text-[var(--text-tertiary)]">{new Date(checkpoint.created_at).toLocaleString()}</time>
+            <time className="mt-1 block text-[11px] text-[var(--text-tertiary)]">{formatTime(checkpoint.created_at)}</time>
           </article>)}
         </div>
       </section>
@@ -51,7 +58,7 @@ export function GoalTimeline({ open, sessionId, goal, onOpenChange }: Props) {
         <h3 className="text-xs font-semibold text-[var(--text-secondary)]">Status log</h3>
         <div className="mt-2 space-y-2">
           {events.map((event, index) => <div key={`${event.created_at}-${index}`} className="flex gap-3 text-xs">
-            <time className="shrink-0 text-[var(--text-tertiary)]">{new Date(event.created_at).toLocaleTimeString()}</time>
+            <time className="shrink-0 text-[var(--text-tertiary)]">{localTimeOfDay(event.created_at)}</time>
             <p className="text-[var(--text-secondary)]">{event.detail}</p>
           </div>)}
         </div>

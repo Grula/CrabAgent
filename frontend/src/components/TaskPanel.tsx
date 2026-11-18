@@ -18,6 +18,7 @@ import {
   type CreateTaskRequest,
 } from "../api/tasks";
 import TaskDetailDrawer from "./TaskDetailDrawer";
+import { parseDateTime, toLocalDateStr } from "../api/time";
 import { Modal, Button, Input, Textarea, ConfirmDialog } from "./ui";
 import { toast } from "./ui/Toast";
 import { cn } from "../lib/cn";
@@ -82,15 +83,17 @@ function groupTasks(tasks: Task[]): { group: TaskGroup; items: Task[] }[] {
 
 function isOverdue(task: Task): boolean {
   if (task.status === "done") return false;
-  if (!task.deadline) return false;
-  return new Date(task.deadline) < new Date();
+  const deadline = parseDateTime(task.deadline);
+  if (!deadline) return false;
+  return deadline.getTime() < Date.now();
 }
 
 function formatDeadline(deadline: string): string {
-  // deadline comes as ISO string like "2026-06-12T09:45:00" or "2026-06-12"
-  const d = new Date(deadline);
-  if (isNaN(d.getTime())) return deadline.slice(0, 10);
-  const datePart = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  // deadline is a UTC datetime ("2026-06-12T12:45:00.123456Z") or a bare date
+  // for date-only deadlines; never slice it, the UTC day is not the local day.
+  const d = parseDateTime(deadline);
+  if (!d) return deadline;
+  const datePart = toLocalDateStr(deadline);
   // Check if time is non-midnight
   if (d.getHours() !== 0 || d.getMinutes() !== 0) {
     const timePart = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;

@@ -14,7 +14,6 @@ stage" instead of pretending nothing happened.
 
 from __future__ import annotations
 
-import datetime
 import logging
 
 from sqlalchemy import select
@@ -22,13 +21,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import AgentRun, Task
 from crabagent.core.task.status import TaskStatus
+from crabagent.core.timeutil import to_epoch, utcnow
 
 logger = logging.getLogger(__name__)
 
 
 async def recover_interrupted_state(db: AsyncSession) -> dict:
     """Run one recovery pass. Idempotent; safe to call at every startup."""
-    now = datetime.datetime.now()
+    now = utcnow()
 
     # 1. Zombie runs: everything still marked running belongs to a dead process.
     running_result = await db.execute(select(AgentRun).where(AgentRun.status == "running"))
@@ -36,7 +36,7 @@ async def recover_interrupted_state(db: AsyncSession) -> dict:
     affected_task_ids: set[int] = set()
     for run in zombie_runs:
         run.status = "interrupted"
-        run.finished_at = now.timestamp()
+        run.finished_at = to_epoch(now)
         run.interrupted_reason = run.interrupted_reason or "Application restarted: the executing process no longer exists"
         if run.task_id:
             affected_task_ids.add(run.task_id)

@@ -13,8 +13,9 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass
-from datetime import datetime
 from typing import Any
+
+from crabagent.core.timeutil import iso_utc, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ async def save_config(cfg: PushConfig) -> None:
 
     from crabagent.core.database import AppSetting, async_session_factory
 
-    cfg.saved_at = datetime.now().isoformat()
+    cfg.saved_at = iso_utc(utcnow())
     blob = json.dumps(cfg.to_dict(), ensure_ascii=False)
 
     async with async_session_factory() as db:

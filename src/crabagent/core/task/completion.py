@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import Task, TaskArtifact, TaskCheck, TaskRequest
 from crabagent.core.task.status import TaskStatus
+from crabagent.core.timeutil import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ AUTO_CHECK_TITLE_PREFIX = "Artifact available:"
 
 
 def _now() -> datetime.datetime:
-    return datetime.datetime.now()
+    return utcnow()
 
 
 def verify_file(path: str, workspace: str = "") -> dict:

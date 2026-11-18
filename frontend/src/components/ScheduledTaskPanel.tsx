@@ -9,6 +9,7 @@ import {
   runScheduledTask,
   type CreateScheduledTaskRequest,
 } from "../api/scheduledTasks";
+import { formatTime } from "../api/time";
 import {
   Modal,
   Button,
@@ -325,7 +326,7 @@ export function ScheduledTaskPanel({ onClose, onSwitchSession }: Props) {
                 </div>
                 {task.last_run_at && (
                   <div className="text-[10px] mb-2 text-[var(--text-tertiary)] font-mono">
-                    Last: {new Date(task.last_run_at).toLocaleString()}
+                    Last: {formatTime(task.last_run_at)}
                     {task.last_status === "error" && (
                       <span className="text-[var(--danger)] ml-1">(failed)</span>
                     )}

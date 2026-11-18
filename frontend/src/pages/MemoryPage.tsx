@@ -22,6 +22,7 @@ import {
   type ProjectMemoryData,
 } from "../api/agents";
 import { listWorkspaces, type WorkspaceInfo } from "../api/sessions";
+import { parseDateTime } from "../api/time";
 import { Button, Input, Modal, EmptyState, toast } from "../components/ui";
 import { cn } from "../lib/cn";
 import FloatingMenu from "../components/ui/FloatingMenu";
@@ -41,15 +42,12 @@ const TAB_TYPES: Record<MemoryTab, string> = {
 };
 
 function formatDate(iso: string): string {
-  if (!iso) return "";
-  try {
-    const d = new Date(iso);
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return `${mm}-${dd}`;
-  } catch {
-    return iso.slice(5, 10);
-  }
+  // Memory timestamps are UTC on the wire; show the local month-day.
+  const d = parseDateTime(iso);
+  if (!d) return iso || "";
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${mm}-${dd}`;
 }
 
 export default function MemoryPage() {

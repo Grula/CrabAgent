@@ -26,6 +26,7 @@ import {
   type TokenUsageOverview,
   type WorkspaceUsage,
 } from "../api/tokenUsage";
+import { parseDateTime } from "../api/time";
 
 const DISTRIBUTION_COLORS = ["var(--brand)", "var(--accent)", "var(--warning)", "var(--accent-2)", "var(--success)"];
 const PAGE_SIZE = 15;
@@ -39,8 +40,9 @@ function formatTokens(value: number): string {
 }
 
 function formatDate(value: string): string {
-  if (!value) return "-";
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  const d = parseDateTime(value);
+  if (!d) return "-";
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(d);
 }
 
 export default function UsagePage() {
@@ -114,7 +116,7 @@ export default function UsagePage() {
     return sessions
       .filter((session) => !query || `${session.title} ${session.session_id}`.toLowerCase().includes(query))
       .sort((a, b) => {
-        if (sort === "recent") return new Date(b.last_active).getTime() - new Date(a.last_active).getTime();
+        if (sort === "recent") return (parseDateTime(b.last_active)?.getTime() ?? 0) - (parseDateTime(a.last_active)?.getTime() ?? 0);
         if (sort === "cache") return b.cache_hit_rate - a.cache_hit_rate;
         if (sort === "calls") return b.calls - a.calls;
         return b.total_tokens - a.total_tokens;

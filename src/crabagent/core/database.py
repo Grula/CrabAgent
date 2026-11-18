@@ -10,16 +10,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from crabagent.core.config import settings
+# The storage clock is naive UTC; display/parse helpers live in core.timeutil.
+from crabagent.core.timeutil import (
+    from_local,
+    iso_utc,
+    to_epoch,
+    to_local,
+    utcnow,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
     pass
-
-
-def utcnow() -> datetime.datetime:
-    return datetime.datetime.now()
 
 
 class ProviderConfig(Base):
@@ -1220,6 +1224,16 @@ async def init_db() -> None:
 
     from crabagent.core.provider_store import migrate_plaintext_keys
 
+    # Legacy rows hold naive LOCAL timestamps. Shift them before anything in this
+    # process writes a (now UTC) value, otherwise the rows created below by the
+    # default-seeding helpers would be shifted a second time.
+    try:
+        shifted = await migrate_timestamps_to_utc()
+        if shifted:
+            logger.info("Migrated %d timestamps from local time to UTC", shifted)
+    except Exception:
+        logger.exception("Timestamp migration to UTC failed")
+
     await migrate_plaintext_keys()
 
     await _ensure_default_admin()
@@ -2205,7 +2219,7 @@ async def agent_memory_list_all(
                 "importance": r.importance,
                 "confidence": r.confidence,
                 "access_count": r.access_count,
-                "updated_at": r.updated_at.isoformat() if r.updated_at else "",
+                "updated_at": iso_utc(r.updated_at) or "",
             }
             for r in result.scalars().all()
         ]
@@ -2513,14 +2527,103 @@ async def migrate_task_records_to_agent_runs() -> int:
                     elapsed=r.elapsed,
                     tokens_used=r.tokens,
                     iterations=r.iterations,
-                    finished_at=r.created_at.timestamp(),
-                    started_at=r.created_at.timestamp() - (r.elapsed or 0),
+                    finished_at=to_epoch(r.created_at),
+                    started_at=to_epoch(r.created_at) - (r.elapsed or 0),
                     created_at=r.created_at,
                 )
             )
             count += 1
         await db.commit()
         return count
+
+
+_TIMESTAMPS_UTC_MARKER = "timestamps_utc_version"
+
+# Tables whose timestamps may have been written by raw ``CURRENT_TIMESTAMP`` SQL:
+# those rows are already UTC. The ORM always writes ``YYYY-MM-DD HH:MM:SS.ffffff``
+# while SQLite's CURRENT_TIMESTAMP writes ``YYYY-MM-DD HH:MM:SS``, so the stored
+# format tells the two apart without guessing.
+_UTC_FORMAT_TABLES = frozenset({"app_settings", "memory_embedding"})
+
+
+async def migrate_timestamps_to_utc() -> int:
+    """One-shot rewrite of legacy naive-LOCAL DateTime columns to naive UTC.
+
+    Every ``DateTime`` column of every mapped table is shifted by
+    ``value_utc = value - offset`` where ``offset = local_now - utc_now``.
+    ``Float`` columns (the epoch columns ``agent_runs.started_at`` /
+    ``finished_at`` and ``execution_spans.started_at``) are absolute already and
+    are left alone. Tables come from the ORM metadata, so a table missing from an
+    old database is skipped instead of raising.
+
+    The whole rewrite (marker row included) happens in one transaction, so an
+    interruption leaves the database untouched and the migration simply retries on
+    the next start. Rows written by a raw ``CURRENT_TIMESTAMP`` statement are
+    already UTC and are recognised by their missing fractional seconds.
+
+    Approximation: rows written while the host was in a different timezone (or on
+    the other side of a DST change) cannot be recovered exactly - one offset, the
+    current one, is applied to all of them.
+
+    Returns the number of rows the rewrite touched (0 when already migrated).
+    """
+    from sqlalchemy import case, cast, func, or_, select, update
+
+    async with async_session_factory() as db:
+        existing = await db.execute(
+            select(AppSetting.id).where(AppSetting.key == _TIMESTAMPS_UTC_MARKER)
+        )
+        if existing.scalar_one_or_none() is not None:
+            return 0
+
+        raw_offset = datetime.datetime.now() - datetime.datetime.now(datetime.UTC).replace(
+            tzinfo=None
+        )
+        offset = datetime.timedelta(seconds=round(raw_offset.total_seconds()))
+
+        if offset == datetime.timedelta(0):
+            db.add(AppSetting(key=_TIMESTAMPS_UTC_MARKER, value="1", updated_at=utcnow()))
+            await db.commit()
+            logger.info("timestamps_utc: host runs on UTC already, nothing to shift")
+            return 0
+
+        delta = f"{int(-offset.total_seconds())} seconds"
+        total = 0
+        for table in Base.metadata.tables.values():
+            # All DateTime columns of a table are shifted by ONE statement: every
+            # column is then present in values(), so SQLAlchemy does not apply the
+            # ``onupdate=utcnow`` default (which would stamp "now" over the shift).
+            values: dict = {}
+            for column in table.columns:
+                if not isinstance(column.type, DateTime):
+                    continue
+                keep = column.is_(None)
+                if table.name in _UTC_FORMAT_TABLES:
+                    # Already-UTC rows written by raw CURRENT_TIMESTAMP: no microseconds.
+                    keep = or_(keep, func.length(cast(column, Text)) <= 19)
+                values[column.name] = case((keep, column), else_=func.datetime(column, delta))
+            if not values:
+                continue
+            stmt = update(table).values(values)
+            if table.name == "app_settings":
+                stmt = stmt.where(AppSetting.key != _TIMESTAMPS_UTC_MARKER)
+            try:
+                async with db.begin_nested():
+                    result = await db.execute(stmt)
+                shifted = result.rowcount or 0
+            except Exception as exc:  # pragma: no cover - defensive, old schemas
+                logger.warning("timestamps_utc: skipped table %s (%s)", table.name, exc)
+                continue
+            if shifted:
+                logger.info("timestamps_utc: rewrote %d rows in %s", shifted, table.name)
+            total += shifted
+
+        # Marker last, in the same transaction as the rewrite: an interruption
+        # rolls everything back untouched and the migration simply retries next start.
+        db.add(AppSetting(key=_TIMESTAMPS_UTC_MARKER, value="1", updated_at=utcnow()))
+        await db.commit()
+        logger.info("timestamps_utc: shifted %d legacy timestamps by %s", total, offset)
+        return total
 
 
 def _run_to_dict(run) -> dict:
@@ -2549,7 +2652,7 @@ def _run_to_dict(run) -> dict:
         "progress_current": run.progress_current,
         "progress_total": run.progress_total,
         "interrupted_reason": run.interrupted_reason,
-        "created_at": run.created_at.isoformat() if run.created_at else "",
+        "created_at": iso_utc(run.created_at) or "",
     }
 
 
@@ -2604,7 +2707,7 @@ def _usage_to_dict(u: TokenUsage) -> dict:
         "total_tokens": u.total_tokens,
         "iteration": u.iteration,
         "branch_id": u.branch_id,
-        "created_at": u.created_at.isoformat() if u.created_at else "",
+        "created_at": iso_utc(u.created_at) or "",
     }
 
 
@@ -2631,11 +2734,12 @@ async def token_usage_overview(
 
     hourly = days <= 1  # hourly buckets for "today"
     if days <= 1:
-        # "Today" means from midnight, not 24h ago
-        cutoff_dt = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        # "Today" means from local midnight, not 24h ago; rows are stored in UTC.
+        cutoff_dt = from_local(
+            to_local(utcnow()).replace(hour=0, minute=0, second=0, microsecond=0)
+        )
     elif days < 365:
-        cutoff_ts = _time.time() - days * 86400
-        cutoff_dt = datetime.datetime.fromtimestamp(cutoff_ts)
+        cutoff_dt = utcnow() - datetime.timedelta(days=days)
     else:
         cutoff_dt = datetime.datetime.min
 
@@ -2670,7 +2774,9 @@ async def token_usage_overview(
         total_total = row.total or 0
 
         # Today's tokens (independent of range filter)
-        today_start = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = from_local(
+            to_local(utcnow()).replace(hour=0, minute=0, second=0, microsecond=0)
+        )
         today_conds = [TokenUsage.user_id == user_id, TokenUsage.created_at >= today_start]
         if ws_session_ids is not None:
             today_conds.append(TokenUsage.session_id.in_(ws_session_ids))
@@ -2753,10 +2859,12 @@ async def token_usage_overview(
         for r in rows:
             if not r.created_at:
                 continue
+            # Buckets are display labels, so they are cut in the local frame.
+            local_created = to_local(r.created_at)
             if hourly:
-                bucket = r.created_at.strftime("%H:00")
+                bucket = local_created.strftime("%H:00")
             else:
-                bucket = r.created_at.strftime("%Y-%m-%d")
+                bucket = local_created.strftime("%Y-%m-%d")
             if bucket not in trend:
                 trend[bucket] = {
                     "date" if not hourly else "hour": bucket,
@@ -2777,7 +2885,7 @@ async def token_usage_overview(
 
         # Fill missing hours for hourly view (0-23)
         if hourly:
-            now_hour = datetime.datetime.now().hour
+            now_hour = to_local(utcnow()).hour
             for h in range(0, now_hour + 1):
                 key = f"{h:02d}:00"
                 if key not in trend:
@@ -2854,9 +2962,11 @@ async def token_usage_sessions(
 
     async with async_session_factory() as db:
         if days <= 1:
-            cutoff_dt = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            cutoff_dt = from_local(
+                to_local(utcnow()).replace(hour=0, minute=0, second=0, microsecond=0)
+            )
         elif days < 365:
-            cutoff_dt = datetime.datetime.fromtimestamp(_time.time() - days * 86400)
+            cutoff_dt = utcnow() - datetime.timedelta(days=days)
         else:
             cutoff_dt = datetime.datetime.min
         conds = [TokenUsage.user_id == user_id, *_cutoff_filter(cutoff_dt)]
@@ -2913,8 +3023,8 @@ async def token_usage_sessions(
                 "reasoning_tokens": r[6] or 0,
                 "cache_hit_rate": round((r[3] or 0) / (r[2] or 1), 4),
                 "calls": r[7] or 0,
-                "last_active": r[8].isoformat() if r[8] else "",
-                "created_at": r[9].isoformat() if r[9] else "",
+                "last_active": iso_utc(r[8]) or "",
+                "created_at": iso_utc(r[9]) or "",
             }
             for r in rows
         ]
@@ -3090,8 +3200,8 @@ async def token_usage_session_summary(user_id: int, session_id: str) -> dict:
         "calls": int(calls or 0),
         "turns": int(turns or 0),
         "elapsed": round(float(elapsed or 0), 1),
-        "first_call_at": first_call_at.isoformat() if first_call_at else "",
-        "last_call_at": last_call_at.isoformat() if last_call_at else "",
+        "first_call_at": iso_utc(first_call_at) or "",
+        "last_call_at": iso_utc(last_call_at) or "",
     }
 
 
@@ -3181,7 +3291,7 @@ def _span_to_dict(s: ExecutionSpan) -> dict:
         "summary": s.summary,
         "error": s.error,
         "attributes": s.attributes,
-        "created_at": s.created_at.isoformat() if s.created_at else "",
+        "created_at": iso_utc(s.created_at) or "",
     }
 
 

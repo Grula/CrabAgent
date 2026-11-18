@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import datetime
 import json
 import logging
 import mimetypes
@@ -15,6 +14,7 @@ from pydantic import BaseModel
 from crabagent.core.config import settings
 from crabagent.core.database import User
 from crabagent.core.office.manager import get_office_manager
+from crabagent.core.timeutil import to_local, utcnow
 from crabagent.serve.deps import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -179,7 +179,7 @@ def _backup_doc(file_path: Path) -> str | None:
     try:
         backup_dir = Path.home() / ".crabagent" / "docs-backup"
         backup_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts = to_local(utcnow()).strftime("%Y%m%d_%H%M%S")
         backup_path = backup_dir / f"{file_path.stem}_{ts}{file_path.suffix}"
         shutil.copy2(str(file_path), str(backup_path))
         return str(backup_path)

@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import CalendarEvent
+from crabagent.core.timeutil import as_utc, from_local, iso_utc, to_local, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +25,8 @@ def _event_to_dict(e: CalendarEvent) -> dict:
         "user_id": e.user_id,
         "title": e.title,
         "description": e.description,
-        "start_time": e.start_time.isoformat() if e.start_time else None,
-        "end_time": e.end_time.isoformat() if e.end_time else None,
+        "start_time": iso_utc(e.start_time),
+        "end_time": iso_utc(e.end_time),
         "all_day": e.all_day,
         "type": e.type,
         "source": e.source,
@@ -37,8 +38,8 @@ def _event_to_dict(e: CalendarEvent) -> dict:
         "reminder_sent": e.reminder_sent,
         "ical_uid": e.ical_uid,
         "ical_source_id": e.ical_source_id,
-        "created_at": e.created_at.isoformat() if e.created_at else None,
-        "updated_at": e.updated_at.isoformat() if e.updated_at else None,
+        "created_at": iso_utc(e.created_at),
+        "updated_at": iso_utc(e.updated_at),
     }
 
 
@@ -112,7 +113,7 @@ async def update_event(
     updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
     if not updates:
         return await get_event(db, event_id, user_id)
-    updates["updated_at"] = datetime.datetime.now()
+    updates["updated_at"] = utcnow()
     from sqlalchemy import update as sa_update
 
     stmt = (
@@ -184,19 +185,30 @@ async def list_events(
         )
         task_result = await db.execute(task_stmt)
         for t in task_result.scalars().all():
-            # all_day = True only when deadline is at midnight (date-only)
+            # All-day is decided in the LOCAL frame: a date-only deadline is
+            # stored as the UTC instant of local midnight, which is not 00:00
+            # once the host is not on UTC.
+            local_deadline = to_local(t.deadline)
             is_date_only = (
-                t.deadline and
-                t.deadline.hour == 0 and
-                t.deadline.minute == 0 and
-                t.deadline.second == 0
+                local_deadline is not None
+                and local_deadline.hour == 0
+                and local_deadline.minute == 0
+                and local_deadline.second == 0
+                and local_deadline.microsecond == 0
             )
+            end_wire = None
+            if is_date_only:
+                # Same convention as before: an all-day entry ends at 23:59 local.
+                local_end = local_deadline.replace(hour=23, minute=59, second=0, microsecond=0)
+                end_wire = iso_utc(from_local(local_end))
             events.append({
                 "id": f"task_{t.id}",
                 "title": f"⏰ {t.title}",
                 "description": t.description or "",
-                "start_time": t.deadline.isoformat(),
-                "end_time": t.deadline.replace(hour=23, minute=59).isoformat() if is_date_only else None,
+                # Same wire format as the persisted events above (naive UTC
+                # with a trailing Z); the caller renders it in the local frame.
+                "start_time": iso_utc(t.deadline),
+                "end_time": end_wire,
                 "all_day": is_date_only,
                 "type": "task",
                 "source": "task",
@@ -217,9 +229,11 @@ async def list_events(
 
 async def get_today_overview(db: AsyncSession, user_id: int) -> dict:
     """Return today's events, due tasks, and free time slots."""
-    now = datetime.datetime.now()
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    tomorrow_start = today_start + datetime.timedelta(days=1)
+    # "Today" is the user's local calendar day; the stored values are UTC.
+    local_now = to_local(utcnow())
+    today_start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = from_local(today_start_local)
+    tomorrow_start = from_local(today_start_local + datetime.timedelta(days=1))
 
     events = await list_events(db, user_id, today_start, tomorrow_start)
 
@@ -233,19 +247,21 @@ async def get_today_overview(db: AsyncSession, user_id: int) -> dict:
         start_str = e["start_time"]
         end_str = e["end_time"]
         try:
-            s = datetime.datetime.fromisoformat(start_str)
-            en = datetime.datetime.fromisoformat(end_str)
+            s = as_utc(datetime.datetime.fromisoformat(start_str))
+            en = as_utc(datetime.datetime.fromisoformat(end_str))
             busy.append((s, en))
         except Exception:
             pass
 
-    free_slots = _calculate_free_time(busy, today_start.replace(hour=9), today_start.replace(hour=18))
+    work_start = from_local(today_start_local.replace(hour=9))
+    work_end = from_local(today_start_local.replace(hour=18))
+    free_slots = _calculate_free_time(busy, work_start, work_end)
 
     # Tasks due today (any type=="task" event)
     due_tasks = [e for e in events if e.get("type") == "task"]
 
     return {
-        "date": today_start.date().isoformat(),
+        "date": today_start_local.date().isoformat(),
         "events": events,
         "timed_events": len(timed_events),
         "all_day_events": len(all_day_events),
@@ -265,7 +281,7 @@ def _calculate_free_time(
 ) -> list[dict]:
     """Calculate free time slots given busy intervals within work hours."""
     if not busy:
-        return [{"start": day_start.isoformat(), "end": day_end.isoformat()}]
+        return [{"start": iso_utc(day_start), "end": iso_utc(day_end)}]
 
     # Sort by start time
     busy.sort(key=lambda x: x[0])
@@ -279,16 +295,16 @@ def _calculate_free_time(
         b_end = min(b_end, day_end)
         if b_start > cursor:
             slots.append({
-                "start": cursor.isoformat(),
-                "end": b_start.isoformat(),
+                "start": iso_utc(cursor),
+                "end": iso_utc(b_start),
                 "duration_min": int((b_start - cursor).total_seconds() / 60),
             })
         cursor = max(cursor, b_end)
 
     if cursor < day_end:
         slots.append({
-            "start": cursor.isoformat(),
-            "end": day_end.isoformat(),
+            "start": iso_utc(cursor),
+            "end": iso_utc(day_end),
             "duration_min": int((day_end - cursor).total_seconds() / 60),
         })
 

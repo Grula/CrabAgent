@@ -18,6 +18,7 @@ from crabagent.core.database import (
     run_record_list,
     task_record_stats,
 )
+from crabagent.core.timeutil import iso_utc
 from crabagent.serve.deps import get_current_user
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -106,7 +107,7 @@ def _to_response(a: AgentProfile) -> AgentProfileResponse:
         tools=tools_list,
         tool_permissions=tool_perms,
         skills=parse_agent_skills(a.skills),
-        created_at=a.created_at.isoformat() if a.created_at else "",
+        created_at=iso_utc(a.created_at) or "",
     )
 
 

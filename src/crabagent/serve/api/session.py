@@ -11,6 +11,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import BrowserTask, Conversation, Message, User, WorkspacePreference, get_db
+from crabagent.core.timeutil import iso_utc
 from crabagent.serve.api.prompt import _tasks
 from crabagent.serve.deps import get_current_user, get_owned_conversation
 from crabagent.serve.services import conversation as conv_svc
@@ -65,8 +66,8 @@ def _conv_to_response(conv) -> SessionResponse:
         agent=getattr(conv, "agent", None) or "default",
         active_branch=conv.active_branch or "main",
         history_searchable=getattr(conv, "history_searchable", True),
-        created_at=conv.created_at.isoformat() if conv.created_at else None,
-        updated_at=conv.updated_at.isoformat() if conv.updated_at else None,
+        created_at=iso_utc(conv.created_at),
+        updated_at=iso_utc(conv.updated_at),
     )
 
 
@@ -343,7 +344,7 @@ async def _workspace_infos(db: AsyncSession, user_id: int) -> list[WorkspaceInfo
         seen[workspace] = WorkspaceInfo(
             workspace=workspace,
             session_count=1,
-            last_active=updated_at.isoformat() if updated_at else None,
+            last_active=iso_utc(updated_at),
             hidden=pref.hidden if pref else False,
             pinned=pref.pinned if pref else False,
             sort_order=pref.sort_order if pref else 0,
@@ -515,7 +516,7 @@ async def get_session_report(
 
     lines = [f"# {conv.title or 'Conversation Report'}\n"]
     lines.append(f"Session: {session_id}")
-    lines.append(f"Created: {conv.created_at.isoformat() if conv.created_at else 'N/A'}\n")
+    lines.append(f"Created: {iso_utc(conv.created_at) or 'N/A'}\n")
 
     user_msgs = [m for m in msgs if m.role == "user"]
     assistant_msgs = [m for m in msgs if m.role == "assistant"]
@@ -657,7 +658,7 @@ async def export_session(
     lines = [f"# {conv.title or 'Conversation'}", ""]
     lines.append(f"- Session: `{session_id}`")
     if conv.created_at:
-        lines.append(f"- Created: {conv.created_at.isoformat()}")
+        lines.append(f"- Created: {iso_utc(conv.created_at)}")
     if conv.model:
         lines.append(f"- Model: {conv.model}")
     if conv.agent:

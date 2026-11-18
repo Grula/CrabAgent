@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import TaskRequest
+from crabagent.core.timeutil import iso_utc, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ _live_futures: dict[str, asyncio.Future] = {}
 
 
 def _now() -> datetime.datetime:
-    return datetime.datetime.now()
+    return utcnow()
 
 
 def new_request_key(prefix: str = "req") -> str:
@@ -72,10 +73,10 @@ def _request_to_dict(r: TaskRequest) -> dict:
         "resource_version": r.resource_version,
         "status": r.status,
         "decision_note": r.decision_note,
-        "expires_at": r.expires_at.isoformat() if r.expires_at else None,
-        "created_at": r.created_at.isoformat() if r.created_at else None,
-        "decided_at": r.decided_at.isoformat() if r.decided_at else None,
-        "consumed_at": r.consumed_at.isoformat() if r.consumed_at else None,
+        "expires_at": iso_utc(r.expires_at),
+        "created_at": iso_utc(r.created_at),
+        "decided_at": iso_utc(r.decided_at),
+        "consumed_at": iso_utc(r.consumed_at),
     }
 
 

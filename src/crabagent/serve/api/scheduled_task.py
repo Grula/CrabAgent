@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import ScheduledTask, User, get_db
+from crabagent.core.timeutil import as_utc, iso_utc
 from crabagent.serve.deps import get_current_user
 from crabagent.serve.scheduler import get_scheduler, parse_cron_expression
 
@@ -54,12 +55,12 @@ def _to_response(t: ScheduledTask) -> ScheduledTaskResponse:
         cron_expression=t.cron_expression,
         model=t.model or "",
         enabled=t.enabled,
-        next_run_at=t.next_run_at.isoformat() if t.next_run_at else None,
-        last_run_at=t.last_run_at.isoformat() if t.last_run_at else None,
+        next_run_at=iso_utc(t.next_run_at),
+        last_run_at=iso_utc(t.last_run_at),
         last_status=t.last_status or "",
         last_error=t.last_error or "",
         last_conversation_id=t.last_conversation_id or "",
-        created_at=t.created_at.isoformat() if t.created_at else "",
+        created_at=iso_utc(t.created_at) or "",
     )
 
 
@@ -152,7 +153,8 @@ async def update_task(
             )
             next_time = trigger.get_next_fire_time(None, datetime.now(tz=tz))
             if next_time:
-                task.next_run_at = next_time.replace(tzinfo=None)
+                # APScheduler hands back an aware LOCAL datetime; storage is naive UTC.
+                task.next_run_at = as_utc(next_time)
                 await db.commit()
         except Exception:
             pass

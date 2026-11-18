@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import User, get_db
+from crabagent.core.timeutil import from_local
 from crabagent.serve.deps import get_current_user
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -62,7 +63,7 @@ async def create_task(
     if req.deadline:
         for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
             try:
-                deadline_dt = datetime.datetime.strptime(req.deadline[:16], fmt)
+                deadline_dt = from_local(datetime.datetime.strptime(req.deadline[:16], fmt))
                 break
             except ValueError:
                 continue
@@ -103,7 +104,7 @@ async def update_task(
     if req.deadline is not None:
         for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
             try:
-                kwargs["deadline"] = datetime.datetime.strptime(req.deadline[:16], fmt)
+                kwargs["deadline"] = from_local(datetime.datetime.strptime(req.deadline[:16], fmt))
                 break
             except ValueError:
                 continue

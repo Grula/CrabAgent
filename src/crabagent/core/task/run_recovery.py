@@ -26,12 +26,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import AgentRun, RunMolt, Task
 from crabagent.core.task.status import TaskStatus
+from crabagent.core.timeutil import iso_utc, utcnow
 
 logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime.datetime:
-    return datetime.datetime.now()
+    return utcnow()
 
 
 async def link_molt_to_run(db: AsyncSession, run_id: int, molt_id: str, scope: str = "run") -> None:
@@ -69,7 +70,7 @@ async def list_run_molts(db: AsyncSession, run_id: int) -> list[dict]:
             "molt_id": r.molt_id,
             "sequence": r.sequence,
             "scope": r.scope,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "created_at": iso_utc(r.created_at),
         }
         for r in rows
     ]

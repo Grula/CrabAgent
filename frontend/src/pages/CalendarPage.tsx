@@ -20,6 +20,7 @@ import {
   type IcalSource,
   type CalendarSettings,
 } from "../api/calendar";
+import { parseDateTime, toLocalDateStr } from "../api/time";
 import { Modal, Button, Input, Textarea } from "../components/ui";
 import { toast } from "../components/ui/Toast";
 import { cn } from "../lib/cn";
@@ -56,7 +57,8 @@ function toDateStr(d: Date): string {
 }
 
 function parseDate(s: string): Date {
-  return new Date(s.includes("T") ? s : s + "T00:00:00");
+  // Wire values are UTC; date-only values ("YYYY-MM-DD") stay in the local day.
+  return parseDateTime(s) ?? new Date(NaN);
 }
 
 function isSameDay(a: Date, b: Date): boolean {
@@ -159,7 +161,9 @@ export default function CalendarPage() {
     const map: Record<string, CalendarEvent[]> = {};
     for (const e of events) {
       if (!e.start_time) continue;
-      const day = e.start_time.slice(0, 10);
+      // Bucket by the LOCAL day: the first 10 chars of a UTC string are the
+      // UTC date, which differs from the local date near midnight.
+      const day = toLocalDateStr(e.start_time);
       if (!map[day]) map[day] = [];
       map[day].push(e);
     }
@@ -358,9 +362,9 @@ export function MobileAgenda({ events, rangeStart, rangeEnd, loading, onEventCli
   onEventClick: (event: CalendarEvent) => void;
 }) {
   const visibleEvents = events.filter((event) => {
-    const date = event.start_time?.slice(0, 10);
+    const date = toLocalDateStr(event.start_time);
     return date && date >= rangeStart && date <= rangeEnd;
-  }).slice().sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""));
+  }).slice().sort((a, b) => (parseDateTime(a.start_time)?.getTime() ?? 0) - (parseDateTime(b.start_time)?.getTime() ?? 0));
   return (
     <section aria-label="Schedule list" className="space-y-2">
       {loading && <p className="py-4 text-sm text-[var(--text-tertiary)]">Loading...</p>}
@@ -369,7 +373,7 @@ export function MobileAgenda({ events, rangeStart, rangeEnd, loading, onEventCli
         const colors = TYPE_COLORS[event.type] || TYPE_COLORS.manual;
         return (
           <button key={event.id} type="button" onClick={() => onEventClick(event)} className={cn("w-full rounded-lg border p-3 text-left", colors.bg, colors.border)}>
-            <span className="block text-xs text-[var(--text-tertiary)]">{event.start_time?.slice(0, 10)} {event.all_day ? "All day" : event.start_time ? formatTime(event.start_time) : ""}</span>
+            <span className="block text-xs text-[var(--text-tertiary)]">{toLocalDateStr(event.start_time)} {event.all_day ? "All day" : event.start_time ? formatTime(event.start_time) : ""}</span>
             <span className="mt-1 block break-words text-sm font-medium text-[var(--text-primary)]">{event.title}</span>
           </button>
         );

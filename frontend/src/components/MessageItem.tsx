@@ -513,6 +513,8 @@ const TaskCardItem = memo(function TaskCardItem({ msg }: { msg: ChatMessage }) {
           <div className="font-semibold text-[var(--text-primary)]">Picked up: {card.title}</div>
           <div className="mt-0.5 text-xs text-[var(--text-secondary)] flex items-center gap-2 flex-wrap">
             {card.project ? <span>📁 {card.project}</span> : null}
+            {/* Raw local wall-clock text from the task_created payload, not a UTC
+                instant — render it verbatim so it is not shifted by the host offset. */}
             {card.deadline ? <span>📅 {card.deadline}</span> : null}
             <span>Status and results are in the task panel</span>
           </div>

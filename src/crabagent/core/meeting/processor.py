@@ -4,6 +4,8 @@ import datetime
 import json
 import logging
 
+from crabagent.core.timeutil import from_local, to_local, utcnow
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,7 +39,8 @@ async def process_meeting_notes(
     except Exception:
         pass
 
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    # The model works in the user's local calendar dates, not UTC ones.
+    today = to_local(utcnow()).strftime("%Y-%m-%d")
     prompt = (
         f"You are an AI assistant that extracts action items from meeting notes.\n\n"
         f"Today's date: {today}\n\n"
@@ -108,7 +111,8 @@ async def process_meeting_notes(
             dl_str = item.get("deadline", "")
             if dl_str:
                 try:
-                    deadline = datetime.datetime.strptime(dl_str[:10], "%Y-%m-%d")
+                    # A date-only deadline names a LOCAL day; storage is UTC.
+                    deadline = from_local(datetime.datetime.strptime(dl_str[:10], "%Y-%m-%d"))
                 except ValueError:
                     pass
             try:
@@ -135,6 +139,23 @@ async def process_meeting_notes(
     }
 
 
+def _deadline_text(dl) -> str:
+    """Render a task deadline in the local frame for display.
+
+    Deadlines are stored as naive UTC; the store returns a date-only deadline as
+    a bare local ``YYYY-MM-DD`` string, which is already display-ready.
+    """
+    if isinstance(dl, datetime.datetime):
+        return to_local(dl).strftime("%Y-%m-%d")
+    text = str(dl)
+    if len(text) > 10 and "T" in text:
+        try:
+            return to_local(datetime.datetime.fromisoformat(text)).strftime("%Y-%m-%d")
+        except ValueError:
+            return text[:10]
+    return text[:10]
+
+
 def format_meeting_result(result: dict, meeting_title: str = "") -> str:
     created_tasks = result.get("created_tasks", []) or []
     summary = result.get("summary", "Meeting processed.")
@@ -157,9 +178,7 @@ def format_meeting_result(result: dict, meeting_title: str = "") -> str:
             if t.get("assignee"):
                 line += f" 👤 {t['assignee']}"
             if t.get("deadline"):
-                dl = t["deadline"]
-                dl_text = dl.strftime("%Y-%m-%d") if hasattr(dl, "strftime") else str(dl)[:10]
-                line += f" 📅 {dl_text}"
+                line += f" 📅 {_deadline_text(t['deadline'])}"
             lines.append(line)
             if t.get("description"):
                 lines.append(f"     {t['description'][:120]}")

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import User, get_db
+from crabagent.core.timeutil import from_local, iso_utc, to_local, utcnow
 from crabagent.serve.deps import get_current_user
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
@@ -53,16 +54,19 @@ async def list_events(
 ):
     from crabagent.core.calendar.store import list_events as _list
 
-    now = datetime.datetime.now()
+    # The browser sends local wall-clock bounds (often bare dates for a day
+    # view); storage compares in UTC, so convert at this boundary.
+    local_now = to_local(utcnow())
+    local_day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     start_dt = (
-        datetime.datetime.fromisoformat(start)
+        from_local(datetime.datetime.fromisoformat(start))
         if start
-        else now.replace(hour=0, minute=0, second=0, microsecond=0)
+        else from_local(local_day_start)
     )
     end_dt = (
-        datetime.datetime.fromisoformat(end)
+        from_local(datetime.datetime.fromisoformat(end))
         if end
-        else start_dt + datetime.timedelta(days=7)
+        else from_local(local_day_start + datetime.timedelta(days=7))
     )
     # Day view passes same start/end date — ensure end is exclusive
     if end_dt <= start_dt:
@@ -78,8 +82,11 @@ async def create_event(
 ):
     from crabagent.core.calendar.store import add_event
 
-    start_dt = datetime.datetime.fromisoformat(req.start_time)
-    end_dt = datetime.datetime.fromisoformat(req.end_time) if req.end_time else None
+    # The browser sends wall-clock text, or a bare date for all-day events;
+    # from_local also converts an explicitly offset-aware value instead of
+    # letting SQLite silently drop the offset.
+    start_dt = from_local(datetime.datetime.fromisoformat(req.start_time))
+    end_dt = from_local(datetime.datetime.fromisoformat(req.end_time)) if req.end_time else None
 
     return await add_event(
         db,
@@ -108,9 +115,9 @@ async def update_event(
 
     kwargs = req.model_dump(exclude_none=True)
     if "start_time" in kwargs:
-        kwargs["start_time"] = datetime.datetime.fromisoformat(kwargs["start_time"])
+        kwargs["start_time"] = from_local(datetime.datetime.fromisoformat(kwargs["start_time"]))
     if "end_time" in kwargs:
-        kwargs["end_time"] = datetime.datetime.fromisoformat(kwargs["end_time"])
+        kwargs["end_time"] = from_local(datetime.datetime.fromisoformat(kwargs["end_time"]))
 
     result = await _update(db, event_id, user.id, **kwargs)
     if not result:
@@ -176,7 +183,7 @@ async def list_ical_sources(
             "url": s.url[:60] + "..." if len(s.url) > 60 else s.url,
             "source_type": getattr(s, "source_type", "ical") or "ical",
             "enabled": s.enabled,
-            "last_sync_at": s.last_sync_at.isoformat() if s.last_sync_at else None,
+            "last_sync_at": iso_utc(s.last_sync_at),
             "last_sync_status": s.last_sync_status,
             "sync_event_count": s.sync_event_count,
             "last_error": s.last_error[:200] if s.last_error else "",

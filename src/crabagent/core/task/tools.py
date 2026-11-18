@@ -1,6 +1,27 @@
 from __future__ import annotations
 
 
+def _deadline_display(value) -> str:
+    """Render a stored deadline (UTC wire string) as the local calendar date.
+
+    A date-only deadline arrives as a bare local ``YYYY-MM-DD``; anything with a
+    time component is a UTC instant and must be shown in the local frame.
+    """
+    if not value:
+        return ""
+    text = str(value)
+    if len(text) > 10 and "T" in text:
+        import datetime
+
+        from crabagent.core.timeutil import to_local
+
+        try:
+            return to_local(datetime.datetime.fromisoformat(text)).strftime("%Y-%m-%d")
+        except ValueError:
+            return text[:10]
+    return text[:10]
+
+
 def register_task_tools(registry):
     @registry.register(
         name="task_add",
@@ -54,16 +75,23 @@ def register_task_tools(registry):
 
         from crabagent.core.database import async_session_factory
         from crabagent.core.task.store import add_task as _add
+        from crabagent.core.timeutil import from_local
 
         deadline_dt = None
+        deadline_text = ""
         if deadline:
-            try:
-                deadline_dt = datetime.datetime.strptime(deadline, "%Y-%m-%d")
-            except ValueError:
+            # Same three forms task_update and the task API accept. Input is the
+            # user's local wall clock; storage is naive UTC. A value that does
+            # not parse stays unset and is not echoed as if it were saved.
+            for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d"):
                 try:
-                    deadline_dt = datetime.datetime.strptime(deadline, "%Y-%m-%d %H:%M")
+                    deadline_dt = datetime.datetime.strptime(deadline[:16], fmt)
+                    break
                 except ValueError:
-                    pass
+                    continue
+            deadline_dt = from_local(deadline_dt)
+            if deadline_dt is not None:
+                deadline_text = deadline.strip()
 
         user_id = 1
         source_session = ""
@@ -95,7 +123,7 @@ def register_task_tools(registry):
             payload = {
                 "task_id": t["id"],
                 "title": title,
-                "deadline": deadline or "",
+                "deadline": deadline_text,
                 "project": project,
                 "session_id": source_session,
             }
@@ -107,8 +135,8 @@ def register_task_tools(registry):
         parts = [f"✅ Task created: **{title}** (id={t['id']})"]
         if assignee:
             parts.append(f"👤 {assignee}")
-        if deadline:
-            parts.append(f"📅 {deadline}")
+        if deadline_text:
+            parts.append(f"📅 {deadline_text}")
         if project:
             parts.append(f"📁 {project}")
         if priority != "medium":
@@ -161,7 +189,7 @@ def register_task_tools(registry):
             pri = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(t["priority"], "")
             deadline = ""
             if t["deadline"]:
-                deadline = f" 📅{t['deadline'][:10]}"
+                deadline = f" 📅{_deadline_display(t['deadline'])}"
             project_tag = f" [{t['project']}]" if t["project"] else ""
             lines.append(f"  {t['id']}. {mark} {pri} **{t['title']}**{project_tag}{deadline}")
             if t["assignee"]:
@@ -276,6 +304,7 @@ def register_task_tools(registry):
 
         from crabagent.core.database import async_session_factory
         from crabagent.core.task.store import update_task as _update
+        from crabagent.core.timeutil import from_local
 
         user_id = 1
         if context:
@@ -291,7 +320,7 @@ def register_task_tools(registry):
         if deadline:
             for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d"):
                 try:
-                    kwargs["deadline"] = datetime.datetime.strptime(deadline[:16], fmt)
+                    kwargs["deadline"] = from_local(datetime.datetime.strptime(deadline[:16], fmt))
                     break
                 except ValueError:
                     continue

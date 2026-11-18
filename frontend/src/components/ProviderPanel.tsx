@@ -29,6 +29,7 @@ function isZhipuCodingPlan(provider: Provider): boolean {
   return provider.base_url.includes("/api/coding/");
 }
 import * as quotaApi from "../api/quota";
+import { formatDate, parseDateTime } from "../api/time";
 import { Modal, Button, Input, PasswordInput, ConfirmDialog, EmptyState } from "./ui";
 import { toast } from "./ui/Toast";
 import { cn } from "../lib/cn";
@@ -606,7 +607,7 @@ export default function ProviderPanel({
                                           {chatgptAccount.rate_limits.banked_resets.credits.map((c, idx) => (
                                             <div key={c.id || idx} className="flex justify-between text-[10px] text-[var(--text-tertiary)]">
                                               <span>{c.reset_type === "codex_rate_limits" ? "Codex rate-limit reset" : c.reset_type || "Rate-limit reset"}</span>
-                                              {c.expires_at && <span>Expires: {new Date(c.expires_at).toLocaleDateString()}</span>}
+                                              {c.expires_at && <span>Expires: {formatDate(c.expires_at)}</span>}
                                             </div>
                                           ))}
                                         </div>
@@ -650,7 +651,7 @@ export default function ProviderPanel({
                             <div className="p-3 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-[11px] space-y-3">
                               {([["rolling", "5-hour window"], ["weekly", "Weekly"], ["monthly", "Monthly"]] as const).map(([key, label]) => {
                                 const window = opencodeQuotas[p.name][key];
-                                const reset = window.resetsAt ? Date.parse(window.resetsAt) : NaN;
+                                const reset = parseDateTime(window.resetsAt)?.getTime() ?? NaN;
                                 return <UsageBar key={key} label={`${label} · used`} usedPercent={window.percent}
                                   windowText={`Remaining ${Math.max(0, 100 - window.percent).toFixed(1)}%`}
                                   resetText={Number.isFinite(reset) ? `${new Date(reset).toLocaleString()} · reset` : ""} />;

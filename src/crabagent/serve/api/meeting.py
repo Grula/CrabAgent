@@ -13,6 +13,7 @@ from crabagent.core.database import (
     meeting_session_get,
     meeting_session_upsert,
 )
+from crabagent.core.timeutil import iso_utc
 from crabagent.serve.deps import get_current_user
 
 router = APIRouter(prefix="/meeting", tags=["meeting"])
@@ -37,8 +38,8 @@ def _meeting_to_dict(row) -> dict:
         "notes": json.loads(row.notes or "[]"),
         "minutes": row.minutes or "",
         "status": row.status or "active",
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "created_at": iso_utc(row.created_at),
+        "updated_at": iso_utc(row.updated_at),
     }
 
 

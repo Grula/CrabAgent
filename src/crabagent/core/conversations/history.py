@@ -8,6 +8,7 @@ from sqlalchemy import select, text
 
 from crabagent.core.database import Conversation, Message, UserPreference, async_session_factory
 from crabagent.core.fts import extract_indexable_text, segment
+from crabagent.core.timeutil import iso_utc
 
 _READ_ROLES = ("user", "assistant", "compress")
 
@@ -154,7 +155,7 @@ async def search_history(
                 workspace=row[2] or "",
                 snippet=_snippet(row[3] or "", query),
                 role=row[4] or "",
-                updated_at=row[5].isoformat() if hasattr(row[5], "isoformat") else (str(row[5]) if row[5] else None),
+                updated_at=iso_utc(row[5]) if hasattr(row[5], "isoformat") else (str(row[5]) if row[5] else None),
             )
         )
     return results
@@ -203,7 +204,7 @@ async def read_history(
         title=conversation.title or "",
         workspace=conversation.workspace or "",
         branch_id=chosen_branch,
-        updated_at=conversation.updated_at.isoformat() if conversation.updated_at else None,
+        updated_at=iso_utc(conversation.updated_at),
         messages=messages,
         truncated=truncated,
     )

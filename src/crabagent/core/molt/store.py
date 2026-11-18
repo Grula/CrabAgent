@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.config import settings
 from crabagent.core.database import Molt
+from crabagent.core.timeutil import iso_utc
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ def _molt_to_dict(m: Molt) -> dict[str, Any]:
         "method": m.method,
         "file_count": m.file_count,
         "workspace": m.workspace or "",
-        "created_at": m.created_at.isoformat() if m.created_at else None,
+        "created_at": iso_utc(m.created_at),
     }
 
 

@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import Message
+from crabagent.core.timeutil import iso_utc
 
 
 async def save_message(
@@ -183,7 +184,7 @@ def message_to_response(msg: Message, strip_images: bool = True) -> dict:
         "sequence": msg.sequence,
         "role": msg.role,
         "content": msg.content or "",
-        "created_at": msg.created_at.isoformat() if msg.created_at else None,
+        "created_at": iso_utc(msg.created_at),
     }
 
     # Strip base64 image data from content for list views (major perf win).

@@ -49,8 +49,9 @@ async def aggregate_tool_usage(db, since_days: int = 30) -> list[dict]:
     from sqlalchemy import select
 
     from crabagent.core.database import ToolInvocation
+    from crabagent.core.timeutil import utcnow
 
-    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=since_days)
+    cutoff = utcnow() - datetime.timedelta(days=since_days)
     rows = (await db.execute(select(ToolInvocation).where(ToolInvocation.created_at >= cutoff))).scalars().all()
 
     groups: dict[str, list] = {}

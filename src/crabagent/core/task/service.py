@@ -7,7 +7,6 @@ through this service instead of hand-rolling status updates.
 
 from __future__ import annotations
 
-import datetime
 import logging
 
 from sqlalchemy import select
@@ -18,6 +17,7 @@ from crabagent.core.task.events import broadcast_task_event
 from crabagent.core.task.status import CLOSED_TASK_STATUSES, TaskStatus
 from crabagent.core.task.store import get_task as _get_task
 from crabagent.core.task.store import update_task as _update_task
+from crabagent.core.timeutil import iso_utc, to_epoch, utcnow
 
 
 async def record_task_event(
@@ -84,12 +84,12 @@ async def start_agent_run(
         workspace=workspace or task.get("workspace", ""),
         phase=phase[:200],
         status="running",
-        started_at=datetime.datetime.now().timestamp(),
+        started_at=to_epoch(utcnow()),
     )
     db.add(run)
     await db.flush()
 
-    now = datetime.datetime.now()
+    now = utcnow()
     values = {
         "status": TaskStatus.IN_PROGRESS.value,
         "active_run_id": run.id,
@@ -144,10 +144,11 @@ async def finish_agent_run(
     if not task:
         return None
 
-    now = datetime.datetime.now()
+    now = utcnow()
+    now_epoch = to_epoch(now)
     run.status = run_status
-    run.finished_at = now.timestamp()
-    run.elapsed = max(0.0, now.timestamp() - (run.started_at or now.timestamp()))
+    run.finished_at = now_epoch
+    run.elapsed = max(0.0, now_epoch - (run.started_at or now_epoch))
     run.tokens_used = tokens_used
     run.iterations = iterations
     if result_summary:
@@ -464,9 +465,9 @@ async def cancel_task(
         result = await db.execute(select(AgentRun).where(AgentRun.id == active_run_id))
         run = result.scalar_one_or_none()
         if run and run.status == "running":
-            now = datetime.datetime.now()
+            now = utcnow()
             run.status = RUN_STATUS_CANCELLED
-            run.finished_at = now.timestamp()
+            run.finished_at = to_epoch(now)
             run.interrupted_reason = reason[:500] or "user cancelled"
 
     updated = await _update_task(db, task_id, user_id, status=TaskStatus.CANCELLED.value)
@@ -490,7 +491,7 @@ async def mark_result_viewed(db: AsyncSession, task_id: int, user_id: int) -> di
     task = result.scalar_one_or_none()
     if not task:
         return None
-    task.result_viewed_at = datetime.datetime.now()
+    task.result_viewed_at = utcnow()
     await db.commit()
     from crabagent.core.task.store import _task_to_dict
 
@@ -512,7 +513,7 @@ async def list_task_events(db: AsyncSession, task_id: int, user_id: int, limit: 
             "title": e.title,
             "detail": e.detail,
             "run_id": e.run_id,
-            "created_at": e.created_at.isoformat() if e.created_at else None,
+            "created_at": iso_utc(e.created_at),
         }
         for e in result.scalars().all()
     ]

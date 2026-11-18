@@ -1,7 +1,5 @@
 """Memory management API — list, search, update, create, delete."""
 
-from datetime import datetime
-
 from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import AgentMemory, User, agent_memory_delete, agent_memory_upsert, get_db
+from crabagent.core.timeutil import iso_utc, utcnow
 from crabagent.serve.deps import get_current_user
 
 router = APIRouter(prefix="/memory", tags=["memory"])
@@ -40,7 +39,7 @@ def _memory_to_dict(m: AgentMemory) -> dict:
         "scope": getattr(m, "scope", "") or "",
         "workspace_path": getattr(m, "workspace_path", "") or "",
         "recall_policy": getattr(m, "recall_policy", "") or "",
-        "updated_at": m.updated_at.isoformat() if m.updated_at else "",
+        "updated_at": iso_utc(m.updated_at) or "",
     }
 
 
@@ -162,7 +161,7 @@ async def update_memory(
         m.workspace_path = workspace_path
     if recall_policy:
         m.recall_policy = recall_policy
-    m.updated_at = datetime.utcnow()
+    m.updated_at = utcnow()
     await db.commit()
 
     return {"status": "updated", "key": key}

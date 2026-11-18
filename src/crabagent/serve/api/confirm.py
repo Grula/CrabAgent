@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from crabagent.core.database import User, get_db
+from crabagent.core.timeutil import utcnow
 from crabagent.serve.deps import get_current_user
 
 router = APIRouter(tags=["confirm"])
@@ -62,7 +63,7 @@ async def request_confirmation(
                 risk_level="high",
                 display_payload={"args_summary": args_summary},
                 resource_version=args_summary[:200],
-                expires_at=datetime.datetime.now() + datetime.timedelta(seconds=CONFIRM_TTL_SECONDS + 10),
+                expires_at=utcnow() + datetime.timedelta(seconds=CONFIRM_TTL_SECONDS + 10),
             )
         register_live_future(confirm_id, future)
     except Exception:

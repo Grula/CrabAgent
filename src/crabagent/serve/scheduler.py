@@ -13,6 +13,7 @@ from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 
 from crabagent.core.database import ScheduledTask, async_session_factory
+from crabagent.core.timeutil import as_utc, to_local, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +86,10 @@ class SchedulerService:
                 await db.execute(
                     text("""
                         INSERT INTO app_settings (key, value, updated_at)
-                        VALUES (:key, :value, CURRENT_TIMESTAMP)
+                        VALUES (:key, :value, :updated_at)
                         ON CONFLICT(key) DO UPDATE SET
                             value = :value2,
-                            updated_at = CURRENT_TIMESTAMP
+                            updated_at = excluded.updated_at
                         WHERE app_settings.value LIKE :pid_prefix
                            OR CAST(
                                 SUBSTR(app_settings.value, INSTR(app_settings.value, ':') + 1)
@@ -98,6 +99,7 @@ class SchedulerService:
                         "key": key,
                         "value": value,
                         "value2": value,
+                        "updated_at": utcnow().isoformat(sep=" "),
                         "pid_prefix": pid_prefix,
                         "expiry": expiry,
                     },
@@ -170,12 +172,13 @@ class SchedulerService:
         )
         self._job_ids[task.id] = job.id
         if job.next_run_time:
-            next_run_naive = job.next_run_time.replace(tzinfo=None)
+            # APScheduler hands back an aware LOCAL datetime; storage is naive UTC.
+            next_run_utc = as_utc(job.next_run_time)
             async with async_session_factory() as db:
                 result = await db.execute(select(ScheduledTask).where(ScheduledTask.id == task.id))
                 t = result.scalar_one_or_none()
                 if t:
-                    t.next_run_at = next_run_naive
+                    t.next_run_at = next_run_utc
                     await db.commit()
         logger.info("Task #%d '%s' scheduled, next: %s", task.id, task.name, job.next_run_time)
 
@@ -233,7 +236,7 @@ class SchedulerService:
         except Exception:
             pass
         model = task.model or default_model
-        today = datetime.datetime.now().strftime("%Y-%m-%d (%A)")
+        today = to_local(utcnow()).strftime("%Y-%m-%d (%A)")
         system_prompt = (
             f'You are CrabAgent, running the scheduled task "{task.name}" unattended. '
             f"Today is {today}. Working directory: {workspace}\n\n"
@@ -411,14 +414,14 @@ class SchedulerService:
         job = self._scheduler.get_job(job_id)
         if not job or not job.next_run_time:
             return
-        next_run_naive = job.next_run_time.replace(tzinfo=None)
+        next_run_utc = as_utc(job.next_run_time)
         async with async_session_factory() as db:
             result = await db.execute(select(ScheduledTask).where(ScheduledTask.id == task_id))
             t = result.scalar_one_or_none()
             if t:
-                t.next_run_at = next_run_naive
+                t.next_run_at = next_run_utc
                 await db.commit()
-        logger.info("[ST] Task #%d next_run_at refreshed to %s", task_id, next_run_naive)
+        logger.info("[ST] Task #%d next_run_at refreshed to %s (UTC)", task_id, next_run_utc)
 
     async def _create_notification(
         self,
@@ -955,7 +958,7 @@ class SchedulerService:
         if project_context:
             prompt += f"**Project context:**\n{project_context}\n\n"
 
-        today = datetime.datetime.now().strftime("%Y-%m-%d")
+        today = to_local(utcnow()).strftime("%Y-%m-%d")
         prompt += (
             f"Today's date: {today}\n\n"
             "Analyze this email. If it contains any tasks, action items, to-dos, "
@@ -1086,12 +1089,6 @@ def _t(key: str, **kwargs) -> str:
     return template.format_map(kwargs) if kwargs else template
 
 
-def utcnow():
-    from datetime import datetime
-
-    return datetime.now()
-
-
 def _get_local_tz():
     try:
         import tzlocal
@@ -1141,7 +1138,7 @@ async def _memory_quality_decay():
     from crabagent.core.database import AgentMemory, async_session_factory
 
     logger.info("[MemoryDecay] Starting weekly quality decay...")
-    now = datetime.datetime.now()
+    now = utcnow()
     cutoff_30 = now - datetime.timedelta(days=30)
     cutoff_60 = now - datetime.timedelta(days=60)
 
@@ -1359,7 +1356,7 @@ async def _calendar_event_reminder_impl():
             if not cfg.get("event_reminder_enabled", True):
                 return
 
-            now = datetime.datetime.now()
+            now = utcnow()
             check_until = now + datetime.timedelta(minutes=30)
 
             # ── 1. CalendarEvent reminders ──

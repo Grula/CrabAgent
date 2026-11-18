@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import User, get_db
 from crabagent.core.event import AgentEvent, EventBus, EventType
+from crabagent.core.timeutil import utcnow
 from crabagent.serve.deps import get_current_user, get_owned_conversation
 
 router = APIRouter(prefix="/sessions/{session_id}", tags=["input"])
@@ -52,7 +53,7 @@ async def request_user_input(
                 question=question,
                 options=options,
                 risk_level="low",
-                expires_at=datetime.datetime.now() + datetime.timedelta(seconds=INPUT_TTL_SECONDS + 10),
+                expires_at=utcnow() + datetime.timedelta(seconds=INPUT_TTL_SECONDS + 10),
             )
         register_live_future(input_id, future)
     except Exception:

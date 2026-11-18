@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Literal
 
 from crabagent.core.agent.tools.tool_search import deferral_enabled
+from crabagent.core.timeutil import to_local, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ PROMPT_REVISION = 6
 
 def _local_now() -> datetime:
     """Current time in the server's local timezone (the user's own on a desktop install)."""
-    return datetime.now().astimezone()
+    return to_local(utcnow())
 
 
 def _marker(now: datetime) -> str:

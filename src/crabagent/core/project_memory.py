@@ -24,6 +24,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from crabagent.core.timeutil import to_local
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -232,7 +234,7 @@ async def load_project_memory(
 
     # Most recent lesson timestamp → last_active
     last_ts = ws_lessons[0].get("created_at")
-    last_active = last_ts.strftime("%m-%d %H:%M") if last_ts else ""
+    last_active = to_local(last_ts).strftime("%m-%d %H:%M") if last_ts else ""
 
     contents = [l["content"] for l in ws_lessons if l.get("content")]
     total = len(contents)

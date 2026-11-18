@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import AgentRun, Task, TaskRequest
 from crabagent.core.task.status import TaskStatus
+from crabagent.core.timeutil import iso_utc, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ _KIND_PRIORITY = {
 
 
 def _now() -> datetime.datetime:
-    return datetime.datetime.now()
+    return utcnow()
 
 
 def _task_target(task: dict, view: str = "progress") -> dict:
@@ -105,7 +106,7 @@ async def get_attention_summary(db: AsyncSession, user_id: int) -> dict:
                 "session_id": t.session_id,
                 "title": r or t.title,
             },
-            "updated_at": t.created_at.isoformat() if t.created_at else None,
+            "updated_at": iso_utc(t.created_at),
         }
         for t, r in request_rows
     ]
@@ -218,9 +219,7 @@ async def get_attention_summary(db: AsyncSession, user_id: int) -> dict:
                 {"id": task.id, "title": task.title},
                 view=view,
             ),
-            "updated_at": (task.updated_at or task.created_at).isoformat()
-            if (task.updated_at or task.created_at)
-            else None,
+            "updated_at": iso_utc(task.updated_at or task.created_at),
         }
 
     items: list[dict] = []
@@ -240,7 +239,7 @@ async def get_attention_summary(db: AsyncSession, user_id: int) -> dict:
                 if r.task_id
                 else {"type": "session", "session_id": r.session_id or ""}
             ),
-            "updated_at": datetime.datetime.fromtimestamp(r.started_at or 0).isoformat(),
+            "updated_at": iso_utc(datetime.datetime.fromtimestamp(r.started_at or 0, datetime.UTC)),
         }
         for r in running_runs
     )
@@ -260,7 +259,7 @@ async def get_attention_summary(db: AsyncSession, user_id: int) -> dict:
         "count": len(items),
         "target": top["target"] if top else None,
         "groups": grouped,
-        "updated_at": now.isoformat(),
+        "updated_at": iso_utc(now),
     }
 
 

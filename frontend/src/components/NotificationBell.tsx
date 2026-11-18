@@ -7,6 +7,7 @@ import {
   markAllRead,
   Notification,
 } from "../api/notifications";
+import { parseDateTime } from "../api/time";
 import { cn } from "../lib/cn";
 import { useWorkStatus } from "../hooks/useWorkStatus";
 import FloatingMenu from "./ui/FloatingMenu";
@@ -21,8 +22,8 @@ type Tab = "unread" | "read";
 const MAX_PREVIEW_LEN = 200;
 
 function relativeTime(d: string | null | undefined): string {
-  if (!d) return "";
-  const date = new Date(d);
+  const date = parseDateTime(d);
+  if (!date) return "";
   const diff = Date.now() - date.getTime();
   const minutes = Math.floor(diff / 60000);
   if (minutes < 1) return "just now";

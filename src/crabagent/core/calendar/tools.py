@@ -9,6 +9,8 @@ from __future__ import annotations
 import datetime
 import logging
 
+from crabagent.core.timeutil import from_local, to_local, utcnow
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,11 +65,12 @@ def register_calendar_tools(registry):
         from crabagent.core.calendar.store import add_event
         from crabagent.core.database import async_session_factory
 
-        start_dt = _parse_datetime(start_time)
+        # The tool input is the user's local wall clock; storage is naive UTC.
+        start_dt = from_local(_parse_datetime(start_time))
         if not start_dt:
             return f"❌ Could not parse the time: {start_time}"
 
-        end_dt = _parse_datetime(end_time) if end_time else None
+        end_dt = from_local(_parse_datetime(end_time)) if end_time else None
 
         # If no time component was given, treat as all-day
         if " " not in start_time and not end_time:
@@ -90,7 +93,8 @@ def register_calendar_tools(registry):
                 reminder_minutes=reminder_minutes,
             )
         parts = [f"📅 Event created: **{title}**"]
-        parts.append(f"⏰ {start_dt.strftime('%m-%d %H:%M') if not all_day else start_dt.strftime('%m-%d')}")
+        start_local = to_local(start_dt)
+        parts.append(f"⏰ {start_local.strftime('%m-%d %H:%M') if not all_day else start_local.strftime('%m-%d')}")
         if location:
             parts.append(f"📍 {location}")
         if reminder_minutes > 0:
@@ -125,31 +129,32 @@ def register_calendar_tools(registry):
         from crabagent.core.calendar.store import list_events
         from crabagent.core.database import async_session_factory
 
-        now = datetime.datetime.now()
-        start_dt = _parse_date(start_date) or now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_dt = _parse_date(end_date) or (start_dt + datetime.timedelta(days=7))
+        # Default range is the user's local week; the store compares in UTC.
+        local_now = to_local(utcnow())
+        today_start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_local = _parse_date(start_date) or today_start_local
+        end_local = _parse_date(end_date) or (start_local + datetime.timedelta(days=7))
+        start_dt = from_local(start_local)
+        end_dt = from_local(end_local)
 
         user_id = _get_user_id(context)
         async with async_session_factory() as db:
             events = await list_events(db, user_id, start_dt, end_dt + datetime.timedelta(days=1))
 
         if not events:
-            return f"📅 No events between {start_dt.strftime('%m-%d')} and {end_dt.strftime('%m-%d')}."
+            return f"📅 No events between {start_local.strftime('%m-%d')} and {end_local.strftime('%m-%d')}."
 
-        lines = [f"📅 Events between {start_dt.strftime('%m-%d')} and {end_dt.strftime('%m-%d')}:"]
+        lines = [f"📅 Events between {start_local.strftime('%m-%d')} and {end_local.strftime('%m-%d')}:"]
         current_day = ""
         for e in events:
-            day = e["start_time"][:10] if e["start_time"] else "?"
+            starts = _local_display(e["start_time"]) if e["start_time"] else None
+            day = starts.strftime("%Y-%m-%d") if starts else "?"
             if day != current_day:
                 current_day = day
                 lines.append(f"\n  📌 {day}")
             time_part = ""
-            if not e.get("all_day") and e["start_time"]:
-                try:
-                    dt = datetime.datetime.fromisoformat(e["start_time"])
-                    time_part = f"{dt.strftime('%H:%M')} "
-                except Exception:
-                    pass
+            if not e.get("all_day") and starts:
+                time_part = f"{starts.strftime('%H:%M')} "
 
             type_icon = {"task": "⏰", "manual": "🟡", "agent": "🟢", "external": "🔵"}.get(e.get("type"), "📅")
             lines.append(f"    {time_part}{type_icon} {e['title']}")
@@ -185,15 +190,12 @@ def register_calendar_tools(registry):
             lines.append("🕐 Schedule:")
             for e in timed:
                 time_str = ""
-                if e["start_time"]:
-                    try:
-                        dt = datetime.datetime.fromisoformat(e["start_time"])
-                        time_str = f"{dt.strftime('%H:%M')}"
-                        if e.get("end_time"):
-                            dt2 = datetime.datetime.fromisoformat(e["end_time"])
-                            time_str += f"-{dt2.strftime('%H:%M')}"
-                    except Exception:
-                        pass
+                starts = _local_display(e["start_time"]) if e["start_time"] else None
+                if starts:
+                    time_str = f"{starts.strftime('%H:%M')}"
+                    ends = _local_display(e["end_time"]) if e.get("end_time") else None
+                    if ends:
+                        time_str += f"-{ends.strftime('%H:%M')}"
                 icon = {"manual": "🟡", "agent": "🟢", "external": "🔵"}.get(e.get("type"), "📅")
                 loc = f" 📍{e['location']}" if e.get("location") else ""
                 lines.append(f"  {time_str} {icon} {e['title']}{loc}")
@@ -210,8 +212,8 @@ def register_calendar_tools(registry):
             lines.append("🟢 Free slots:")
             for slot in overview["free_slots"]:
                 try:
-                    s = datetime.datetime.fromisoformat(slot["start"])
-                    en = datetime.datetime.fromisoformat(slot["end"])
+                    s = _local_display(slot["start"])
+                    en = _local_display(slot["end"])
                     dur = slot.get("duration_min", 0)
                     hours = dur // 60
                     mins = dur % 60
@@ -260,11 +262,11 @@ def register_calendar_tools(registry):
         if title:
             kwargs["title"] = title
         if start_time:
-            dt = _parse_datetime(start_time)
+            dt = from_local(_parse_datetime(start_time))
             if dt:
                 kwargs["start_time"] = dt
         if end_time:
-            dt = _parse_datetime(end_time)
+            dt = from_local(_parse_datetime(end_time))
             if dt:
                 kwargs["end_time"] = dt
         if location:
@@ -324,10 +326,23 @@ def _parse_datetime(s: str) -> datetime.datetime | None:
 
 
 def _parse_date(s: str) -> datetime.datetime | None:
-    """Parse 'YYYY-MM-DD' to datetime at start of day."""
+    """Parse 'YYYY-MM-DD' to datetime at start of day (a LOCAL calendar date)."""
     if not s:
         return None
     try:
         return datetime.datetime.strptime(s.strip()[:10], "%Y-%m-%d")
     except ValueError:
         return None
+
+
+def _local_display(value: str) -> datetime.datetime | None:
+    """Render a wire timestamp as local wall clock, for formatting only.
+
+    Wire values carry a UTC designator and are converted with ``to_local``; a
+    naive value is already wall clock and is kept as-is.
+    """
+    try:
+        dt = datetime.datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return to_local(dt) if dt.tzinfo is not None else dt

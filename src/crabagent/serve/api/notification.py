@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import Notification, User, get_db
+from crabagent.core.timeutil import iso_utc
 from crabagent.serve.deps import get_current_user
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
@@ -40,8 +41,8 @@ def _to_response(n: Notification) -> NotificationResponse:
         target_id=n.target_id or "",
         task_id=n.task_id,
         action=n.action or "",
-        read_at=n.read_at.isoformat() if n.read_at else None,
-        created_at=n.created_at.isoformat() if n.created_at else "",
+        read_at=iso_utc(n.read_at),
+        created_at=iso_utc(n.created_at) or "",
     )
 
 

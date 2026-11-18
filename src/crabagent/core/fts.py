@@ -81,19 +81,21 @@ def _segment_batch_sync(rows: list[tuple[int, str]]) -> list[dict]:
 async def _upsert_setting(db, key: str, value: str) -> None:
     """Persist an ``app_settings`` row via raw SQL.
 
-    ``app_settings.updated_at`` is NOT NULL; every raw write must set it.
-    CURRENT_TIMESTAMP is UTC, matching the ORM's ``utcnow`` default.
+    ``app_settings.updated_at`` is NOT NULL; every raw write must set it to the
+    shared naive-UTC clock so the table never mixes local and UTC frames.
     """
     from sqlalchemy import text as sa_text
+
+    from crabagent.core.timeutil import utcnow
 
     await db.execute(
         sa_text(
             "INSERT INTO app_settings (key, value, updated_at) "
-            "VALUES (:key, :value, CURRENT_TIMESTAMP) "
+            "VALUES (:key, :value, :updated_at) "
             "ON CONFLICT(key) DO UPDATE SET "
-            "value = excluded.value, updated_at = CURRENT_TIMESTAMP"
+            "value = excluded.value, updated_at = excluded.updated_at"
         ),
-        {"key": key, "value": value},
+        {"key": key, "value": value, "updated_at": utcnow().isoformat(sep=" ")},
     )
 
 

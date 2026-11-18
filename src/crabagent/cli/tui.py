@@ -21,6 +21,7 @@ from crabagent.core.agent.context import AgentContext
 from crabagent.core.agent.loop import run_agent
 from crabagent.core.config import settings
 from crabagent.core.event import AgentEvent, EventType
+from crabagent.core.timeutil import to_local
 
 PROMPT_STYLE = Style.from_dict({"toolbar": "bg:#161b22 #8b949e"})
 SLASH_COMMANDS = [
@@ -1146,7 +1147,7 @@ class TuiSession:
             return
         for i, c in enumerate(convs[:20], 1):
             title = c.title or "(untitled)"
-            ts = c.updated_at.strftime("%m-%d %H:%M") if c.updated_at else ""
+            ts = to_local(c.updated_at).strftime("%m-%d %H:%M") if c.updated_at else ""
             mark = " [bold]*[/bold]" if c.id == self._conversation_id else ""
             self.console.print(f"  {i:>2}. {title}  [{ts}]{mark}")
 
@@ -1167,7 +1168,7 @@ class TuiSession:
             recent = convs[:20]
             for i, c in enumerate(recent, 1):
                 title = c.title or "(untitled)"
-                ts = c.updated_at.strftime("%m-%d %H:%M") if c.updated_at else ""
+                ts = to_local(c.updated_at).strftime("%m-%d %H:%M") if c.updated_at else ""
                 mark = " [bold]*[/bold]" if c.id == self._conversation_id else ""
                 self.console.print(f"  {i:>2}. {title}  [{ts}]{mark}")
             try:

@@ -5,7 +5,6 @@ import json as _json
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -18,6 +17,7 @@ from crabagent.core.agent.reflect import (
 )
 from crabagent.core.agent.skill.loader import scope_skill_tool
 from crabagent.core.database import AgentProfile, async_session_factory
+from crabagent.core.timeutil import to_local, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -418,7 +418,7 @@ def _build_system_prompt(
         parts.append(_AGENT_SYSTEM_BACKSTORY.format(backstory=backstory))
     if workspace:
         # Sub-agents get no base system prompt, so tell them the date and where they are.
-        today = datetime.now().astimezone().strftime("%Y-%m-%d (%A)")
+        today = to_local(utcnow()).strftime("%Y-%m-%d (%A)")
         parts.append(_AGENT_SYSTEM_ENVIRONMENT.format(date=today, workspace=workspace))
     # Capability hints keep the model aligned with its real toolset.
     parts.extend(extra_lines or [])
