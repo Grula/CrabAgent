@@ -67,6 +67,35 @@ class ApiClient {
     return this.request<T>(`${path}${qs}`, { signal });
   }
 
+  /** Fetch a plain-text (e.g. Markdown) response body with the same auth as request(). */
+  async getText(path: string, signal?: AbortSignal): Promise<string> {
+    const headers: Record<string, string> = {};
+    if (this.token) {
+      headers["Authorization"] = `Bearer ${this.token}`;
+    }
+    const res = await fetch(`${API_BASE}${path}`, { headers, signal });
+    if (res.status === 401) {
+      const hadToken = !!this.token;
+      this.clearToken();
+      if (hadToken) {
+        window.location.reload();
+      }
+      throw new Error("Unauthorized");
+    }
+    const text = await res.text();
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const data = JSON.parse(text);
+        if (data && typeof data.detail === "string") detail = data.detail;
+      } catch {
+        if (text) detail = text;
+      }
+      throw new ApiError(detail, res.status, text);
+    }
+    return text;
+  }
+
   post<T>(path: string, body: unknown) {
     if (body instanceof FormData) {
       return this.request<T>(path, { method: "POST", body });

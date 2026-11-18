@@ -105,6 +105,16 @@ export function getMessages(sessionId: string, limit = 1000, includeCompressed =
   return api.get(`/sessions/${sessionId}/messages?limit=${limit}&include_compressed=${includeCompressed}`, undefined, signal);
 }
 
+/** Markdown transcript of a whole conversation, for download. */
+export function exportSession(sessionId: string): Promise<string> {
+  return api.getText(`/sessions/${encodeURIComponent(sessionId)}/export`);
+}
+
+/** Markdown report of a conversation (task board report export). */
+export function getSessionReport(sessionId: string): Promise<string> {
+  return api.getText(`/sessions/${encodeURIComponent(sessionId)}/report`);
+}
+
 export interface CompressionResult {
   summary: string;
   model: string;

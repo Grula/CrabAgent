@@ -17,6 +17,7 @@ import {
   LayoutPanelLeft,
   LayoutPanelTop,
   FileText,
+  Download,
   Archive,
   Globe,
   Mic,
@@ -933,20 +934,44 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     }
   };
 
-  const handleExportReport = async () => {
-    if (!activeSession) return;
-    const token = localStorage.getItem("crab_token") || "";
-    const resp = await fetch(
-      `/api/sessions/${encodeURIComponent(activeSession.session_id)}/report?token=${encodeURIComponent(token)}`,
-    );
-    const text = await resp.text();
+  const downloadMarkdown = (text: string, filename: string) => {
     const blob = new Blob([text], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `crabagent-report-${activeSession.session_id.slice(0, 8)}.md`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const exportFilename = (session: { session_id: string; title?: string }) => {
+    const slug = (session.title || "")
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^[-.]+/, "")
+      .slice(0, 60)
+      .replace(/[-.]+$/, "");
+    return slug ? `${slug}.md` : `crabagent-chat-${session.session_id.slice(0, 8)}.md`;
+  };
+
+  const handleExportChat = async () => {
+    if (!activeSession) return;
+    try {
+      const text = await sessionsApi.exportSession(activeSession.session_id);
+      downloadMarkdown(text, exportFilename(activeSession));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Chat export failed");
+    }
+  };
+
+  const handleExportReport = async () => {
+    if (!activeSession) return;
+    try {
+      const text = await sessionsApi.getSessionReport(activeSession.session_id);
+      downloadMarkdown(text, `crabagent-report-${activeSession.session_id.slice(0, 8)}.md`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Report export failed");
+    }
   };
 
   const quickActionPrompts: Record<string, string> = {
@@ -1665,6 +1690,17 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                     className="text-[var(--text-secondary)] hover:text-[var(--brand)]"
                   >
                     {"Compress"}
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={handleExportChat}
+                    leftIcon={<Download size={13} />}
+                    title="Export chat as Markdown"
+                    aria-label="Export chat as Markdown"
+                    className="text-[var(--text-secondary)] hover:text-[var(--brand)]"
+                  >
+                    {"Export"}
                   </Button>
                 </div>
               )}

@@ -1323,6 +1323,8 @@ DEFAULT_AGENTS = [
             "fixes go straight to coder; for a bug, follow bug-triage: reproduce it the way the user hit "
             "it before anyone fixes it, and check the fix on that same path; web research goes to researcher. Tasks on different files go in one "
             "delegate_parallel; a task that needs another's output goes in run_pipeline.\n"
+            "- In run_pipeline, steps without depends_on start at once. When tests must come first, the coder "
+            "steps depend on the tester step, and the review depends on the coder steps.\n"
             "- Put the whole check in the brief that changes the code (the full test suite when shared code "
             "changes); don't add a separate test step after the review unless the reviewer asks for one.\n"
             "- Check each result against its pass/fail criteria (read the report, git_diff the change). If "
