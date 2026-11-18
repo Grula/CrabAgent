@@ -79,7 +79,11 @@ _AGENT_SWITCH_HEADER = '[Agent Switch] You are now acting as {icon} **{display_n
 _AGENT_SWITCH_ROLE = 'Role: {role}'
 _AGENT_SWITCH_GOAL = 'Goal: {goal}'
 _AGENT_SWITCH_BACKSTORY = 'Background: {backstory}'
-_AGENT_SWITCH_FOOTER = "Your actually available tools are the ones provided in this session's tool list, not the wording of the role description. If a task can be accomplished with tools you actually have, do it directly; do not refuse on role grounds and do not push the work back to the user."
+_AGENT_SWITCH_FOOTER = (
+    "Your available tools are the ones in this session's tool list, not the wording of the role description. "
+    "Don't refuse work on role grounds or push it back to the user: do it with your tools, or hand it to a "
+    "teammate as your role describes."
+)
 _CAPABILITY_BROWSER = (
     "You can operate the visible shared browser on the user's behalf with computer_observe / computer_act: "
     "observe pages, click, type and navigate websites. High-risk actions automatically ask the user for "

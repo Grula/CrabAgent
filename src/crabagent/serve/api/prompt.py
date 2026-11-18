@@ -193,6 +193,20 @@ class PromptRequest(BaseModel):
     work_mode: bool = False
 
 
+def profile_tool_names(profile: dict) -> list[str]:
+    """The tools an agent profile actually gets, after its deny rules.
+
+    Capability hints in the saved agent-switch message must describe these, not
+    the global pool: an agent told it can drive the browser, or not told that it
+    can't edit files, works from a false picture of itself on every later turn.
+    """
+    from crabagent.core.agent.agent_switch import filter_tool_registry
+
+    tp = profile.get("tool_permissions") or {}
+    narrowed = filter_tool_registry(registry, tool_permissions=tp if isinstance(tp, dict) else {}, allow_delegation=True)
+    return list(narrowed._tools)
+
+
 async def apply_agent_profile(context, effective_agent: str) -> None:
     """Narrow a chat context's tools and skills to the active agent's profile.
 
@@ -291,7 +305,7 @@ async def prompt_async(
         if agent_profile:
             switch_msg = build_agent_switch_msg(
                 agent_profile,
-                extra_lines=capability_hint_lines(registry._tools.keys()),
+                extra_lines=capability_hint_lines(profile_tool_names(agent_profile)),
             )
             switch_seq = user_msg_seq
             await save_message(
@@ -312,7 +326,7 @@ async def prompt_async(
         if default_profile:
             switch_msg = build_agent_switch_msg(
                 default_profile,
-                extra_lines=capability_hint_lines(registry._tools.keys()),
+                extra_lines=capability_hint_lines(profile_tool_names(default_profile)),
             )
             switch_seq = user_msg_seq
             await save_message(
@@ -676,7 +690,8 @@ Use ordinary Markdown when a visualization is not helpful.
 
     from crabagent.core.agent.run_recorder import RunRecorder
 
-    resolved_model = req.model or conv.model or ""
+    # context.model already includes the agent profile's own model, which wins over the UI pick.
+    resolved_model = context.model or req.model or conv.model or ""
     run_recorder = RunRecorder(user_id=user.id, session_id=session_id, model=resolved_model)
     context.event_bus.subscribe(run_recorder.on_event)
 

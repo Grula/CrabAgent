@@ -31,7 +31,7 @@ PIPELINE_GRANULARITY_TEXT = (
 )
 
 # Prefix of the agent-switch footer, which ends the switch message.
-SWITCH_TOOL_LIST_PREFIX = "Your actually available tools are the ones provided"
+SWITCH_TOOL_LIST_PREFIX = "Your available tools are the ones in this session's tool list"
 
 AGENT_DEF = {
     "name": "coder",

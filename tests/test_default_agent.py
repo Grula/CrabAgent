@@ -146,6 +146,8 @@ class TestDefaultTeamCapabilities:
         for agent in db.DEFAULT_AGENTS:
             caps = self._caps(agent["name"])
             assert not unneeded & set(caps), (agent["name"], caps)
+            # observe without act is useless, and its hint claims the agent can drive the browser
+            assert agent["tool_permissions"].get("computer_observe") == "deny", agent["name"]
 
     def test_only_implementer_and_tester_use_the_shared_browser(self):
         users = {a["name"] for a in db.DEFAULT_AGENTS if "shared browser" in self._caps(a["name"])}
@@ -179,3 +181,13 @@ class TestDefaultTeamCapabilities:
         goals = {a["name"]: a["goal"] for a in db.DEFAULT_AGENTS}
         assert "scout" in goals["architect"]
         assert "request_help" in goals["coder"] and "scout" in goals["coder"]
+
+    def test_architect_sends_code_questions_to_the_scout_even_when_it_could_read(self):
+        goal = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")["goal"]
+        assert "go to scout, even when you could answer them yourself" in goal
+
+
+def test_switch_footer_allows_handing_work_to_a_teammate():
+    msg = agents.build_agent_switch_msg({"name": "x", "display_name": "X", "goal": "g"})["content"]
+    assert "hand it to a teammate" in msg
+    assert "do it directly" not in msg

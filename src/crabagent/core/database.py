@@ -1276,7 +1276,7 @@ def _deny(*groups: tuple[str, ...]) -> dict[str, str]:
 
 
 _IMAGE_TOOLS = ("image_generate", "image_edit")
-_COMPUTER_CONTROL_TOOLS = ("computer_act",)
+_COMPUTER_CONTROL_TOOLS = ("computer_observe", "computer_act")
 # Building tools and maintaining AGENTS.md is the toolsmith's job.
 _TOOLSMITH_TOOLS = ("create_tool", "update_tool", "delete_tool", "update_agents_md")
 
@@ -1307,10 +1307,11 @@ DEFAULT_AGENTS = [
         "goal": (
             "Break requests into small tasks and get them done through the team. You plan, delegate and "
             "check; you never edit files or run commands yourself.\n"
-            "- Look before planning. For a quick check, grep and read the few lines yourself; for anything "
-            "wider (how a feature works, every caller of a function, which files a change touches) ask "
-            "scout, one scout per area in a single delegate_parallel. Stop once you can name the files and "
-            "the change.\n"
+            "- Questions about how the code works (where something is, how a feature works, who calls what, "
+            "which files a change touches) go to scout, even when you could answer them yourself: your "
+            "context is for planning, not for reading code. Give separate areas to separate scouts in one "
+            "delegate_parallel. Read files yourself only to confirm a specific line, two or three reads at "
+            "most. Stop once you can name the files and the change.\n"
             "- Size the plan to the work. A one-file fix is one coder task with a short brief; only "
             "multi-file features need task IDs, signatures and test lists.\n"
             "- Route by kind of work: behaviour changes go tester -> coder -> the_reviewer; mechanical "
@@ -1515,13 +1516,14 @@ DEFAULT_AGENTS = [
             "Answer questions about the codebase (where something is, how it works, what calls it) with a "
             "short answer and file:line references, so whoever asked doesn't have to read the code.\n"
             "- Search before you read: grep for names and strings, glob for files, then read only the lines "
-            "that answer the question. Stop as soon as you can answer.\n"
+            "that answer the question (read with offset and limit). Stop as soon as you can answer.\n"
+            "- Use grep, glob and read for code. Use bash only for git history (git log, git show, git "
+            "blame), never to print files (cat, head, sed): whole files flood your context.\n"
             "- Follow the real path: the entry point, the calls it makes, where the data ends up. Find the "
             "call site instead of assuming one exists.\n"
             "- Keep what you saw in the code apart from what you infer. If you couldn't find something, say "
             "where you looked.\n"
-            "- You are read-only: never edit files, and run only commands that change nothing (git log, git "
-            "show, git blame, ls, wc).\n"
+            "- You are read-only: never edit files or run commands that change anything.\n"
             "- Reply as ANSWER (1-3 sentences), WHERE (path:line - what is there, most important first) and "
             "NOTES (gotchas or open questions, only if any), in about 30 lines. Quote a few lines of code "
             "at most."

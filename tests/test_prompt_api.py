@@ -123,3 +123,24 @@ def test_chat_route_is_served_by_prompt_async():
     }
     assert routes[("/sessions/{session_id}/prompt", "POST")] is prompt_api.prompt_async
     assert all(endpoint is not prompt_api.apply_agent_profile for endpoint in routes.values())
+
+
+def test_switch_message_hints_follow_the_agents_own_tools(monkeypatch):
+    """The saved agent-switch message describes the profile's tools, not the global pool."""
+    from crabagent.core.agent.agents import _CAPABILITY_BROWSER, _CAPABILITY_NO_HANDS, capability_hint_lines
+    from crabagent.core.agent.tools.registry import ToolRegistry
+
+    pool = ToolRegistry()
+    for name in ("read", "grep", "edit", "write", "bash", "computer_observe", "computer_act", "delegate_task"):
+        pool.register(name, name, {"type": "object", "properties": {}})(lambda **kwargs: None)
+    monkeypatch.setattr(prompt_api, "registry", pool)
+    planner = {"tool_permissions": {t: "deny" for t in ("edit", "write", "bash", "computer_observe", "computer_act")}}
+
+    names = prompt_api.profile_tool_names(planner)
+    hints = capability_hint_lines(names)
+
+    assert {"read", "grep", "delegate_task"} <= set(names)
+    assert not {"edit", "bash", "computer_act", "computer_observe"} & set(names)
+    assert _CAPABILITY_NO_HANDS in hints and _CAPABILITY_BROWSER not in hints
+    # with no profile restrictions the pool is unchanged
+    assert set(prompt_api.profile_tool_names({})) == set(pool._tools)
