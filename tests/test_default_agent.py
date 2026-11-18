@@ -205,6 +205,17 @@ def test_architect_briefs_the_what_and_leaves_the_how_to_the_coder():
     assert "Report what actually happened, not the plan" in architect["goal"]
 
 
+def test_architect_checks_a_feature_the_way_the_user_will_use_it():
+    # Milestone 7: every check posted straight to the server, none used the page's own form.
+    architect = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")
+    goal = architect["goal"]
+    assert "check it the way the user will use it" in goal
+    assert "a page through its UI in a browser" in goal
+    assert "web-app-testing" in goal
+    tester = next(a for a in db.DEFAULT_AGENTS if a["name"] == "tester")
+    assert "web-app-testing" in tester["skills"]  # the skill the rule points at is really the tester's
+
+
 def test_architect_prompt_matches_the_sub_agent_step_cap():
     architect = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")
     assert f"stops after about {agents.SUB_AGENT_MAX_STEPS} steps" in architect["goal"]
