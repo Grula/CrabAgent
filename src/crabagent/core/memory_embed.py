@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
-_EMBEDDING_DIM = 384
 
 # Singleton state
 _MODEL = None

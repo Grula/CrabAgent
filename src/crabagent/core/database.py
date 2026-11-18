@@ -679,7 +679,6 @@ class TaskRequest(Base):
     consumed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
 
 
-
 class BrowserTaskEvent(Base):
     """A redacted task timeline event. Never use this for page text or typed values."""
 
@@ -1237,15 +1236,6 @@ async def init_db() -> None:
         pass
 
 
-async def _rebuild_cjk_index_async() -> None:
-    """Background task: rebuild jieba-based FTS5 index."""
-    try:
-        from crabagent.core.fts import rebuild_index
-        await rebuild_index()
-    except Exception as e:
-        logging.getLogger(__name__).warning("FTS5-CJK rebuild failed: %s", e)
-
-
 async def _ensure_default_admin():
     from sqlalchemy import select
 
@@ -1687,19 +1677,6 @@ async def shared_memory_get_all(session_id: str) -> list[dict]:
             select(SharedMemory).where(SharedMemory.session_id == session_id).order_by(SharedMemory.id)
         )
         return [{"key": r.key, "value": r.value, "author": r.author} for r in result.scalars().all()]
-
-
-async def shared_memory_delete(session_id: str, key: str) -> None:
-    from sqlalchemy import delete as sa_delete
-
-    async with async_session_factory() as db:
-        await db.execute(
-            sa_delete(SharedMemory).where(
-                SharedMemory.session_id == session_id,
-                SharedMemory.key == key,
-            )
-        )
-        await db.commit()
 
 
 async def agent_memory_upsert(
@@ -2359,17 +2336,6 @@ async def run_record_finalize(
         stmt = sa_update(AgentRun).where(AgentRun.id == run_id).values(**values)
         await db.execute(stmt)
         await db.commit()
-
-
-async def run_record_get(run_id: int) -> dict | None:
-    from sqlalchemy import select
-
-    async with async_session_factory() as db:
-        result = await db.execute(select(AgentRun).where(AgentRun.id == run_id))
-        run = result.scalar_one_or_none()
-        if not run:
-            return None
-        return _run_to_dict(run)
 
 
 async def run_record_list(
@@ -3133,22 +3099,6 @@ async def get_spans_by_session(session_id: str) -> list[dict]:
         result = await db.execute(
             select(ExecutionSpan)
             .where(ExecutionSpan.session_id == session_id)
-            .order_by(ExecutionSpan.started_at, ExecutionSpan.id)
-        )
-        return [_span_to_dict(s) for s in result.scalars().all()]
-
-
-async def get_spans_by_run(session_id: str, run_id: str) -> list[dict]:
-    """Return all spans for a specific run."""
-    from sqlalchemy import select
-
-    async with async_session_factory() as db:
-        result = await db.execute(
-            select(ExecutionSpan)
-            .where(
-                ExecutionSpan.session_id == session_id,
-                ExecutionSpan.run_id == run_id,
-            )
             .order_by(ExecutionSpan.started_at, ExecutionSpan.id)
         )
         return [_span_to_dict(s) for s in result.scalars().all()]

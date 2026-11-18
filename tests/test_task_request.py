@@ -134,19 +134,6 @@ async def test_decide_missing_request_raises(db):
 
 
 @pytest.mark.asyncio
-async def test_consume_request_single_shot(db):
-    req = await rs.create_request(db, user_id=1, request_type="approval", title="Confirm")
-    await rs.decide_request(db, req["request_key"], 1, "approve")
-
-    first = await rs.consume_request(db, req["request_key"], 1)
-    second = await rs.consume_request(db, req["request_key"], 1)
-
-    assert first["status"] == "consumed"
-    assert first["consumed_at"] is not None
-    assert second["status"] == "consumed"  # idempotent replay
-
-
-@pytest.mark.asyncio
 async def test_list_pending_and_expiry_sweep(db):
     await rs.create_request(
         db,

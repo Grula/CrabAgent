@@ -142,23 +142,6 @@ async def delete_event(db: AsyncSession, event_id: int, user_id: int) -> bool:
     return True
 
 
-async def find_by_ical_uid(
-    db: AsyncSession, ical_uid: str, ical_source_id: int, user_id: int
-) -> dict | None:
-    """Find an event by its iCal UID (for upsert during sync)."""
-    if not ical_uid:
-        return None
-    result = await db.execute(
-        select(CalendarEvent).where(
-            CalendarEvent.ical_uid == ical_uid,
-            CalendarEvent.ical_source_id == ical_source_id,
-            CalendarEvent.user_id == user_id,
-        )
-    )
-    e = result.scalar_one_or_none()
-    return _event_to_dict(e) if e else None
-
-
 # ---------------------------------------------------------------------------
 # Aggregated queries
 # ---------------------------------------------------------------------------

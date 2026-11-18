@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import datetime
 import json
 import logging
@@ -9,7 +8,7 @@ import mimetypes
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -22,8 +21,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
-# Supported extensions
-_DOC_EXTENSIONS = {".docx", ".xlsx", ".pptx"}
 _PREVIEWABLE_EXTENSIONS = {".docx", ".xlsx", ".pptx"}
 
 # ── helpers ───────────────────────────────────────────────────────
@@ -85,63 +82,7 @@ def _safe_path(base_dir: Path, file_name: str) -> Path:
     return full
 
 
-def _file_info(file_path: Path, base_dir: Path) -> dict:
-    """Return a file info dict."""
-    stat = file_path.stat()
-    rel = str(file_path.relative_to(base_dir))
-    ext = file_path.suffix.lower()
-    return {
-        "name": file_path.name,
-        "path": rel,
-        "size": stat.st_size,
-        "modified": int(stat.st_mtime),
-        "type": ext.lstrip("."),
-        "previewable": ext in _PREVIEWABLE_EXTENSIONS,
-    }
-
-
 # ── routes ─────────────────────────────────────────────────────────
-
-
-@router.get("")
-async def list_documents(
-    workspace: str = "",
-    user: User = Depends(get_current_user),
-):
-    """List the Office documents in the workspace."""
-    docs_dir = _get_docs_dir(user.id, workspace)
-    files = []
-    for f in sorted(docs_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-        if f.is_file() and f.suffix.lower() in _DOC_EXTENSIONS:
-            files.append(_file_info(f, docs_dir))
-    return {"files": files, "workspace": workspace, "dir": str(docs_dir)}
-
-
-@router.post("/upload")
-async def upload_document(
-    file: UploadFile = File(...),
-    workspace: str = Form(default=""),
-    user: User = Depends(get_current_user),
-):
-    """Upload an Office document into the workspace."""
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided")
-
-    ext = Path(file.filename).suffix.lower()
-    if ext not in _DOC_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type '{ext}'. Supported: {', '.join(_DOC_EXTENSIONS)}",
-        )
-
-    docs_dir = _get_docs_dir(user.id, workspace)
-    dest = _safe_path(docs_dir, file.filename)
-
-    content = await file.read()
-    dest.write_bytes(content)
-
-    logger.info("Document uploaded: %s (%d bytes)", dest, len(content))
-    return {"status": "ok", "file": file.filename, "size": len(content), "path": str(dest)}
 
 
 @router.get("/download")
@@ -191,52 +132,6 @@ async def preview_document(
         raise HTTPException(status_code=500, detail=result.error)
 
     return {"html": _fix_html_newlines(result.data), "file": path, "name": file_path.name}
-
-
-@router.post("/save")
-async def save_document(
-    data: dict,
-    workspace: str = "",
-    user: User = Depends(get_current_user),
-):
-    """Save document content sent back from the frontend editor (base64 encoded)."""
-    path = data.get("path", "")
-    content_b64 = data.get("content", "")
-    if not path or not content_b64:
-        raise HTTPException(status_code=400, detail="Missing 'path' or 'content'")
-
-    docs_dir = _get_docs_dir(user.id, workspace)
-    file_path = _safe_path(docs_dir, path)
-
-    try:
-        content = base64.b64decode(content_b64)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid base64 content")
-
-    # Make sure the parent directory exists
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_bytes(content)
-
-    logger.info("Document saved: %s (%d bytes)", file_path, len(content))
-    return {"status": "ok", "file": path, "size": len(content)}
-
-
-@router.delete("")
-async def delete_document(
-    path: str,
-    workspace: str = "",
-    user: User = Depends(get_current_user),
-):
-    """Delete a document."""
-    docs_dir = _get_docs_dir(user.id, workspace)
-    file_path = _safe_path(docs_dir, path)
-
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-
-    file_path.unlink()
-    logger.info("Document deleted: %s", file_path)
-    return {"status": "ok", "file": path}
 
 
 # ── Quick Edit ──────────────────────────────────────────────────────

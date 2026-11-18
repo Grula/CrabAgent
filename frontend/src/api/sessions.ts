@@ -105,49 +105,6 @@ export function getMessages(sessionId: string, limit = 1000, includeCompressed =
   return api.get(`/sessions/${sessionId}/messages?limit=${limit}&include_compressed=${includeCompressed}`, undefined, signal);
 }
 
-export interface BrowserTask {
-  id: number;
-  session_id: string;
-  goal: string;
-  status: string;
-  url: string;
-  page_version: number | null;
-  summary: string;
-  created_at: string | null;
-  updated_at: string | null;
-  completed_at: string | null;
-}
-
-export interface BrowserTaskEvent {
-  id: number;
-  task_id: number;
-  event_type: string;
-  detail: string;
-  risk: string;
-  data: Record<string, unknown>;
-  created_at: string | null;
-}
-
-export function listBrowserTasks(sessionId: string): Promise<{ tasks: BrowserTask[] }> {
-  return api.get(`/sessions/${sessionId}/browser-tasks`);
-}
-
-export function createBrowserTask(sessionId: string, goal: string, url = ""): Promise<BrowserTask> {
-  return api.post(`/sessions/${sessionId}/browser-tasks`, { goal, url });
-}
-
-export function updateBrowserTask(sessionId: string, taskId: number, update: Partial<Pick<BrowserTask, "status" | "url" | "page_version" | "summary">>): Promise<BrowserTask> {
-  return api.patch(`/sessions/${sessionId}/browser-tasks/${taskId}`, update);
-}
-
-export function listBrowserTaskEvents(sessionId: string, taskId: number): Promise<{ events: BrowserTaskEvent[] }> {
-  return api.get(`/sessions/${sessionId}/browser-tasks/${taskId}/events`);
-}
-
-export function createBrowserTaskEvent(sessionId: string, taskId: number, event: Pick<BrowserTaskEvent, "event_type" | "detail"> & Partial<Pick<BrowserTaskEvent, "risk" | "data">>): Promise<BrowserTaskEvent> {
-  return api.post(`/sessions/${sessionId}/browser-tasks/${taskId}/events`, event);
-}
-
 export interface CompressionResult {
   summary: string;
   model: string;
@@ -196,16 +153,6 @@ export function confirmTool(sessionId: string, confirmId: string, approved: bool
   return api.post(`/sessions/${sessionId}/tool-confirm`, { confirm_id: confirmId, approved });
 }
 
-export interface PendingToolConfirm {
-  confirm_id: string;
-  tool_name: string;
-  args_summary: string;
-}
-
-export function getPendingToolConfirms(sessionId: string): Promise<{ confirms: PendingToolConfirm[] }> {
-  return api.get(`/sessions/${sessionId}/pending-confirms`);
-}
-
 export function listBranches(sessionId: string): Promise<BranchInfo[]> {
   return api.get(`/sessions/${sessionId}/branches`);
 }
@@ -238,10 +185,6 @@ export function listMolts(sessionId: string): Promise<Molt[]> {
   return api.get(`/sessions/${sessionId}/molts`);
 }
 
-export function getMolt(sessionId: string, moltId: string): Promise<Molt> {
-  return api.get(`/sessions/${sessionId}/molts/${moltId}`);
-}
-
 export function getMoltDiff(sessionId: string, moltId: string): Promise<{ molt_id: string; diffs: MoltDiff[] }> {
   return api.get(`/sessions/${sessionId}/molts/${moltId}/diff`);
 }
@@ -270,22 +213,8 @@ export function markTodoDone(sessionId: string, todoId: number): Promise<void> {
   return api.post(`/sessions/${sessionId}/todos/${todoId}/done`, {});
 }
 
-export function deleteTodo(sessionId: string, todoId: number): Promise<void> {
-  return api.del(`/sessions/${sessionId}/todos/${todoId}`);
-}
-
 export function submitInput(sessionId: string, inputId: string, answer: string): Promise<void> {
   return api.post(`/sessions/${sessionId}/user-input`, { input_id: inputId, answer });
-}
-
-export interface PendingInput {
-  input_id: string;
-  question: string;
-  options?: string[];
-}
-
-export function getPendingInputs(sessionId: string): Promise<{ inputs: PendingInput[] }> {
-  return api.get(`/sessions/${sessionId}/pending-inputs`);
 }
 
 export function searchSessions(q: string, workspace?: string): Promise<SearchResult[]> {

@@ -300,47 +300,6 @@ async def get_image(
     return FileResponse(str(target), media_type=media_type)
 
 
-@router.get("/serve/{file_path:path}")
-async def serve_file(
-    file_path: str,
-    token: str = Query(..., description="JWT token for auth"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Serve any file with correct Content-Type.
-    
-    Path is treated as absolute filesystem path (with leading /) or
-    relative to workspace. Uses token query param for auth (same as /files/image).
-    """
-    from crabagent.core.config import settings
-    from crabagent.serve.services.auth import decode_access_token, get_user_by_id
-
-    payload = decode_access_token(token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    try:
-        user_id = int(payload["sub"])
-    except (KeyError, ValueError):
-        raise HTTPException(status_code=401, detail="Invalid token payload")
-    user = await get_user_by_id(db, user_id)
-    if not user or not user.enabled:
-        raise HTTPException(status_code=401, detail="User not found or disabled")
-
-    if file_path.startswith("/"):
-        target = Path(file_path).resolve()
-    else:
-        workspace = settings.workspace.resolve()
-        t = _resolve_path(workspace, file_path.lstrip("/"))
-        if not t:
-            raise HTTPException(status_code=400, detail="Path outside workspace")
-        target = t
-
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
-
-    media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-    return FileResponse(str(target), media_type=media_type)
-
-
 @router.post("/serve-dir")
 async def start_preview_session(
     path: str = Query(..., description="Absolute directory path to preview"),

@@ -51,39 +51,6 @@ async def test_list_molts_returns_sorted(db):
     assert "molt_0002" in ids
 
 
-@pytest.mark.asyncio
-async def test_get_molt_returns_none_for_missing(db):
-    result = await molt_store.get_molt(db, "nonexistent")
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_get_molt_returns_row(db):
-    await molt_store.create_molt(db, molt_id="molt_x", session_id="s1", branch_id="main", description="x", method="git", file_count=0)
-
-    result = await molt_store.get_molt(db, "molt_x")
-    assert result is not None
-    assert result["description"] == "x"
-
-
-@pytest.mark.asyncio
-async def test_count_molts(db):
-    await molt_store.create_molt(db, molt_id="molt_a", session_id="s1", branch_id="main", description="a", method="git", file_count=0)
-    await molt_store.create_molt(db, molt_id="molt_b", session_id="s1", branch_id="main", description="b", method="git", file_count=0)
-
-    count = await molt_store.count_molts(db, "s1")
-    assert count == 2
-
-
-@pytest.mark.asyncio
-async def test_delete_molt(db):
-    await molt_store.create_molt(db, molt_id="molt_d", session_id="s1", branch_id="main", description="d", method="git", file_count=0)
-
-    await molt_store.delete_molt(db, "molt_d")
-    count = await molt_store.count_molts(db, "s1")
-    assert count == 0
-
-
 def test_molt_dir_uses_workspace(tmp_path: Path):
     result = molt_store.molt_dir(tmp_path)
     assert result == tmp_path / ".crabagent" / "molts"

@@ -85,7 +85,7 @@ async def test_register_same_path_supersedes_and_bumps_version(db, report_file):
     listed = await artifacts.list_artifacts(db, task["id"], 1)
     assert len(listed) == 2
     assert {a["status"] for a in listed} == {"superseded", "available"}
-    assert await artifacts.current_artifact_version(db, task["id"], report_file) == 2
+    assert [a["version"] for a in listed if a["status"] == "available"] == [2]
 
 
 @pytest.mark.asyncio

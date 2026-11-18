@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Clock, Users, CheckCircle2, AlertCircle, Sparkles, Send, FileText, X, Lightbulb } from "lucide-react";
+import { Clock, Users, Send, X, Lightbulb } from "lucide-react";
 import { cn } from "../lib/cn";
 import * as sessionsApi from "../api/sessions";
 import { listAgentProfiles } from "../api/agents";
@@ -15,11 +15,6 @@ import {
 import { buildParticipantOptions, type ParticipantOption } from "./meetingParticipants";
 import { ParticipantPicker } from "./ParticipantPicker";
 
-interface AISuggestion {
-  type: "task" | "question" | "decision";
-  content: string;
-}
-
 interface Props {
   sessionId: string;
   className?: string;
@@ -33,7 +28,6 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
   const [notes, setNotes] = useState<MeetingNote[]>([]);
   const [inputText, setInputText] = useState("");
   const [inputSpeaker, setInputSpeaker] = useState("");
-  const [aiSuggestions, setAiSuggestions] = useState<AISuggestion[]>([]);
   const [status, setStatus] = useState<"active" | "ended">("active");
   const [ending, setEnding] = useState(false);
   const [summary, setSummary] = useState("");
@@ -210,23 +204,6 @@ export function MeetingPanel({ sessionId, className, onPrompt }: Props) {
           </div>
         )}
         <div ref={notesEndRef} />
-
-        {/* AI suggestions */}
-        {aiSuggestions.length > 0 && (
-          <div className="mt-3 p-2 rounded bg-[var(--accent-bg)] border border-[var(--accent-border)]">
-            <div className="flex items-center gap-1 text-[11px] font-medium text-[var(--accent)] mb-1">
-              <Sparkles size={12} /> AI Analysis
-            </div>
-            {aiSuggestions.map((s, i) => (
-              <div key={i} className="text-[11px] text-[var(--text-secondary)] flex items-start gap-1.5 py-0.5">
-                {s.type === "task" && <CheckCircle2 size={11} className="mt-0.5 shrink-0 text-[var(--success)]" />}
-                {s.type === "question" && <AlertCircle size={11} className="mt-0.5 shrink-0 text-[var(--warning)]" />}
-                {s.type === "decision" && <FileText size={11} className="mt-0.5 shrink-0 text-[var(--accent)]" />}
-                {s.content}
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Input area */}

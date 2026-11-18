@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X as XIcon, Mail, Check, Loader2 } from "lucide-react";
+import { X as XIcon, Mail, Loader2 } from "lucide-react";
 import * as emailApi from "../api/email";
 import { Button, Input } from "./ui";
 import { toast } from "./ui/Toast";

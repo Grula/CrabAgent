@@ -811,37 +811,6 @@ async def _consume_reset_credit(
         return resp.json()
 
 
-async def _fetch_rate_limit_status(access_token: str, account_id: str | None) -> dict[str, Any]:
-    """GET /wham/rate-limit-status — fetch current rate limit status."""
-    headers = _build_wham_headers(access_token, account_id)
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(f"{CHATGPT_WHAM_BASE}/rate-limit-status", headers=headers)
-        resp.raise_for_status()
-        return resp.json()
-
-
-@router.get("/reset-credits")
-async def get_reset_credits(user: User = Depends(get_current_user)):
-    """List available banked rate-limit reset credits."""
-    try:
-        access_token = await get_chatgpt_access_token()
-    except HTTPException:
-        return {"credits": [], "available_count": 0, "error": "Not authenticated"}
-
-    auth_data = _read_auth_file() or {}
-    account_id = auth_data.get("account_id") or _extract_account_id(access_token)
-
-    try:
-        credits = await _fetch_reset_credits(access_token, account_id)
-        return {
-            "credits": credits,
-            "available_count": len(credits),
-        }
-    except Exception as e:
-        logger.warning("Failed to fetch reset credits: %s", e)
-        return {"credits": [], "available_count": 0, "error": str(e)}
-
-
 class ConsumeResetRequest(BaseModel):
     credit_id: str
 
@@ -873,29 +842,3 @@ async def consume_reset_credit_endpoint(
         raise HTTPException(status_code=500, detail=f"Reset failed: {e}")
 
 
-@router.get("/rate-limit-status")
-async def get_rate_limit_status_endpoint(user: User = Depends(get_current_user)):
-    """Fetch current rate limit status from wham API."""
-    try:
-        access_token = await get_chatgpt_access_token()
-    except HTTPException:
-        return {"error": "Not authenticated"}
-
-    auth_data = _read_auth_file() or {}
-    account_id = auth_data.get("account_id") or _extract_account_id(access_token)
-
-    try:
-        return await _fetch_rate_limit_status(access_token, account_id)
-    except Exception as e:
-        logger.warning("Failed to fetch rate limit status: %s", e)
-        return {"error": str(e)}
-
-
-@router.get("/models")
-async def list_chatgpt_models(user: User = Depends(get_current_user)):
-    """List available ChatGPT subscription models (live list ∪ static presets)."""
-    from crabagent.core.provider_store import CHATGPT_MODELS
-
-    slugs = await get_codex_model_slugs()
-    ordered = list(dict.fromkeys(slugs + list(CHATGPT_MODELS)))
-    return [{"id": m, "owned_by": "chatgpt"} for m in ordered]

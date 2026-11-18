@@ -251,16 +251,8 @@ class DualPanelTui(TuiSession):
     def _r2a(self, *rich_objects, **kwargs) -> str:
         return _r2a_static(self._render_console, *rich_objects, **kwargs)
 
-    async def _r2a_async(self, *rich_objects, **kwargs) -> str:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, _r2a_static, self._render_console, *rich_objects, **kwargs)
-
     def _md2a(self, text: str) -> str:
         return _md2a_static(self._render_console, text)
-
-    async def _md2a_async(self, text: str) -> str:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, _md2a_static, self._render_console, text)
 
     def _append_ansi(self, ansi: str):
         if ansi:

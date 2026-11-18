@@ -40,7 +40,6 @@ dependencies = [
     "apscheduler>=3.10",
     "fastapi>=0.110",
     "uvicorn>=0.29",
-    "redis>=5.0",
     "icalendar>=5.0",
     "jieba>=0.42",
     "pillow>=10.0",

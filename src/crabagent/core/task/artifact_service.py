@@ -214,18 +214,3 @@ async def list_artifacts(db: AsyncSession, task_id: int, user_id: int) -> list[d
     return [_artifact_to_dict(a) for a in result.scalars().all()]
 
 
-async def current_artifact_version(db: AsyncSession, task_id: int, path: str) -> int:
-    """Latest non-superseded version for a path (used by authorization guards)."""
-    normalized = str(Path(path))
-    result = await db.execute(
-        select(TaskArtifact)
-        .where(
-            TaskArtifact.task_id == task_id,
-            TaskArtifact.path == normalized,
-            TaskArtifact.status != "superseded",
-        )
-        .order_by(TaskArtifact.version.desc())
-        .limit(1)
-    )
-    row = result.scalars().first()
-    return row.version if row else 0

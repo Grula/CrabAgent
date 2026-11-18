@@ -29,12 +29,6 @@ async def list_molts(db: AsyncSession, session_id: str, limit: int = 20) -> list
     return [_molt_to_dict(m) for m in result.scalars().all()]
 
 
-async def get_molt(db: AsyncSession, molt_id: str) -> dict[str, Any] | None:
-    result = await db.execute(select(Molt).where(Molt.molt_id == molt_id))
-    m = result.scalar_one_or_none()
-    return _molt_to_dict(m) if m else None
-
-
 def _molt_to_dict(m: Molt) -> dict[str, Any]:
     return {
         "molt_id": m.molt_id,
@@ -71,19 +65,6 @@ async def create_molt(
     await db.commit()
     await db.refresh(molt)
     return _molt_to_dict(molt)
-
-
-async def count_molts(db: AsyncSession, session_id: str) -> int:
-    result = await db.execute(select(Molt).where(Molt.session_id == session_id))
-    return len(result.scalars().all())
-
-
-async def delete_molt(db: AsyncSession, molt_id: str) -> None:
-    m = await db.execute(select(Molt).where(Molt.molt_id == molt_id))
-    molt = m.scalar_one_or_none()
-    if molt:
-        await db.delete(molt)
-        await db.commit()
 
 
 async def list_molt_files(molt_id: str, workspace: Path | None = None) -> list[str]:

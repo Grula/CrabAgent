@@ -14,62 +14,11 @@ export async function getAgentMonitor(signal?: AbortSignal): Promise<AgentMonito
   return api.get<AgentMonitorInfo[]>("/agents/monitor", undefined, signal);
 }
 
-export type AgentSummaryStatus = "idle" | "thinking" | "working" | "waiting" | "error" | "completed";
-
-export interface AgentMonitorSummary {
-  status: AgentSummaryStatus;
-  priority: number;
-  count: number;
-  message: string;
-  target: {
-    session_id: string;
-    title: string;
-    request_type: "confirm" | "input" | null;
-    tool_name?: string;
-  } | null;
-  updated_at: number;
-}
-
-export async function getAgentMonitorSummary(): Promise<AgentMonitorSummary> {
-  return api.get<AgentMonitorSummary>("/agents/monitor/summary");
-}
-
 export interface GlobalSSEEvent {
   type: string;
   data: Record<string, unknown>;
   timestamp: number;
 }
-
-export interface PipelineStartData {
-  total_steps: number;
-  step_ids: string[];
-  step_agents: Record<string, string>;
-  step_tasks: Record<string, string>;
-  pipeline_run_id?: number;
-}
-
-export interface PipelineStepData {
-  step_id: string;
-  agent_name: string;
-  task?: string;
-  result?: string;
-  elapsed?: number;
-}
-
-export interface PipelineEndData {
-  completed: string[];
-  failed: string[];
-  total: number;
-  total_elapsed?: number;
-  success_count?: number;
-  fail_count?: number;
-}
-
-export type PipelineSSEEvent =
-  | { type: "pipeline_start"; data: PipelineStartData; timestamp: number }
-  | { type: "pipeline_step_start"; data: PipelineStepData; timestamp: number }
-  | { type: "pipeline_step_end"; data: PipelineStepData; timestamp: number }
-  | { type: "pipeline_end"; data: PipelineEndData; timestamp: number };
 
 export function connectGlobalSSE(onEvent: (event: GlobalSSEEvent) => void): EventSource | null {
   const token = localStorage.getItem("crab_token");

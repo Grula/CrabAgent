@@ -227,25 +227,6 @@ async def decide_request(
     return payload
 
 
-async def consume_request(db: AsyncSession, request_key: str, user_id: int) -> dict | None:
-    """Mark an approved request as consumed by the actual external action.
-
-    Idempotent: consuming twice returns the stored state without error,
-    but only the first call stamps ``consumed_at``.
-    """
-    result = await db.execute(
-        select(TaskRequest).where(TaskRequest.request_key == request_key, TaskRequest.user_id == user_id)
-    )
-    row = result.scalar_one_or_none()
-    if not row:
-        return None
-    if row.status == "approved" and not row.consumed_at:
-        row.status = "consumed"
-        row.consumed_at = _now()
-        await db.commit()
-    return _request_to_dict(row)
-
-
 async def expire_stale_requests(db: AsyncSession, user_id: int | None = None) -> int:
     """Flip pending requests past their expiry to ``expired``."""
     now = _now()

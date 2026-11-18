@@ -9,7 +9,6 @@ from sqlalchemy import select, text
 from crabagent.core.database import Conversation, Message, UserPreference, async_session_factory
 from crabagent.core.fts import extract_indexable_text, segment
 
-_SEARCH_ROLES = ("user", "assistant")
 _READ_ROLES = ("user", "assistant", "compress")
 
 

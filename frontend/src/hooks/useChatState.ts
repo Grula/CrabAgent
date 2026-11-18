@@ -580,7 +580,6 @@ export function useChatState(onEvent?: (event: SSEEvent) => void, workspace?: st
     newSession,
     selectSessionById,
     startReplay,
-    handleSSEEvent,
     handleSwitchBranch,
     handleBranch,
     handleAbort,

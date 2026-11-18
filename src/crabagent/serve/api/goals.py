@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from crabagent.core.database import GoalCheckpoint, GoalEvent, User, get_db
 from crabagent.core.event import AgentEvent, EventType
 from crabagent.core.goals.service import (
-    checkpoint_goal,
     create_goal,
     get_current_goal,
     get_latest_goal,
@@ -60,11 +59,6 @@ class UpdateGoalRequest(BaseModel):
     execution_provider: str | None = Field(default=None, max_length=100)
     execution_agent: str | None = Field(default=None, max_length=100)
     reasoning_effort: str | None = Field(default=None, max_length=50)
-
-
-class CheckpointRequest(BaseModel):
-    summary: str = Field(min_length=1, max_length=4000)
-    next_step: str = Field(default="", max_length=2000)
 
 
 @router.get("")
@@ -141,31 +135,6 @@ async def patch_goal(
     event_type = EventType.GOAL_STATUS_CHANGED if req.status is not None else EventType.GOAL_UPDATED
     await _emit_goal_event(request, session_id, event_type, snapshot)
     return {"goal": snapshot}
-
-
-@router.post("/checkpoint")
-async def post_checkpoint(
-    session_id: str,
-    req: CheckpointRequest,
-    request: Request,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    await get_owned_conversation(db, session_id, user)
-    goal = await get_current_goal(db, session_id)
-    if not goal:
-        raise HTTPException(status_code=404, detail="No open goal for this session")
-    try:
-        checkpoint = await checkpoint_goal(db, goal, req.summary, req.next_step)
-        await db.commit()
-        await db.refresh(goal)
-    except ValueError as exc:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    snapshot = goal_to_dict(goal)
-    checkpoint_data = {"id": checkpoint.id, "summary": checkpoint.summary, "next_step": checkpoint.next_step}
-    await _emit_goal_event(request, session_id, EventType.GOAL_CHECKPOINT, snapshot, checkpoint=checkpoint_data)
-    return {"goal": snapshot, "checkpoint": checkpoint_data}
 
 
 @router.get("/history")

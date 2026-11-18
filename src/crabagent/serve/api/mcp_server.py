@@ -58,12 +58,6 @@ class McpToolResponse(BaseModel):
     input_schema: dict
 
 
-class TestConnectionResponse(BaseModel):
-    success: bool
-    error: str = ""
-    tools: list[McpToolResponse] = []
-
-
 class McpServerStatusResponse(BaseModel):
     name: str
     display_name: str
@@ -206,60 +200,6 @@ async def delete_mcp_server(
 
     await db.delete(row)
     await db.commit()
-
-
-@router.post("/{name}/test", response_model=TestConnectionResponse)
-async def test_mcp_server(
-    name: str,
-    request: Request,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(select(McpServer).where(McpServer.name == name))
-    row = result.scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=404, detail="MCP server not found")
-
-    config = McpServerConfig.from_row(row)
-    manager = MCPClientManager()
-    try:
-        tools = await manager.start_server(config)
-        return TestConnectionResponse(
-            success=True,
-            tools=[McpToolResponse(name=t.name, description=t.description, input_schema=t.input_schema) for t in tools],
-        )
-    except Exception as e:
-        logger.warning("MCP test connection failed for '%s': %s", name, e)
-        return TestConnectionResponse(success=False, error=str(e))
-    finally:
-        await manager.stop_all()
-
-
-@router.get("/{name}/tools", response_model=list[McpToolResponse])
-async def get_mcp_server_tools(
-    name: str,
-    request: Request,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(select(McpServer).where(McpServer.name == name))
-    row = result.scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=404, detail="MCP server not found")
-
-    manager = _get_manager(request)
-    conn = manager.get_connection(name)
-    if conn and conn.is_connected:
-        return [
-            McpToolResponse(name=t.name, description=t.description, input_schema=t.input_schema) for t in conn._tools
-        ]
-
-    config = McpServerConfig.from_row(row)
-    try:
-        tools = await manager.start_server(config)
-        return [McpToolResponse(name=t.name, description=t.description, input_schema=t.input_schema) for t in tools]
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to connect: {e}")
 
 
 @router.get("/status/list", response_model=list[McpServerStatusResponse])

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ChevronRight, ChevronDown, Folder, FolderOpen, X, Check, ArrowUp, Home } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen, X, Check, ArrowUp, Home } from "lucide-react";
 import { FileEntry, getTree } from "../api/files";
 import { cn } from "../lib/cn";
 

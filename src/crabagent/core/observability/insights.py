@@ -135,33 +135,3 @@ def analyze_spans(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return insights
 
 
-def summarize_run(spans: list[dict[str, Any]]) -> dict[str, Any]:
-    """Return a quick summary of a run from its spans."""
-    if not spans:
-        return {"total_spans": 0}
-
-    llm_spans = [s for s in spans if s.get("span_type") == "llm_call"]
-    tool_spans = [s for s in spans if s.get("span_type") == "tool_call"]
-    delegate_spans = [s for s in spans if s.get("span_type") == "agent_delegate"]
-
-    total_prompt = sum(s.get("prompt_tokens", 0) for s in llm_spans)
-    total_completion = sum(s.get("completion_tokens", 0) for s in llm_spans)
-    total_cached = sum(s.get("cached_tokens", 0) for s in llm_spans)
-    total_reasoning = sum(s.get("reasoning_tokens", 0) for s in llm_spans)
-    total_duration = sum(s.get("duration_ms", 0) for s in spans)
-    error_count = sum(1 for s in spans if s.get("status") == "error")
-
-    return {
-        "total_spans": len(spans),
-        "llm_calls": len(llm_spans),
-        "tool_calls": len(tool_spans),
-        "delegations": len(delegate_spans),
-        "prompt_tokens": total_prompt,
-        "completion_tokens": total_completion,
-        "cached_tokens": total_cached,
-        "reasoning_tokens": total_reasoning,
-        "total_tokens": total_prompt + total_completion,
-        "total_duration_ms": total_duration,
-        "error_count": error_count,
-        "insights": analyze_spans(spans),
-    }

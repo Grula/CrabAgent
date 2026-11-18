@@ -84,18 +84,6 @@ async def test_resolve_category_proxy_uses_env_fallback(monkeypatch: pytest.Monk
     assert await proxy.resolve_category_proxy("web") == "http://env:4"
 
 
-@pytest.mark.asyncio
-async def test_get_httpx_kwargs_returns_empty_when_no_proxy(monkeypatch: pytest.MonkeyPatch):
-    _patch_settings(monkeypatch, {})
-    assert await proxy.get_httpx_kwargs("web") == {}
-
-
-@pytest.mark.asyncio
-async def test_get_httpx_kwargs_includes_proxy(monkeypatch: pytest.MonkeyPatch):
-    _patch_settings(monkeypatch, {"web_proxy": "http://x:5"})
-    assert await proxy.get_httpx_kwargs("web") == {"proxy": "http://x:5"}
-
-
 def _async_lookup(rows: dict[str, str | None]):
     async def inner(key: str):
         return rows.get(key)

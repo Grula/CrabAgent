@@ -80,47 +80,6 @@ async def _resolve_workspace(db: AsyncSession, task_id: int) -> Path:
     return Path(task.workspace) if task and task.workspace else Path.cwd()
 
 
-async def list_run_changes(db: AsyncSession, task_id: int, run_id: int, user_id: int) -> dict:
-    """Compare each run-molt's pre-run snapshot against the current file."""
-    from crabagent.core.molt.store import get_current_content, get_snapshot_content, list_molt_files
-
-    run = (
-        await db.execute(select(AgentRun).where(AgentRun.id == run_id, AgentRun.user_id == user_id))
-    ).scalar_one_or_none()
-    if not run:
-        raise LookupError(f"Run {run_id} not found")
-
-    workspace = await _resolve_workspace(db, task_id)
-    molt_links = await list_run_molts(db, run_id)
-
-    changes: list[dict] = []
-    for link in molt_links:
-        for rel in await list_molt_files(link["molt_id"], workspace):
-            before = get_snapshot_content(link["molt_id"], rel, workspace)
-            current = get_current_content(workspace, rel)
-            if before == current:
-                status = "unchanged"
-            elif not (workspace / rel).exists():
-                status = "created"  # not in snapshot, present now → created during/after run
-            else:
-                status = "modified"
-            changes.append(
-                {
-                    "file": rel,
-                    "molt_id": link["molt_id"],
-                    "status": status,
-                    "changed": status != "unchanged",
-                }
-            )
-    return {
-        "run_id": run_id,
-        "task_id": task_id,
-        "status": run.status,
-        "molt_count": len(molt_links),
-        "changes": changes,
-    }
-
-
 async def rollback_run(
     db: AsyncSession,
     task_id: int,

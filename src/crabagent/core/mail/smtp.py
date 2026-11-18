@@ -118,16 +118,3 @@ class SmtpClient:
         except Exception as e:
             raise SmtpError(f"Failed to send email: {e}")
 
-    async def send_draft(
-        self,
-        to: str,
-        subject: str,
-        body: str,
-        draft_id: str | None = None,
-        attachments: list[str] | None = None,
-    ) -> dict:
-        """Send a draft email (same as send, but semantic for draft workflow).
-
-        Returns the same as send().
-        """
-        return await self.send(to, subject, body, attachments=attachments)

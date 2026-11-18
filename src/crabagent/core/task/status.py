@@ -20,28 +20,11 @@ OPEN_TASK_STATUSES = (
     TaskStatus.PARTIAL.value,
     TaskStatus.FAILED.value,
 )
-ACTIVE_TASK_STATUSES = (
-    TaskStatus.IN_PROGRESS.value,
-    TaskStatus.WAITING_USER.value,
-)
-USER_ACTIONABLE_TASK_STATUSES = (
-    TaskStatus.WAITING_USER.value,
-    TaskStatus.PARTIAL.value,
-    TaskStatus.FAILED.value,
-)
 CLOSED_TASK_STATUSES = (
     TaskStatus.DONE.value,
     TaskStatus.CANCELLED.value,
 )
 TASK_STATUS_VALUES = tuple(status.value for status in TaskStatus)
-
-
-def is_open_task_status(status: str) -> bool:
-    return status in OPEN_TASK_STATUSES
-
-
-def is_closed_task_status(status: str) -> bool:
-    return status in CLOSED_TASK_STATUSES
 
 
 def validate_task_status(status: str) -> str:

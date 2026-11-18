@@ -115,23 +115,3 @@ async def reject_request(
     return await _decide(request_key, "reject", req, user, db, app=request.app)
 
 
-@router.post("/{request_key}/answer")
-async def answer_request(
-    request_key: str,
-    req: DecisionRequest,
-    request: Request,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    return await _decide(request_key, "answer", req, user, db, app=request.app)
-
-
-@router.post("/{request_key}/cancel")
-async def cancel_request(
-    request_key: str,
-    req: DecisionRequest,
-    request: Request,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    return await _decide(request_key, "cancel", req, user, db, app=request.app)

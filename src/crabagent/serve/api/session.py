@@ -580,15 +580,3 @@ async def switch_agent(
     return {"status": "ok", "session_id": session_id, "agent": req.agent}
 
 
-@router.post("/{session_id}/reset-system-prompt")
-async def reset_system_prompt(
-    session_id: str,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Clear the cached system prompt so it is rebuilt on the next message."""
-    conv = await get_owned_conversation(db, session_id, user)
-    if conv.system_prompt:
-        conv.system_prompt = ""
-        await db.commit()
-    return {"status": "ok", "session_id": session_id}

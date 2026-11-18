@@ -11,13 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from crabagent.core.agent.agents import invalidate_cache, parse_agent_skills
 from crabagent.core.database import (
     AgentProfile,
-    AgentRun,
-    Conversation,
     User,
     agent_memory_delete,
-    agent_memory_get_by_agent,
     get_db,
-    run_record_get,
     run_record_growth,
     run_record_list,
     task_record_stats,
@@ -311,118 +307,6 @@ async def set_default_tool_permissions(
     return {"tool_permissions": req.tool_permissions}
 
 
-_SUMMARY_PRIORITY = {"waiting": 0, "error": 1, "working": 2, "thinking": 3, "completed": 4, "idle": 5}
-_SUMMARY_TRANSIENT_SECONDS = 6.0
-
-
-def _summary_message(status: str, count: int, target: dict | None) -> str:
-    if status == "waiting":
-        kind = target.get("request_type") if target else ""
-        if kind == "input":
-            return "Needs a bit more info from you" if count == 1 else f"{count} sessions are waiting for your input"
-        return "Needs your confirmation" if count == 1 else f"{count} sessions are waiting for your confirmation"
-    if status == "error":
-        return "1 task ran into a problem" if count == 1 else f"{count} tasks ran into a problem"
-    if status == "working":
-        tool_name = (target or {}).get("tool_name", "")
-        if count == 1 and tool_name:
-            return f"Working on the task with {tool_name}"
-        return "1 session is running a task" if count == 1 else f"{count} sessions are running tasks"
-    if status == "thinking":
-        return "Thinking it through" if count == 1 else f"{count} sessions are thinking it through"
-    if status == "completed":
-        return "Task complete. Nicely done!"
-    return "Ready when you are"
-
-
-@router.get("/monitor/summary")
-async def monitor_summary(
-    request: Request,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Return the highest-priority, actionable state across a user's sessions."""
-    now = time.time()
-    active_agents = getattr(request.app.state, "active_agents", {})
-    attention = getattr(request.app.state, "agent_attention", {})
-    session_ids = [sid for sid, info in active_agents.items() if info.get("user_id") == user.id]
-
-    from crabagent.serve.api.confirm import get_pending_confirms_for_session
-    from crabagent.serve.api.input import get_pending_for_session
-
-    candidates: list[dict] = []
-    for session_id in session_ids:
-        info = active_agents[session_id]
-        pending_input = get_pending_for_session(session_id)
-        pending_confirm = get_pending_confirms_for_session(session_id)
-        request_type = "input" if pending_input else "confirm" if pending_confirm else ""
-        fallback_status = "working" if info.get("status") == "running" else "thinking"
-        status = "waiting" if request_type else fallback_status
-        if status not in _SUMMARY_PRIORITY:
-            status = "thinking"
-        candidates.append(
-            {
-                "status": status,
-                "session_id": session_id,
-                "updated_at": info.get("waiting_since") or info.get("updated_at") or info.get("started_at", now),
-                "request_type": request_type or None,
-                "tool_name": info.get("tool_name", ""),
-            }
-        )
-
-    # Completed and errored sessions are intentionally short-lived feedback states.
-    for session_id, info in list(attention.items()):
-        if info.get("user_id") != user.id:
-            continue
-        if now - info.get("updated_at", 0) > _SUMMARY_TRANSIENT_SECONDS:
-            attention.pop(session_id, None)
-            continue
-        candidates.append(
-            {
-                "status": info.get("status", "completed"),
-                "session_id": session_id,
-                "updated_at": info.get("updated_at", now),
-                "request_type": None,
-                "tool_name": "",
-            }
-        )
-
-    if not candidates:
-        return {
-            "status": "idle",
-            "priority": _SUMMARY_PRIORITY["idle"],
-            "count": 0,
-            "message": _summary_message("idle", 0, None),
-            "target": None,
-            "updated_at": now,
-        }
-
-    highest_priority = min(_SUMMARY_PRIORITY[item["status"]] for item in candidates)
-    matching = [item for item in candidates if _SUMMARY_PRIORITY[item["status"]] == highest_priority]
-    # Resolve ties to the longest-waiting or most recently changed actionable session.
-    target = sorted(matching, key=lambda item: item["updated_at"])[0]
-    rows = await db.execute(
-        select(Conversation.session_id, Conversation.title).where(Conversation.session_id == target["session_id"])
-    )
-    row = rows.first()
-    target_data = {
-        "session_id": target["session_id"],
-        "title": row[1] if row and row[1] else "Untitled session",
-        "request_type": target["request_type"],
-    }
-    if target["tool_name"]:
-        target_data["tool_name"] = target["tool_name"]
-    status = target["status"]
-    return {
-        "status": status,
-        "priority": highest_priority,
-        "count": len(matching),
-        "message": _summary_message(status, len(matching), target_data),
-        "target": target_data,
-        "updated_at": max(item["updated_at"] for item in matching),
-    }
-
-
 @router.get("/monitor")
 async def monitor_agents(
     request: Request,
@@ -484,28 +368,6 @@ async def monitor_agents(
     return result
 
 
-@router.get("/memory")
-async def list_agent_memory(
-    agent_name: str = Query(..., description="Agent name"),
-    limit: int = Query(20, ge=1, le=100),
-    user: User = Depends(get_current_user),
-):
-    memories = await agent_memory_get_by_agent(user.id, agent_name, limit=limit)
-    return [
-        {
-            "key": m["key"],
-            "category": m["category"],
-            "source": m["source"],
-            "content": m["content"],
-            "importance": m["importance"],
-            "task_category": m["task_category"],
-            "access_count": m["access_count"],
-            "created_at": m["created_at"].isoformat() if m["created_at"] else None,
-        }
-        for m in memories
-    ]
-
-
 @router.delete("/memory/{key:path}")
 async def delete_agent_memory(
     key: str,
@@ -560,52 +422,6 @@ async def list_agent_runs(
         offset=offset,
     )
     return runs
-
-
-@router.get("/runs/{run_id}")
-async def get_agent_run(
-    run_id: int,
-    user: User = Depends(get_current_user),
-):
-    run = await run_record_get(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    if run.get("user_id") != user.id:
-        raise HTTPException(status_code=403, detail="Access denied")
-    return run
-
-
-@router.get("/pipelines/history")
-async def get_pipeline_history(
-    limit: int = Query(10, ge=1, le=50),
-    user: User = Depends(get_current_user),
-):
-    from crabagent.core.database import _run_to_dict, async_session_factory
-
-    async with async_session_factory() as db:
-        pipelines = (
-            (
-                await db.execute(
-                    select(AgentRun)
-                    .where(AgentRun.user_id == user.id, AgentRun.agent_name == "pipeline")
-                    .order_by(AgentRun.id.desc())
-                    .limit(limit)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        result = []
-        for p in pipelines:
-            pd = _run_to_dict(p)
-            steps = (
-                (await db.execute(select(AgentRun).where(AgentRun.parent_run_id == p.id).order_by(AgentRun.id.asc())))
-                .scalars()
-                .all()
-            )
-            pd["steps"] = [_run_to_dict(s) for s in steps]
-            result.append(pd)
-        return result
 
 
 @router.get("/{agent_name}/growth")

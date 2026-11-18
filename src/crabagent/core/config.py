@@ -28,7 +28,6 @@ class Settings(BaseSettings):
     disable_opencode_skills: bool = False
 
     db_url: str = ""
-    redis_url: str = "redis://localhost:6379/0"
     jwt_secret: str = "crabagent-secret-change-me"
     jwt_expire_minutes: int = 43_200
 
@@ -43,19 +42,6 @@ class Settings(BaseSettings):
 
     auto_approve_tools: bool = False
 
-    bash_blocked_patterns: list[str] = [
-        "rm -rf /",
-        "rm -rf /*",
-        "mkfs",
-        "dd if=",
-        "dd of=/dev/",
-        "shutdown",
-        "reboot",
-        "init 0",
-        "init 6",
-        ":(){ :|:& };:",
-        "fork bomb",
-    ]
     bash_block_privilege_escalation: bool = True
     bash_max_output_length: int = 50000
     bash_block_background: bool = False
@@ -84,13 +70,10 @@ class Settings(BaseSettings):
     llm_retry_max_delay: float = 60.0
     llm_request_timeout: int = 120
 
-    browser_strategy: str = "dom"
     browser_screenshot_to_llm: bool = True
-    browser_screenshot_history: int = 3
     browser_screenshot_max_bytes: int = 1_500_000
 
     molt_keep_count: int = 20
-    molt_keep_days: int = 7
 
     def model_post_init(self, __context) -> None:
         if not self.db_url:

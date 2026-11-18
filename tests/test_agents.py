@@ -19,11 +19,6 @@ class TestToolSets:
         assert "memory_save" in tools
         assert "memory_recall" in tools
 
-    def test_shared_tools_not_empty(self):
-        tools = agents_module.get_shared_tools()
-        assert "shared_put" in tools
-        assert "shared_get" in tools
-
     def test_delegation_tools_not_empty(self):
         tools = agents_module.get_delegation_tools()
         assert "delegate_task" in tools

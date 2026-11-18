@@ -5,7 +5,7 @@ import {
   Content as TooltipContent,
   Portal as TooltipPortal,
 } from "@radix-ui/react-tooltip";
-import { type ReactNode, type HTMLAttributes } from "react";
+import { type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 interface TooltipProps {

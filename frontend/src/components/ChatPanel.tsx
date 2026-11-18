@@ -263,7 +263,6 @@ const ChatPanel = forwardRef<HTMLDivElement, Props>(
       setActiveSubAgentId(sid || null);
       if (!sid) onSubAgentModalClose?.();
     }, [onSubAgentModalClose]);
-    const closeSubAgent = useCallback(() => onSubAgentClick(null), [onSubAgentClick]);
     const onPreviewImage = useCallback((url: string) => setPreviewImage(url), []);
 
     // Poll the live content ref for the active sub-agent to force a re-render

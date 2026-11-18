@@ -1,19 +1,8 @@
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
 
 from crabagent.core.computer import audit
-from crabagent.serve.api.browser_tasks import CreateBrowserTaskEventRequest
-
-
-def test_client_event_rejects_sensitive_metadata():
-    for data in ({"text": "secret"}, {"tool": "https://user:password@example.com/"}):
-        with pytest.raises(ValidationError):
-            CreateBrowserTaskEventRequest(event_type="tool_result", detail="computer_act", data=data)
-    with pytest.raises(ValidationError):
-        CreateBrowserTaskEventRequest(event_type="action_result", detail="computer_act")
-    assert CreateBrowserTaskEventRequest(event_type="tool_result", detail="computer_act", data={"tool": "computer_act"})
 
 
 def test_origin_drops_credentials_path_and_query():

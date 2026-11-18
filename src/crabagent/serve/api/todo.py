@@ -56,17 +56,3 @@ async def mark_done(
     return {"status": "ok"}
 
 
-@router.delete("/{todo_id}")
-async def delete_todo(
-    session_id: str,
-    todo_id: int,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    await get_owned_conversation(db, session_id, user)
-    from crabagent.core.todo.store import delete_todo as _delete
-
-    ok = await _delete(db, todo_id, session_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    return {"status": "ok"}

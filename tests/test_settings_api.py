@@ -34,8 +34,6 @@ class FakeDB:
         self.execute_calls += 1
         text = str(statement)
         if "WHERE app_settings.key =" in text:
-            key = text.split("=")[-1].strip().strip(":key_1")
-            # fallback to first matching row via simple scan on bound values not exposed in string
             return FakeResult([])
         return FakeResult(self.rows)
 

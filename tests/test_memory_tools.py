@@ -18,7 +18,6 @@ def _get_tool(registry: ToolRegistry, name: str):
 
 @pytest.mark.asyncio
 async def test_memory_save_requires_session():
-    registry = ToolRegistry()
     memory_tools.memory_save.__wrapped__ = memory_tools.memory_save
     # Call without context
     result = await memory_tools.memory_save.__wrapped__(

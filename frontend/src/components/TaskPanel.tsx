@@ -39,8 +39,6 @@ const PRIORITY_LABELS: Record<string, string> = {
   low: "Low",
 };
 
-const STATUS_ORDER = ["pending", "in_progress", "done"];
-
 const STATUS_META: Record<string, { label: string; className: string }> = {
   pending: { label: "Not started", className: "bg-[var(--bg-tertiary)] text-[var(--text-secondary)]" },
   in_progress: { label: "In progress", className: "bg-blue-500/10 text-blue-500" },

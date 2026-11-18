@@ -93,17 +93,6 @@ export interface TaskArtifact {
   created_at: string | null;
 }
 
-export interface TaskCheck {
-  id: number;
-  task_id: number;
-  run_id: number | null;
-  title: string;
-  required: boolean;
-  status: string;
-  evidence: string;
-  verified_at: string | null;
-}
-
 export interface TaskEventEntry {
   id: number;
   event_type: string;
@@ -131,10 +120,6 @@ export function listTasks(status = "pending", project = ""): Promise<Task[]> {
 
 export function createTask(req: CreateTaskRequest): Promise<Task> {
   return api.post("/tasks", req);
-}
-
-export function getTask(id: number): Promise<Task> {
-  return api.get(`/tasks/${id}`);
 }
 
 export function updateTask(id: number, req: UpdateTaskRequest): Promise<Task> {
@@ -171,24 +156,8 @@ export function openTaskArtifact(taskId: number, name: string): Promise<{ status
   return api.post(`/tasks/${taskId}/open-artifact`, { name });
 }
 
-export function listTaskChecks(id: number): Promise<TaskCheck[]> {
-  return api.get(`/tasks/${id}/checks`);
-}
-
-export function getRunChanges(taskId: number, runId: number): Promise<RunChanges> {
-  return api.get(`/tasks/${taskId}/runs/${runId}/changes`);
-}
-
 export function rollbackRun(taskId: number, runId: number, force = false): Promise<RollbackResult> {
   return api.post(`/tasks/${taskId}/runs/${runId}/rollback`, { force });
-}
-
-export interface RunChanges {
-  run_id: number;
-  task_id: number;
-  status: string;
-  molt_count: number;
-  changes: { file: string; molt_id: string; status: string; changed: boolean }[];
 }
 
 export interface RollbackResult {

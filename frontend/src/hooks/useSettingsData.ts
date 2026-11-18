@@ -20,7 +20,6 @@
 import { useState, useEffect, useCallback } from "react";
 import * as settingsApi from "../api/settings";
 import * as providersApi from "../api/providers";
-import type { Provider } from "../api/providers";
 import { onProvidersChanged } from "../lib/providerSync";
 import type { ProviderModels } from "./useModelSelector";
 

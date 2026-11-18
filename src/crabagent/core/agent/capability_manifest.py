@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 
 from crabagent.core.agent.tools.registry import registry
 
-SCHEMA_VERSION = 1
 
 REQUIRES_SESSION = (
     "shared_put",
@@ -29,95 +27,6 @@ REQUIRES_SESSION = (
     "memory_forget",
     "git_diff",
 )
-
-CORE = (
-    "bash",
-    "bash_output",
-    "bash_stop",
-    "edit",
-    "git_diff",
-    "glob",
-    "grep",
-    "memory_recall",
-    "memory_save",
-    "read",
-    "shared_get",
-    "shared_list",
-    "shared_put",
-    "tool_search",
-    "update_agents_md",
-    "web_scrape",
-    "web_search",
-    "write",
-)
-
-
-@dataclass(frozen=True)
-class CapabilityManifest:
-    schema_version: int
-    core: tuple[str, ...]
-    packs: dict[str, tuple[str, ...]]
-    requires_session: tuple[str, ...]
-
-
-def default_manifest() -> CapabilityManifest:
-    from crabagent.core.agent.tools.registry import registry
-    from crabagent.core.agent.tools.tool_search import _GROUP_OF_TOOL
-
-    core = tuple(sorted(n for n in registry._tools if n not in _GROUP_OF_TOOL))
-    if not core:
-        core = CORE
-    return CapabilityManifest(
-        schema_version=SCHEMA_VERSION,
-        core=core,
-        packs={},
-        requires_session=REQUIRES_SESSION,
-    )
-
-
-def load_manifest(raw: dict | None) -> CapabilityManifest:
-    if not isinstance(raw, dict):
-        return default_manifest()
-    if raw.get("schema_version") != SCHEMA_VERSION:
-        return default_manifest()
-    try:
-        return CapabilityManifest(
-            schema_version=SCHEMA_VERSION,
-            core=tuple(raw["core"]),
-            packs={k: tuple(v) for k, v in raw["packs"].items()},
-            requires_session=tuple(raw["requires_session"]),
-        )
-    except (TypeError, ValueError, KeyError):
-        return default_manifest()
-
-
-def select_packs(
-    profile_packs: list[str] | None, task_packs: list[str] | None
-) -> set[str]:
-    if task_packs is not None:
-        return set(task_packs)
-    if profile_packs is not None:
-        return set(profile_packs)
-    return set()
-
-
-def resolve_tools(
-    manifest: CapabilityManifest,
-    execution_mode: str,
-    permissions: dict[str, str] | None,
-    selected_packs: set[str],
-) -> set[str]:
-    out = set(manifest.core)
-    for p in selected_packs:
-        if p in manifest.packs:
-            out |= set(manifest.packs[p])
-    if permissions:
-        for t in list(out):
-            if permissions.get(t) == "deny":
-                out.discard(t)
-    if execution_mode == "unattended":
-        out -= set(manifest.requires_session)
-    return out
 
 
 def unavailable_tools(tool_registry, execution_mode: str) -> list[dict]:

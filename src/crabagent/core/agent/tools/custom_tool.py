@@ -5,7 +5,6 @@ import re
 
 from crabagent.core.agent.tools.registry import registry
 
-_TOOL_DIR_NAME = ".crabagent/tools"
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 

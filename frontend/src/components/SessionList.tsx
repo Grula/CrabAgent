@@ -19,7 +19,6 @@ import {
   Bell,
   Inbox,
   Sparkles,
-  Loader2,
 } from "lucide-react";
 import { Session, SearchResult, searchSessions } from "../api/sessions";
 import { AgentMonitorInfo } from "../api/monitor";
@@ -71,7 +70,6 @@ export default function SessionList({
   const [collapsed, setCollapsed] = useState(false);
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
-  const [searchLoading, setSearchLoading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Session | null>(null);
   const [quickMenuOpen, setQuickMenuOpen] = useState(false);
   const quickMenuRef = useRef<HTMLDivElement>(null);
@@ -127,10 +125,8 @@ export default function SessionList({
   useEffect(() => {
     if (!query.trim()) {
       setSearchResults(null);
-      setSearchLoading(false);
       return;
     }
-    setSearchLoading(true);
     const timer = setTimeout(async () => {
       try {
         const results = await searchSessions(query.trim(), workspace);
@@ -138,9 +134,8 @@ export default function SessionList({
       } catch {
         setSearchResults([]);
       }
-      setSearchLoading(false);
     }, 300);
-    return () => { clearTimeout(timer); setSearchLoading(false); };
+    return () => clearTimeout(timer);
   }, [query]);
 
   const filtered = useMemo(() => query.trim()

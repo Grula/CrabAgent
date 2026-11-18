@@ -120,8 +120,6 @@ export function useModelSelector() {
     modelsError,
     selectedModel,
     setSelectedModel,
-    setProviders,
-    setProvidersLoading,
     refreshProviders,
   };
 }

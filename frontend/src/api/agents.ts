@@ -62,17 +62,6 @@ export function deleteAgentProfile(name: string): Promise<void> {
   return api.del(`/agents/${name}`);
 }
 
-export interface AgentMemoryItem {
-  key: string;
-  category: string;
-  content: string;
-  importance: number;
-  source: string;
-  task_category: string;
-  access_count: number;
-  created_at: string | null;
-}
-
 export interface AgentTaskStats {
   total: number;
   success_rate: number;
@@ -82,10 +71,6 @@ export interface AgentTaskStats {
 
 export function listLearningAgents(): Promise<string[]> {
   return api.get("/agents/learning-agents");
-}
-
-export function listAgentMemory(agent_name: string, limit = 20): Promise<AgentMemoryItem[]> {
-  return api.get(`/agents/memory?agent_name=${encodeURIComponent(agent_name)}&limit=${limit}`);
 }
 
 export function deleteAgentMemory(key: string): Promise<void> {
@@ -117,18 +102,6 @@ export interface AgentRunSummary {
   created_at: string;
 }
 
-export interface ToolCallEntry {
-  name: string;
-  args: unknown;
-  started_at: number;
-  result_summary: string | null;
-  elapsed: number;
-}
-
-export interface AgentRunDetail extends AgentRunSummary {
-  tool_calls: ToolCallEntry[] | null;
-}
-
 export interface GrowthPoint {
   date: string;
   total: number;
@@ -157,20 +130,8 @@ export function listAgentRuns(params?: AgentRunsParams): Promise<AgentRunSummary
   return api.get(`/agents/runs${qs ? `?${qs}` : ""}`);
 }
 
-export function getAgentRun(runId: number): Promise<AgentRunDetail> {
-  return api.get(`/agents/runs/${runId}`);
-}
-
 export function getAgentGrowth(agentName: string, days = 30): Promise<GrowthPoint[]> {
   return api.get(`/agents/${encodeURIComponent(agentName)}/growth?days=${days}`);
-}
-
-export interface PipelineHistoryItem extends AgentRunDetail {
-  steps: AgentRunSummary[];
-}
-
-export function getPipelineHistory(limit = 10): Promise<PipelineHistoryItem[]> {
-  return api.get(`/agents/pipelines/history?limit=${limit}`);
 }
 
 export interface ToolInfo {

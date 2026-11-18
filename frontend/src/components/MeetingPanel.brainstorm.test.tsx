@@ -17,7 +17,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MeetingPanel } from "./MeetingPanel";
 import {
   brainstormMeeting,
-  endMeeting,
   getMeeting,
   saveMeeting,
   type BrainstormResult,

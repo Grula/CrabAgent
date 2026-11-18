@@ -297,13 +297,6 @@ class MCPClientManager:
     def get_status(self) -> list[dict[str, Any]]:
         return [conn.get_status_dict() for conn in self._connections.values()]
 
-    def get_connected_tools(self) -> list[McpToolInfo]:
-        tools = []
-        for conn in self._connections.values():
-            if conn.is_connected:
-                tools.extend(conn._tools)
-        return tools
-
 
 async def load_enabled_servers() -> list[McpServerConfig]:
     from crabagent.core.database import async_session_factory

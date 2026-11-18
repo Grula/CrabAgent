@@ -23,25 +23,6 @@ async def list_molts(
     return await _list_molts(db, session_id)
 
 
-@router.get("/{molt_id}")
-async def get_molt(
-    session_id: str,
-    molt_id: str,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    conv = await get_owned_conversation(db, session_id, user)
-    workspace = Path(conv.workspace).resolve() if conv.workspace else Path.cwd().resolve()
-    from crabagent.core.molt.store import get_molt as _get_molt
-    from crabagent.core.molt.store import list_molt_files
-
-    m = await _get_molt(db, molt_id)
-    if not m:
-        raise HTTPException(status_code=404, detail="Molt not found")
-    m["files"] = await list_molt_files(molt_id, workspace=workspace)
-    return m
-
-
 @router.get("/{molt_id}/diff")
 async def get_molt_diff(
     session_id: str,

@@ -8,11 +8,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from crabagent.core.database import Base
 from crabagent.core.task import store as task_store
 from crabagent.core.task.status import (
-    ACTIVE_TASK_STATUSES,
     CLOSED_TASK_STATUSES,
     OPEN_TASK_STATUSES,
     TASK_STATUS_VALUES,
-    USER_ACTIONABLE_TASK_STATUSES,
     validate_task_status,
 )
 
@@ -40,9 +38,6 @@ def test_status_collections_are_consistent():
     assert set(OPEN_TASK_STATUSES) | set(CLOSED_TASK_STATUSES) == set(TASK_STATUS_VALUES)
     # No overlap between open and closed
     assert not set(OPEN_TASK_STATUSES) & set(CLOSED_TASK_STATUSES)
-    # User-actionable and active subsets live inside open statuses
-    assert set(USER_ACTIONABLE_TASK_STATUSES) <= set(OPEN_TASK_STATUSES)
-    assert set(ACTIVE_TASK_STATUSES) <= set(OPEN_TASK_STATUSES)
 
 
 def test_validate_task_status_accepts_known_and_rejects_unknown():

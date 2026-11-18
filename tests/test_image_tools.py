@@ -67,23 +67,6 @@ class TestSaveImage:
         assert path.name == "shot-1.png"
 
 
-class TestGuessExtension:
-    @pytest.mark.parametrize(
-        ("content_type", "expected"),
-        [
-            ("image/jpeg", ".jpg"),
-            ("image/jpg", ".jpg"),
-            ("image/webp", ".webp"),
-            ("image/avif", ".avif"),
-            ("image/png", ".png"),
-            (None, ".png"),
-            ("application/octet-stream", ".png"),
-        ],
-    )
-    def test_guess_extension(self, content_type, expected):
-        assert image_module._guess_extension(content_type) == expected
-
-
 class TestReferencePaths:
     @pytest.fixture
     def references(self, tmp_path):

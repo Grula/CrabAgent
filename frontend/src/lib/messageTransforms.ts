@@ -81,8 +81,6 @@ export function sseEventToMessages(event: SSEEvent, messages: ChatMessage[]): Ch
     if (callId && messages.some((m) => m.id === `tr-${callId}`)) {
       return messages;
     }
-    // Finalize any streaming bash output for this tool_call
-    const bashKey = event.data.name === "bash" ? `bash-stream` : "";
     updated.push({
       id: callId ? `tr-${callId}` : `tr-${Date.now()}`,
       role: "tool_result",

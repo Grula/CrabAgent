@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   FolderOpen,
-  Lightbulb,
-  User,
   Search,
   Plus,
   Trash2,

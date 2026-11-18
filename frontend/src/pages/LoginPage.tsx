@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, AlertCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { api } from "../api/client";
 import * as authApi from "../api/auth";
 import { Input, PasswordInput, Button } from "../components/ui";

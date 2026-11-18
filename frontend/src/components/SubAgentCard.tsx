@@ -324,29 +324,3 @@ export const SubAgentCard = memo(function SubAgentCard({
 
 // ── Delegate group (wrapper for pipeline/parallel/sequential) ────────────
 
-export interface DelegateGroupProps {
-  mode: "single" | "pipeline" | "parallel";
-  children: React.ReactNode;
-  title?: string;
-}
-
-export function DelegateGroup({ mode, children, title }: DelegateGroupProps) {
-  const label =
-    mode === "pipeline"
-      ? title || "Pipeline"
-      : mode === "parallel"
-        ? title || "Parallel"
-        : title || "Delegation";
-
-  return (
-    <div className="mb-3 ml-3">
-      <div className="flex items-center gap-1.5 px-1 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
-        <span className="w-3 h-px bg-[var(--border-strong)]" />
-        {label}
-      </div>
-      <div className={cn(mode === "parallel" && "grid grid-cols-1 lg:grid-cols-2 gap-2")}>
-        {children}
-      </div>
-    </div>
-  );
-}

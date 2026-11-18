@@ -563,8 +563,6 @@ export function DocumentPreview({ html, loading, error, className, onQuickEdit, 
   // ── Scroll position memory (survives srcDoc refresh) ──
   const savedScroll = useRef<number>(0);
   const prevHtml = useRef<string | null>(null);
-  // Track scroll position from inside iframe
-  const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   editHandlerRef.current = onQuickEdit;
   styleHandlerRef.current = onStyleEdit;
   outlineHandlerRef.current = onOutlineChange;

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Smartphone, Monitor, Tablet, Code, Eye, Columns2, Save, RefreshCw, X } from "lucide-react";
+import { Code, Eye, Columns2, Save, RefreshCw, X } from "lucide-react";
 import { cn } from "../lib/cn";
 import * as filesApi from "../api/files";
 import { getTree, readFile, saveFile, FileEntry } from "../api/files";

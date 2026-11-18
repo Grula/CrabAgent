@@ -55,12 +55,6 @@ export interface ResetCredit {
   [key: string]: unknown;
 }
 
-export interface ResetCreditsResponse {
-  credits: ResetCredit[];
-  available_count: number;
-  error?: string;
-}
-
 export function getAuthStatus(): Promise<ChatGPTAuthStatus> {
   return api.get("/chatgpt/auth/status");
 }
@@ -82,14 +76,6 @@ export function logout(): Promise<void> {
 
 export function getAccountInfo(): Promise<ChatGPTAccountInfo> {
   return api.get("/chatgpt/account");
-}
-
-export function listModels(): Promise<{ id: string; owned_by: string }[]> {
-  return api.get("/chatgpt/models");
-}
-
-export function getResetCredits(): Promise<ResetCreditsResponse> {
-  return api.get("/chatgpt/reset-credits");
 }
 
 export function consumeResetCredit(credit_id: string): Promise<{ status: string; result?: unknown }> {

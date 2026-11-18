@@ -339,10 +339,6 @@ def get_memory_tools() -> set[str]:
     return _MEMORY_TOOLS
 
 
-def get_shared_tools() -> set[str]:
-    return _SHARED_TOOLS
-
-
 def get_delegation_tools() -> set[str]:
     return _DELEGATION_TOOLS
 
@@ -938,7 +934,6 @@ async def _persist_sub_agent_usage(sub_context, parent_context, agent_name: str)
         for record in sub_context.usage_records
     ]
     await token_usage_batch_create(records)
-
 
 
 @dataclass(frozen=True)

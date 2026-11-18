@@ -55,14 +55,6 @@ export function getImageUrl(path: string, absolute: boolean = false): string {
 
 let _activePreviewServer: { filePath: string; token: string; url: string } | null = null;
 
-export function getActivePreviewUrl(): string | null {
-  return _activePreviewServer?.url ?? null;
-}
-
-export function clearPreviewServer(): void {
-  _activePreviewServer = null;
-}
-
 export async function startPreviewServer(filePath: string): Promise<{ token: string; url: string }> {
   if (_activePreviewServer) {
     try {

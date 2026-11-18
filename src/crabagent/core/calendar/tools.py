@@ -75,7 +75,7 @@ def register_calendar_tools(registry):
 
         user_id = _get_user_id(context)
         async with async_session_factory() as db:
-            e = await add_event(
+            await add_event(
                 db,
                 user_id=user_id,
                 title=title,

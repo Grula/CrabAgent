@@ -46,21 +46,6 @@ export function CodePanel({ initialPath, initialContent, className, workMode }: 
 
   const activeTab = tabs.find((t) => t.path === activePath);
 
-  const openFile = useCallback(async (path: string) => {
-    try {
-      const result = await filesApi.readFile(path);
-      const name = path.split("/").pop() || path;
-      setTabs((prev) => {
-        if (prev.some((t) => t.path === path)) return prev;
-        return [...prev, { path, name, content: result.content, originalContent: result.content, modified: false, language: detectLanguage(path) }];
-      });
-      setActivePath(path);
-      setError(null);
-    } catch (e: any) {
-      setError(e?.message || "Failed to open file");
-    }
-  }, []);
-
   const closeTab = useCallback((path: string) => {
     setTabs((prev) => {
       const idx = prev.findIndex((t) => t.path === path);

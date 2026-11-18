@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { GitBranch, RefreshCw, ChevronDown, ChevronUp, ChevronRight, Loader2, FilePlus, FileMinus, FilePen } from "lucide-react";
-import { GitStatusResult, GitDiffResult, getGitStatus, getGitDiff } from "../api/files";
+import { GitStatusResult, getGitStatus, getGitDiff } from "../api/files";
 import { LoadingState, EmptyState } from "./ui";
 import { cn } from "../lib/cn";
 

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from crabagent.core.database import (
     get_session_runs,
-    get_spans_by_run,
     get_spans_by_session,
 )
-from crabagent.core.observability.insights import analyze_spans, summarize_run
+from crabagent.core.observability.insights import analyze_spans
 from crabagent.serve.deps import get_current_user
 
 router = APIRouter(prefix="/execution", tags=["execution"])
@@ -67,39 +66,6 @@ async def list_session_spans(
         runs.setdefault(s["run_id"], []).append(s)
     trees = {run_id: _build_tree(run_spans) for run_id, run_spans in runs.items()}
     return {"session_id": session_id, "runs": list(runs.keys()), "trees": trees}
-
-
-@router.get("/sessions/{session_id}/runs/{run_id}/spans")
-async def list_run_spans(
-    session_id: str,
-    run_id: str,
-    user=Depends(get_current_user),
-):
-    """Return spans for a specific run as a tree."""
-    spans = await get_spans_by_run(session_id, run_id)
-    if not spans:
-        raise HTTPException(status_code=404, detail="No spans found for this run")
-    tree = _build_tree(spans)
-    return {"session_id": session_id, "run_id": run_id, "tree": tree, "span_count": len(spans)}
-
-
-@router.get("/sessions/{session_id}/runs/{run_id}/insights")
-async def get_run_insights(
-    session_id: str,
-    run_id: str,
-    user=Depends(get_current_user),
-):
-    """Return automated insights for a specific run."""
-    spans = await get_spans_by_run(session_id, run_id)
-    if not spans:
-        raise HTTPException(status_code=404, detail="No spans found for this run")
-    summary = summarize_run(spans)
-    return {
-        "session_id": session_id,
-        "run_id": run_id,
-        "summary": summary,
-        "insights": summary.pop("insights", []),
-    }
 
 
 @router.get("/sessions/{session_id}/insights")

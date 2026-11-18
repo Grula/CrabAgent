@@ -1,51 +1,10 @@
 import { api, ApiError } from "./client";
 import type { OfficeCliStatus } from "./officecli";
 
-export interface DocFileInfo {
-  name: string;
-  path: string;
-  size: number;
-  modified: number;
-  type: string;
-  previewable: boolean;
-}
-
-export interface DocListResponse {
-  files: DocFileInfo[];
-  workspace: string;
-  dir: string;
-}
-
 export interface DocPreviewResponse {
   html: string;
   file: string;
   name: string;
-}
-
-export function listDocuments(workspace = ""): Promise<DocListResponse> {
-  const params = workspace ? { workspace } : undefined;
-  return api.get("/documents", params);
-}
-
-export async function uploadDocument(
-  file: File,
-  workspace = "",
-): Promise<{ status: string; file: string; size: number; path: string }> {
-  const formData = new FormData();
-  formData.append("file", file);
-  if (workspace) formData.append("workspace", workspace);
-  const res = await fetch("/api/documents/upload", {
-    method: "POST",
-    body: formData,
-    headers: api.getToken()
-      ? { Authorization: `Bearer ${api.getToken()!}` }
-      : undefined,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `HTTP ${res.status}`);
-  }
-  return res.json();
 }
 
 export function getDownloadUrl(path: string): string {
@@ -99,14 +58,6 @@ async function _waitForInstall(
     // Start polling after 1s delay
     setTimeout(poll, 1000);
   });
-}
-
-export function saveDocument(
-  path: string,
-  contentBase64: string,
-  workspace = "",
-): Promise<{ status: string; file: string; size: number }> {
-  return api.post("/documents/save", { path, content: contentBase64, workspace });
 }
 
 export interface QuickEditTextRequest {
@@ -216,21 +167,3 @@ export function quickEditStructure(
   return api.post("/documents/quick-edit/structure", req);
 }
 
-export async function deleteDocument(
-  path: string,
-  workspace = "",
-): Promise<{ status: string; file: string }> {
-  const params: Record<string, string> = { path };
-  if (workspace) params.workspace = workspace;
-  const res = await fetch(`/api/documents?${new URLSearchParams(params)}`, {
-    method: "DELETE",
-    headers: api.getToken()
-      ? { Authorization: `Bearer ${api.getToken()!}`, "Content-Type": "application/json" }
-      : { "Content-Type": "application/json" },
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `HTTP ${res.status}`);
-  }
-  return res.json();
-}

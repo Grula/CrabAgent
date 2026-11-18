@@ -91,7 +91,3 @@ async def resolve_category_proxy(category: str) -> str:
     return settings.web_proxy or ""
 
 
-async def get_httpx_kwargs(category: str = "misc") -> dict:
-    """Return httpx AsyncClient kwargs with proxy if configured."""
-    proxy = await resolve_category_proxy(category)
-    return {"proxy": proxy} if proxy else {}

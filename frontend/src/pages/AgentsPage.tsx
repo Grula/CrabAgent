@@ -22,12 +22,9 @@ import {
   updateAgentProfile,
   deleteAgentProfile,
   listLearningAgents,
-  listAgentMemory,
-  deleteAgentMemory,
   getAgentStats,
   getAgentGrowth,
   listAgentRuns,
-  AgentMemoryItem,
   AgentTaskStats,
   AgentRunSummary,
   GrowthPoint,
@@ -102,7 +99,6 @@ const PERM_COLORS_ACTIVE: Record<Permission, string> = {
   confirm: "bg-amber-500 text-white border-amber-500",
   deny: "bg-red-500 text-white border-red-500",
 };
-const DEFAULT_KEY = "__default__";
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState<AgentProfile[]>([]);
@@ -117,7 +113,6 @@ export default function AgentsPage() {
 
   const [learningAgents, setLearningAgents] = useState<string[]>([]);
   const [agentStats, setAgentStats] = useState<AgentTaskStats | null>(null);
-  const [agentMemories, setAgentMemories] = useState<AgentMemoryItem[]>([]);
   const [loadingLearn, setLoadingLearn] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [toolInfoList, setToolInfoList] = useState<ToolInfo[]>([]);
@@ -172,7 +167,6 @@ export default function AgentsPage() {
       loadLearning(selected.name);
     } else {
       setAgentStats(null);
-      setAgentMemories([]);
       setGrowthData([]);
       setRecentRuns([]);
     }
@@ -182,32 +176,22 @@ export default function AgentsPage() {
     setLoadingLearn(true);
     setLoadingRuns(true);
     try {
-      const [stats, memories, growth, runs] = await Promise.all([
+      const [stats, growth, runs] = await Promise.all([
         getAgentStats(agentName),
-        listAgentMemory(agentName, 20),
         getAgentGrowth(agentName, 30).catch(() => []),
         listAgentRuns({ agent_name: agentName, limit: 10 }),
       ]);
       setAgentStats(stats);
-      setAgentMemories(memories);
       setGrowthData(growth);
       setRecentRuns(runs);
     } catch {
       setAgentStats(null);
-      setAgentMemories([]);
       setGrowthData([]);
       setRecentRuns([]);
     } finally {
       setLoadingLearn(false);
       setLoadingRuns(false);
     }
-  };
-
-  const handleDeleteMemory = async (key: string) => {
-    try {
-      await deleteAgentMemory(key);
-      setAgentMemories((prev) => prev.filter((m) => m.key !== key));
-    } catch {}
   };
 
   const startEdit = () => {

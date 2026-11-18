@@ -201,13 +201,10 @@ function DiffViewer({ diff }: { diff: string }) {
     <pre className="text-[11px] leading-snug font-mono max-h-40 overflow-auto rounded-md border border-[var(--border)] bg-[var(--code-bg)] p-0 m-0">
       {lines.map((line, i) => {
         let style: React.CSSProperties = {};
-        let prefix = " ";
         if (line.startsWith("+") && !line.startsWith("+++")) {
           style = { background: "var(--success-bg)", color: "var(--success)" };
-          prefix = "+";
         } else if (line.startsWith("-") && !line.startsWith("---")) {
           style = { background: "var(--danger-bg)", color: "var(--danger)" };
-          prefix = "-";
         } else if (line.startsWith("@@")) {
           style = { color: "var(--accent)" };
         }

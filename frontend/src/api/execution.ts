@@ -46,12 +46,6 @@ export function getSessionSpanTrees(sessionId: string) {
   );
 }
 
-export function getRunSpanTree(sessionId: string, runId: string) {
-  return api.get<{ session_id: string; run_id: string; tree: SpanNode[]; span_count: number }>(
-    `/execution/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/spans`,
-  );
-}
-
 export interface Insight {
   type: "tool_loop" | "token_hotspot" | "context_bloat" | "tool_errors" | "slow_tools";
   severity: "error" | "warning" | "info";

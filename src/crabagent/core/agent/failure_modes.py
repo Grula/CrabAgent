@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-_FALLBACK_HINT = "Query ~/.crabagent/crabagent.db read-only (sqlite3 mode=ro) instead."
 
 _ITEMS = [
     {"anti_pattern": "Retrying a tool that returned 'requires an active session' (e.g. agent_runs_inspect, conversation_search, memory_*)", "alternative": "In unattended/scheduled runs these tools always fail; query ~/.crabagent/crabagent.db read-only (sqlite3 mode=ro) instead."},

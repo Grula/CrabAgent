@@ -65,14 +65,6 @@ async def get_messages(
     return msgs
 
 
-async def delete_messages(db: AsyncSession, conversation_id: int) -> int:
-    from sqlalchemy import delete as sa_delete
-
-    result = await db.execute(sa_delete(Message).where(Message.conversation_id == conversation_id))
-    await db.commit()
-    return result.rowcount
-
-
 def message_to_dict(msg: Message) -> dict:
     d: dict = {"role": msg.role}
     # agent_switch / compress / experience / workspace → user for the LLM

@@ -97,17 +97,3 @@ export function useThemeColors(): ThemeColors {
   return result;
 }
 
-export function agentColor(name: string, colors: ThemeColors): string {
-  switch (name) {
-    case "researcher":
-      return colors.agentResearcher;
-    case "analyst":
-      return colors.agentAnalyst;
-    case "coder":
-      return colors.agentCoder;
-    case "writer":
-      return colors.agentWriter;
-    default:
-      return colors.textTertiary;
-  }
-}

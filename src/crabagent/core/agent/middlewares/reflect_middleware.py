@@ -242,10 +242,6 @@ _READ_TOOLS = frozenset({
     "browser_navigate",
 })
 
-_KEY_WORDS = frozenset({
-    "refactor", "analyze", "design", "implement", "debug",
-})
-
 
 def _count_tool_calls_by_type(messages: list[dict], tool_set: frozenset) -> int:
     """Count how many times tools from *tool_set* were called."""

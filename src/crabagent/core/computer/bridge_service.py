@@ -54,7 +54,6 @@ try:
 except Exception:  # pragma: no cover - import guard
     pass
 
-START_URL = "https://www.google.com/"
 MAX_BODY_BYTES = 100_000
 MAX_LABELS = 80
 ACTION_ID_TTL_SECONDS = 15 * 60
@@ -834,7 +833,6 @@ class BrowserBridgeService:
             "captured_at_ms": int(time.time() * 1000),
             "elements": element_fingerprints,
             "viewport": snapshot["viewport"],
-            "_descriptors": snapshot["elements"],
         }
         self.observation = observation
 
@@ -884,15 +882,6 @@ class BrowserBridgeService:
             "mime": "image/jpeg",
             "data_url": data_url,
         }
-
-    def _element_descriptor(self, index: int) -> dict[str, Any]:
-        obs = self.observation
-        if not obs:
-            raise BridgeError("Element not found; observe again")
-        for el in obs.get("_descriptors", []):
-            if el.get("idx") == index:
-                return el
-        raise BridgeError("Element not found; observe again")
 
     def _click_target_js(self, index: int) -> str:
         return (

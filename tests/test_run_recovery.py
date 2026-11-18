@@ -50,25 +50,6 @@ async def test_link_molt_to_run_is_idempotent(db):
 
 
 @pytest.mark.asyncio
-async def test_list_run_changes_reports_modified_files(db, workspace):
-    task = await task_store.add_task(db, user_id=1, title="Edit code", workspace=str(workspace))
-    _, run_id = await task_service.start_agent_run(db, task["id"], 1)
-
-    # pre-run snapshot: a.py had old content
-    _make_molt_on_disk(workspace, "molt_a", {"a.py": "old"})
-    await create_molt(db, "molt_a", "sess", "main", "before", "copy", 1, workspace=str(workspace))
-    await run_recovery.link_molt_to_run(db, run_id, "molt_a")
-
-    # current content differs
-    (workspace / "a.py").write_text("new", encoding="utf-8")
-
-    result = await run_recovery.list_run_changes(db, task["id"], run_id, 1)
-
-    assert result["molt_count"] == 1
-    assert result["changes"] == [{"file": "a.py", "molt_id": "molt_a", "status": "modified", "changed": True}]
-
-
-@pytest.mark.asyncio
 async def test_rollback_run_restores_pre_run_content(db, workspace):
     task = await task_store.add_task(db, user_id=1, title="Edit code", workspace=str(workspace))
     _, run_id = await task_service.start_agent_run(db, task["id"], 1)

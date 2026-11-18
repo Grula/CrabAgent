@@ -98,12 +98,6 @@ class BrowserManager:
         self._context: BrowserContext | None = None
         self._page: Page | None = None
         self._headless = os.environ.get("CRAB_BROWSER_HEADLESS", "true").lower() == "true"
-        # Rolling history of recent screenshots (for context-aware models)
-        self._screenshot_history: list[dict[str, Any]] = []
-        try:
-            self._history_max = int(getattr(settings, "browser_screenshot_history", 3))
-        except Exception:
-            self._history_max = 3
 
     @property
     def is_running(self) -> bool:
@@ -282,7 +276,6 @@ class BrowserManager:
         self._browser = None
         self._context = None
         self._page = None
-        self._screenshot_history.clear()
 
     # --- private helpers ---------------------------------------------------
 
@@ -329,22 +322,7 @@ class BrowserManager:
         except Exception as exc:
             logger.debug("screenshot failed: %s", exc)
             return ""
-        # Track in rolling history
-        title = ""
-        try:
-            title = await self._page.title()
-        except Exception:
-            pass
-        self._push_history(path, title)
         return path
-
-    def _push_history(self, path: str, title: str) -> None:
-        self._screenshot_history.append({"path": path, "title": title})
-        if len(self._screenshot_history) > self._history_max:
-            self._screenshot_history.pop(0)
-
-    def get_screenshot_history(self) -> list[dict[str, Any]]:
-        return list(self._screenshot_history)
 
 
 def _get_browser_manager(context: Any) -> BrowserManager | None:

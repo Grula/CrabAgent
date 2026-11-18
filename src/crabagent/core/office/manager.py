@@ -178,9 +178,6 @@ class OfficeManager:
             }
         return summary
 
-    def clear_perf_stats(self) -> None:
-        self._perf_stats.clear()
-
     def _record_perf(self, name: str, elapsed_ms: float) -> None:
         samples = self._perf_stats.setdefault(name, [])
         samples.append(elapsed_ms)

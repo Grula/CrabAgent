@@ -44,22 +44,6 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   cancelled: { label: "Cancelled", color: "text-[var(--text-tertiary)]" },
 };
 
-const CHECK_ICONS: Record<string, string> = {
-  passed: "✓",
-  failed: "✗",
-  warning: "△",
-  pending: "○",
-  skipped: "—",
-};
-
-const CHECK_COLORS: Record<string, string> = {
-  passed: "text-green-500",
-  failed: "text-red-500",
-  warning: "text-amber-500",
-  pending: "text-[var(--text-tertiary)]",
-  skipped: "text-[var(--text-tertiary)]",
-};
-
 export default function TaskDetailDrawer({ taskId, onClose, onSwitchSession, onTaskChanged }: Props) {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [loading, setLoading] = useState(false);

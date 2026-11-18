@@ -30,7 +30,6 @@ import { GoalCard } from "../components/GoalCard";
 import { GoalComposer } from "../components/GoalComposer";
 import { GoalTimeline } from "../components/GoalTimeline";
 import * as sessionsApi from "../api/sessions";
-import * as providersApi from "../api/providers";
 import * as mcpServersApi from "../api/mcpServers";
 import { McpServer, McpServerStatus } from "../api/mcpServers";
 import { Session } from "../api/sessions";
@@ -69,7 +68,6 @@ import { cn } from "../lib/cn";
 import { reasoningOptions, effectiveEffort } from "../lib/reasoningEffort";
 import { dbMessagesToChat } from "../lib/messageTransforms";
 import { DocumentPanel, DocState } from "../components/DocumentPanel";
-import { DocOpEvent } from "../components/DocumentTimeline";
 import { CodePanel } from "../components/CodePanel";
 import { PrototypePanel } from "../components/PrototypePanel";
 import { MeetingPanel } from "../components/MeetingPanel";
@@ -137,8 +135,6 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     modelsError,
     selectedModel,
     setSelectedModel,
-    setProviders,
-    setProvidersLoading,
     refreshProviders,
   } = useModelSelector();
 
@@ -332,7 +328,6 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     newSession,
     selectSessionById,
     startReplay,
-    handleSSEEvent,
     handleSwitchBranch,
     handleBranch,
     handleAbort,

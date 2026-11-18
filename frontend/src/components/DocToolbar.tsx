@@ -113,7 +113,6 @@ export function DocToolbar({ active, style, onStyleChange, onAIEdit, className, 
     hyperlink: "0563C1", followedhyperlink: "954F72",
   });
   const [themeFonts, setThemeFonts] = useState({ headingFont: "Calibri Light", bodyFont: "Calibri" });
-  const [showFontPicker, setShowFontPicker] = useState(false);
   const FONT_LIST = ["Calibri", "Calibri Light", "Arial", "Times New Roman", "Segoe UI", "Microsoft YaHei", "SimSun", "Noto Sans CJK", "Montserrat", "Open Sans"];
 
   return (

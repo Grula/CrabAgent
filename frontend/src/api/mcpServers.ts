@@ -18,12 +18,6 @@ export interface McpTool {
   input_schema: Record<string, unknown>;
 }
 
-export interface TestConnectionResult {
-  success: boolean;
-  error: string;
-  tools: McpTool[];
-}
-
 export interface McpServerStatus {
   name: string;
   display_name: string;
@@ -70,14 +64,6 @@ export function updateMcpServer(
 
 export function deleteMcpServer(name: string): Promise<void> {
   return api.del(`/mcp-servers/${name}`);
-}
-
-export function testMcpServer(name: string): Promise<TestConnectionResult> {
-  return api.post(`/mcp-servers/${name}/test`, {});
-}
-
-export function getMcpServerTools(name: string): Promise<McpTool[]> {
-  return api.get(`/mcp-servers/${name}/tools`);
 }
 
 export function getMcpStatus(): Promise<McpServerStatus[]> {

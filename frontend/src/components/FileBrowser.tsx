@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { PanelRightClose, X, RefreshCw, ChevronDown, ChevronRight, Search, Folder, FileText, ImageIcon, Copy, Check } from "lucide-react";
+import { PanelRightClose, X, RefreshCw, Search, Folder, FileText, ImageIcon, Copy, Check } from "lucide-react";
 import { FileEntry, FileContent } from "../api/files";
 import { getTree, readFile, searchFiles, isImageFile, getImageUrl } from "../api/files";
 import FileTree from "./FileTree";
@@ -67,45 +67,6 @@ function useFileTree(workspace?: string) {
   };
 
   return { entries, selectedPath, fileContent, fileError, loading, handleSelect, clearSelected, refresh, absolute: isAbsolute };
-}
-
-// --- Collapsible Section ---
-function CollapsibleSection({
-  title,
-  icon,
-  defaultOpen = true,
-  extra,
-  children,
-}: {
-  title: string;
-  icon?: React.ReactNode;
-  defaultOpen?: boolean;
-  extra?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className="border-t border-[var(--border)]">
-      <div
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center justify-between px-2 py-1 cursor-pointer hover:bg-[var(--bg-tertiary)] transition-colors select-none"
-      >
-        <div className="flex items-center gap-1.5">
-          {open ? (
-            <ChevronDown size={11} className="text-[var(--text-tertiary)]" />
-          ) : (
-            <ChevronRight size={11} className="text-[var(--text-tertiary)]" />
-          )}
-          {icon}
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
-            {title}
-          </span>
-        </div>
-        {extra}
-      </div>
-      {open && children}
-    </div>
-  );
 }
 
 function FilePreview({

@@ -9,7 +9,7 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -245,8 +245,3 @@ async def sync_index(
     return processed
 
 
-async def rebuild_index(workspace: str | Path | None = None) -> int:
-    """Compatibility wrapper. Global rebuilds now use the resumable sync."""
-    if workspace is not None:
-        raise ValueError("Workspace-scoped CJK rebuild is no longer supported")
-    return await sync_index()

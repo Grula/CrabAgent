@@ -1,24 +1,15 @@
-"""Contract tests for W3: capability-manifest -> load-time filter wiring.
+"""``agent_switch.filter_tool_registry`` honours ``execution_mode``.
 
-Two behaviours must hold once W3 lands:
-
-* ``agent_switch.filter_tool_registry`` honours ``execution_mode``: an
-  ``"unattended"`` run must not be offered session-gated tools, because such a
-  run has no session/user id and every call to them fails with "requires an
-  active session". The mode check must win over the always-keep branch used for
-  memory tools. The default ``"interactive"`` mode keeps today's behaviour.
-* ``capability_manifest.default_manifest()`` derives ``core`` from the live
-  global registry (every registered tool that belongs to no deferred pack)
-  instead of returning a hardcoded list, so newly registered always-on tools
-  show up without a code change.
+An ``"unattended"`` run must not be offered session-gated tools, because such a
+run has no session/user id and every call to them fails with "requires an
+active session". The mode check must win over the always-keep branch used for
+memory tools. The default ``"interactive"`` mode keeps today's behaviour.
 """
 
 from __future__ import annotations
 
 from crabagent.core.agent.agent_switch import filter_tool_registry
-from crabagent.core.agent.capability_manifest import default_manifest
-from crabagent.core.agent.tools.registry import ToolRegistry, registry
-from crabagent.core.agent.tools.tool_search import _GROUP_OF_TOOL
+from crabagent.core.agent.tools.registry import ToolRegistry
 
 PARAMS = {"type": "object", "properties": {}}
 
@@ -56,20 +47,3 @@ def test_filter_interactive_keeps_session_gated():
     assert "shared_put" in names
 
 
-def test_default_manifest_core_tracks_registry():
-    """core must come from the live registry, not a frozen literal."""
-    probe = "_w3_core_probe_tool"
-    assert probe not in _GROUP_OF_TOOL, "probe must not belong to any deferred pack"
-    assert probe not in registry._tools
-
-    registry.register(probe, "w3 core probe", PARAMS)(lambda **kwargs: None)
-    try:
-        core = default_manifest().core
-    finally:
-        registry._tools.pop(probe, None)
-
-    assert probe in core
-
-    # A real registered tool that is in no pack is still part of core.
-    t0 = next(name for name in registry._tools if name not in _GROUP_OF_TOOL)
-    assert t0 in core

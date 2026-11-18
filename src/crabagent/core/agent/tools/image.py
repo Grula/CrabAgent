@@ -25,23 +25,6 @@ from crabagent.core.agent.tools.registry import registry
 
 logger = logging.getLogger(__name__)
 
-# ── Provider → default image model mapping ─────────────────────────────
-_CHATGPT_IMAGE_MODELS = [
-    "gpt-image-2.6-sunburst",
-    "gpt-image-2.6-flare",
-    "image-2.5",
-    "image-2",
-    "chatgpt-image-latest",
-]
-_OPENAI_IMAGE_MODELS = [
-    "gpt-image-2.6-sunburst",
-    "gpt-image-2.6-flare",
-    "gpt-image-2",
-    "gpt-image-1.5",
-    "gpt-image-1",
-    "dall-e-3",
-    "dall-e-2",
-]
 _VALID_SIZES = {"1024x1024", "1024x1536", "1536x1024", "1792x1024", "1024x1792"}
 _VALID_QUALITIES = {"auto", "standard", "hd", "high", "medium", "low"}
 _SUNBURST = "gpt-image-2.6-sunburst"
@@ -134,20 +117,6 @@ def _save_url_image(url: str, img_dir: Path, stem: str, index: int) -> Path | No
     filepath = img_dir / f"{stem}{suffix}.png"
     filepath.write_bytes(content)
     return filepath
-
-
-def _guess_extension(content_type: str | None) -> str:
-    """Guess file extension from Content-Type header."""
-    if not content_type:
-        return ".png"
-    ct = content_type.lower()
-    if "jpeg" in ct or "jpg" in ct:
-        return ".jpg"
-    if "webp" in ct:
-        return ".webp"
-    if "avif" in ct:
-        return ".avif"
-    return ".png"
 
 
 async def _chatgpt_image_edit(prompt: str, image_path: Path | list[Path]) -> bytes | None:
