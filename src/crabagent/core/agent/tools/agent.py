@@ -128,6 +128,8 @@ async def handoff_to(agent_name: str, context_summary: str, context=None) -> str
     metadata={"source": "builtin", "category": "agent"},
 )
 async def delegate_parallel(tasks: list[dict], context=None) -> str:
+    if context is None:
+        return "Error: delegate_parallel requires an active session"
     if not tasks:
         return "Error: empty task list"
 
@@ -139,7 +141,7 @@ async def delegate_parallel(tasks: list[dict], context=None) -> str:
         }
         for i, t in enumerate(tasks)
     ]
-    return await run_pipeline(steps, context)
+    return await _execute_pipeline(steps, context)
 
 
 @registry.register(
@@ -182,7 +184,10 @@ async def request_help(agent_name: str, question: str, context=None) -> str:
     name="run_pipeline",
     description=(
         "Execute a multi-step agent workflow with automatic dependency ordering. "
-        "Steps WITHOUT depends_on run in parallel; steps WITH depends_on wait for those to finish first. "
+        "Every step must set depends_on: the IDs it waits for, or [] to start at once. "
+        "Steps with [] run in parallel; the others wait for their dependencies to finish. "
+        "A step that needs another's output (a coder making the tester's tests pass, a review of the code) "
+        "must depend on it. For steps that are all independent, use delegate_parallel instead. "
         "Each step receives results from its dependencies automatically. "
         "Prefer this over delegate_parallel when steps have ordering or data dependencies. "
         "Example: research → analyze → write (each step depends on the previous one)."
@@ -210,10 +215,10 @@ async def request_help(agent_name: str, question: str, context=None) -> str:
                         "depends_on": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "List of step IDs that must complete before this step runs",
+                            "description": "Step IDs that must finish before this step runs; [] to start at once",
                         },
                     },
-                    "required": ["id", "agent_name", "task"],
+                    "required": ["id", "agent_name", "task", "depends_on"],
                 },
                 "description": "Ordered list of pipeline steps with optional dependencies",
             },
@@ -227,7 +232,21 @@ async def run_pipeline(steps: list[dict], context=None) -> str:
         return "Error: run_pipeline requires an active session"
     if not steps:
         return "Error: empty pipeline"
+    # Ordering is the point of a pipeline. A forgotten depends_on silently starts
+    # every step at once (tests, the code they test and its review together), so
+    # it must be stated on every step.
+    missing = [str(s.get("id", "?")) for s in steps if "depends_on" not in s]
+    if missing:
+        return (
+            "Error: every pipeline step must set depends_on ([] when it can start at once); missing on: "
+            f"{', '.join(missing)}. A coder that should make the tester's tests pass depends on the tester "
+            "step, and a review depends on the steps it reviews. Nothing was started."
+        )
+    return await _execute_pipeline(steps, context, require_order=True)
 
+
+async def _execute_pipeline(steps: list[dict], context, *, require_order: bool = False) -> str:
+    """Run steps as a dependency graph (shared by run_pipeline and delegate_parallel)."""
     import asyncio
 
     from crabagent.core.agent.agents import spawn_sub_agent
@@ -253,6 +272,12 @@ async def run_pipeline(steps: list[dict], context=None) -> str:
         if not roots:
             return "Error: cyclic pipeline dependencies"
         unresolved = {sid: dependencies - roots for sid, dependencies in unresolved.items() if sid not in roots}
+    if require_order and len(steps) > 1 and not any(deps.values()):
+        return (
+            "Error: no step depends on another, so every step would start at once. Use delegate_parallel for "
+            "independent work, or set depends_on where a step needs another's output (a coder waiting for the "
+            "tester's tests, a review waiting for the code). Nothing was started."
+        )
 
     first_task = steps[0].get("task", "") if steps else ""
     session_id = context.metadata.get("session_id", "")
@@ -422,8 +447,8 @@ async def plan_task(task: str, context=None) -> str:
         "Rules:\n"
         "1. Each step is done by exactly one available agent, and only by one whose capabilities "
         "cover it\n"
-        "2. Steps without depends_on run in parallel; add depends_on only when a step needs another "
-        "step's result\n"
+        "2. Every step sets depends_on: [] to start at once, or the ids of the steps whose result it "
+        "needs (a coder waits for the tester's tests, a review waits for the code)\n"
         "3. Write each step's task so it stands on its own: the goal, the inputs it needs (paths, "
         "URLs, names) and what to return\n"
         "4. Use 1-5 steps; one step covers one file or one concern\n\n"
@@ -477,6 +502,10 @@ async def plan_task(task: str, context=None) -> str:
             text = text[start:end]
 
         steps = _json.loads(text)
+        # The plan is meant to be passed to run_pipeline, which requires depends_on on every step.
+        for s in steps:
+            if isinstance(s, dict):
+                s.setdefault("depends_on", [])
 
         agent_names = {a["name"] for a in agents}
         plan_lines = ["# Task Plan\n"]

@@ -7,7 +7,7 @@ the default team; use the matching agent from your Agent Team list if yours diff
 Fits new behaviour, behaviour changes and bug fixes.
 ```json
 run_pipeline({"steps": [
-  {"id": "test-lockout", "agent_name": "tester",
+  {"id": "test-lockout", "agent_name": "tester", "depends_on": [],
    "task": "Write failing tests for: <behaviour>. Files: tests/test_auth.py. Run them and confirm each fails on its assertion. Reply: STATUS, TESTS: <file::name>, RED: <command> -> <key line>."},
   {"id": "impl-lockout", "agent_name": "coder", "depends_on": ["test-lockout"],
    "task": "Make the failing tests in tests/test_auth.py pass by changing src/auth.py only. Do not edit the tests. Reply: STATUS, CHANGED, CHECK: <command> -> <result>."},

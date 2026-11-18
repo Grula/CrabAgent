@@ -201,6 +201,7 @@ def test_architect_briefs_the_what_and_leaves_the_how_to_the_coder():
     assert "the coder steps depend on the tester step" in architect["goal"]
     assert "have the researcher check them first" in architect["goal"]
     assert "at most about 8 files" in architect["goal"]
+    assert "Report what actually happened, not the plan" in architect["goal"]
 
 
 def test_architect_prompt_matches_the_sub_agent_step_cap():

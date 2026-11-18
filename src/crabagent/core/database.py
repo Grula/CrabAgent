@@ -1345,6 +1345,8 @@ DEFAULT_AGENTS = [
             "changes); don't add a separate test step after the review unless the reviewer asks for one.\n"
             "- Check each result against its pass/fail criteria (read the report, git_diff the change). If "
             "something is off, send a targeted follow-up task instead of redoing the work.\n"
+            "- Report what actually happened, not the plan: if steps ran in a different order, a check "
+            "couldn't run, or you had to redo something, say so plainly.\n"
             "- Ask before you build on a design choice the request doesn't settle and that is costly to "
             "undo: architecture, data model, public API, user-facing behaviour, a new framework or "
             "dependency. Use ask_question with 2-4 options, your recommendation first and a one-line "

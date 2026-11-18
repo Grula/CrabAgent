@@ -104,3 +104,43 @@ async def test_pipeline_passes_same_workspace_to_all_steps(tmp_path, monkeypatch
 
     assert len(seen) == 3
     assert all(ws == parent_ws for ws in seen)
+
+
+# ── ordering must be explicit ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_step_without_depends_on_is_rejected_before_anything_starts(context, monkeypatch):
+    spawn = AsyncMock()
+    monkeypatch.setattr('crabagent.core.agent.agents.spawn_sub_agent', spawn)
+    steps = [step('tests'), {'id': 'code', 'agent_name': 'agent', 'task': 'code'}]
+
+    result = await run_pipeline(steps, context)
+
+    assert 'must set depends_on' in result and 'code' in result
+    spawn.assert_not_called()
+    context.event_bus.emit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_pipeline_where_nothing_depends_on_anything_is_rejected(context, monkeypatch):
+    spawn = AsyncMock()
+    monkeypatch.setattr('crabagent.core.agent.agents.spawn_sub_agent', spawn)
+
+    result = await run_pipeline([step('tests'), step('code'), step('review')], context)
+
+    assert 'delegate_parallel' in result and 'Nothing was started' in result
+    spawn.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delegate_parallel_still_runs_independent_tasks(context, monkeypatch):
+    from crabagent.core.agent.tools.agent import delegate_parallel
+
+    spawn = AsyncMock(return_value=BackgroundAgentResult('succeeded', 'ok'))
+    monkeypatch.setattr('crabagent.core.agent.agents.spawn_sub_agent', spawn)
+
+    result = await delegate_parallel([{'agent_name': 'a', 'task': 'x'}, {'agent_name': 'b', 'task': 'y'}], context)
+
+    assert '(2/2 succeeded)' in result
+    assert spawn.await_count == 2

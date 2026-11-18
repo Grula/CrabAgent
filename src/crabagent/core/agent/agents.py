@@ -131,7 +131,7 @@ _TEAM_PROMPT_TOOL_LINES: tuple[str, ...] = (
     '`delegate_task(agent_name, task)`: Delegate a task to a specific agent and wait for its result',
     '`delegate_parallel(tasks)`: Run multiple independent agent tasks simultaneously (no ordering)',
     '`handoff_to(agent_name, context_summary)`: Hand off work to another agent with context',
-    '`run_pipeline(steps)`: Multi-step workflow with dependencies. Steps without depends_on run in parallel. Prefer for complex workflows.',
+    '`run_pipeline(steps)`: Multi-step workflow with dependencies. Every step sets depends_on ([] to start at once); a coder waiting for tests or a review waiting for code must depend on them.',
     '`delegate_background(agent_name, task)`: Start a sub-agent in the background and keep working; collect it '
     'with `background_status` / `background_wait`. Background agents get no tools except an optional `read` and '
     'stop after 5 minutes, so use them for drafting or reasoning, not research or edits.',
