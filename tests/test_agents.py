@@ -524,3 +524,66 @@ def _async_return(value):
         return value
 
     return inner
+
+
+# ── lessons stay in the workspace they were learned in ───────────────
+
+
+class TestLessonsStayInTheirWorkspace:
+    @pytest.mark.asyncio
+    async def test_injector_leaves_out_other_projects_lessons(self, monkeypatch: pytest.MonkeyPatch):
+        seen = {}
+
+        async def fake_get_by_agent(user_id, agent_name, limit=5, workspace_path=None):
+            seen["workspace_path"] = workspace_path
+            return [{"key": "own", "content": "Run go test with -count=1.", "category": "effective_strategy",
+                     "source": "llm", "workspace_path": "/proj/go"}]
+
+        async def fake_search_vector(*a, **kw):
+            return [
+                {"key": "py", "agent_name": "coder", "content": "Run pytest with PYTHONPATH=src.",
+                 "category": "effective_strategy", "workspace_path": "/proj/py", "importance": 0.9, "_similarity": 0.9},
+                {"key": "general", "agent_name": "coder", "content": "Read the whole error before retrying.",
+                 "category": "failed_approach", "workspace_path": "", "importance": 0.9, "_similarity": 0.9},
+            ]
+
+        monkeypatch.setattr("crabagent.core.database.agent_memory_get_by_agent", fake_get_by_agent)
+        monkeypatch.setattr("crabagent.core.database.agent_memory_search_vector", fake_search_vector)
+
+        out = await agents_module.inject_agent_lessons(
+            "", user_id=1, agent_name="coder", task_hint="tests", workspace_path="/proj/go")
+
+        assert seen["workspace_path"] == "/proj/go"
+        assert "-count=1" in out and "Read the whole error" in out
+        assert "PYTHONPATH" not in out
+
+    @pytest.mark.asyncio
+    async def test_own_lessons_query_keeps_this_workspace_and_general_ones(self, monkeypatch: pytest.MonkeyPatch):
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from crabagent.core import database as db
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as conn:
+            await conn.run_sync(db.Base.metadata.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        monkeypatch.setattr(db, "async_session_factory", factory)
+        async with factory() as session:
+            for key, where in (("here", "/proj/a"), ("elsewhere", "/proj/b"), ("general", "")):
+                session.add(db.AgentMemory(user_id=1, memory_type="agent_lesson", agent_name="coder",
+                                           key=key, content=key, workspace_path=where))
+            await session.commit()
+
+        scoped = await db.agent_memory_get_by_agent(1, "coder", limit=10, workspace_path="/proj/a")
+        everything = await db.agent_memory_get_by_agent(1, "coder", limit=10)
+        await engine.dispose()
+
+        assert {r["key"] for r in scoped} == {"here", "general"}
+        assert {r["key"] for r in everything} == {"here", "elsewhere", "general"}
+
+    def test_lesson_workspace_prefers_the_explicit_path(self):
+        from types import SimpleNamespace
+
+        ctx = SimpleNamespace(metadata={"workspace_path": "/explicit"}, workspace="/ignored")
+        assert agents_module.lesson_workspace(ctx) == "/explicit"
+        assert agents_module.lesson_workspace(SimpleNamespace(metadata={}, workspace="/ws")) == "/ws"

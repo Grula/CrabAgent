@@ -69,6 +69,24 @@ what the user used.
 - **What the user must do** to get it: restart, rebuild, hard reload.
 - **Not checked:** anything you could not verify.
 
+## Intermittent failures
+A bug that shows up only sometimes (under load, in a busy test run, on timing)
+needs a bounded reproduction, not a marathon. Put these limits in every brief
+that reproduces it or checks its fix:
+- **Load:** about one CPU hog per core (`nproc`), no more. Twice the cores makes
+  every run several times slower and slows everything else on the machine,
+  agents included.
+- **Runs:** 3-5 with load and a couple without. A fix that turns "fails most
+  loaded runs" into "passes every loaded run" is proven; ten more runs add time,
+  not evidence.
+- **Time:** at most about 5 minutes of stress per step. If it hasn't reproduced
+  by then, report what was tried instead of raising the load.
+- **Clean-up:** load must stop on its own (`timeout 300 yes >/dev/null &`), and
+  the report confirms none is left running (`pgrep -c yes` prints 0).
+- **Waits in tests:** a fix that lengthens a wait must also make the test fail
+  at once, with the exit code and output, when the thing it waits for dies.
+  Otherwise a crash just hangs until the deadline.
+
 ## When the user says "still not working"
 Don't add another fix on top. In this order:
 1. **Is the fix running?** The usual answer is no: stale build, files not copied,

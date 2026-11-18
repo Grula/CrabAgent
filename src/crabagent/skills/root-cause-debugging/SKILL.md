@@ -12,6 +12,9 @@ Don't guess at fixes. A fix you can't explain is a coincidence, and the bug will
 - Run the failing test, command or request. Capture the **exact** error, traceback and output, and write down the command so you can rerun it.
 - If it doesn't reproduce, find out what differs before going further: inputs, environment variables, data, versions, order of operations. You can't confirm a fix for a bug you can't trigger.
 - Shrink the reproduction to the smallest input and the narrowest test that still fails.
+- Fails only sometimes (load, timing)? Keep the reproduction bounded: at most one CPU hog per core
+  with a time limit (`timeout 300 yes >/dev/null &`), 3-5 runs, about 5 minutes, and check that no load
+  is left afterwards.
 
 ## Step 2: Trace the failure to its origin
 - Start at the line that raised the error: the innermost frame in *your* code, not in a library. Read the function around it.

@@ -64,7 +64,9 @@ class ReflectMiddleware:
         provider_name = context.provider_name
         agent_name = context.current_agent or "default"
         session_id = context.metadata.get("session_id", "")
-        workspace_path = context.metadata.get("workspace_path") or str(getattr(context, "workspace", "") or "")
+        from crabagent.core.agent.agents import lesson_workspace
+
+        workspace_path = lesson_workspace(context)
         task = _first_user_message(context.messages)
         if not task:
             return

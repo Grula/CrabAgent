@@ -26,6 +26,20 @@ def get_scheduler() -> SchedulerService:
     return _scheduler
 
 
+def parse_cron_expression(expression: str) -> CronTrigger:
+    parts = expression.strip().split()
+    if len(parts) != 5:
+        raise ValueError("A cron expression must contain 5 fields (minute hour day month weekday)")
+    return CronTrigger(
+        minute=parts[0],
+        hour=parts[1],
+        day=parts[2],
+        month=parts[3],
+        day_of_week=parts[4],
+        timezone=_get_local_tz(),
+    )
+
+
 class SchedulerService:
     _EMAIL_POLL_JOB_ID = "email_poll"
 
@@ -136,17 +150,7 @@ class SchedulerService:
             return list(result.scalars().all())
 
     def _parse_cron(self, expression: str) -> CronTrigger:
-        parts = expression.strip().split()
-        if len(parts) != 5:
-            raise ValueError(f"cron expression must have 5 fields, got: '{expression}'")
-        return CronTrigger(
-            minute=parts[0],
-            hour=parts[1],
-            day=parts[2],
-            month=parts[3],
-            day_of_week=parts[4],
-            timezone=_get_local_tz(),
-        )
+        return parse_cron_expression(expression)
 
     async def add_task(self, task: ScheduledTask) -> None:
         if not task.enabled:

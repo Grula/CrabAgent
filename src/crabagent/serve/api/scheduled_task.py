@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import ScheduledTask, User, get_db
 from crabagent.serve.deps import get_current_user
-from crabagent.serve.scheduler import get_scheduler
+from crabagent.serve.scheduler import get_scheduler, parse_cron_expression
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +76,10 @@ async def create_task(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    parts = req.cron_expression.strip().split()
-    if len(parts) != 5:
-        raise HTTPException(status_code=400, detail="A cron expression must contain 5 fields (minute hour day month weekday)")
+    try:
+        parse_cron_expression(req.cron_expression)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid cron expression: {e}") from e
 
     task = ScheduledTask(
         user_id=user.id,
@@ -113,9 +114,10 @@ async def update_task(
     if req.prompt is not None:
         task.prompt = req.prompt
     if req.cron_expression is not None:
-        parts = req.cron_expression.strip().split()
-        if len(parts) != 5:
-            raise HTTPException(status_code=400, detail="A cron expression must contain 5 fields")
+        try:
+            parse_cron_expression(req.cron_expression)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid cron expression: {e}") from e
         task.cron_expression = req.cron_expression.strip()
         cron_changed = True
     if req.model is not None:

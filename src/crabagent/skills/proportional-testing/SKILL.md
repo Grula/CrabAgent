@@ -58,6 +58,16 @@ A test that passes either way proves nothing. Rewrite it.
   - the exact command you ran and its result
   - for a FAIL, the failing assertion and whether the bug is in the code or in the test
 
+## Flaky or load-dependent tests
+To reproduce a flake or prove its fix:
+- Load at most one CPU hog per core, with a time limit so it always stops:
+  `for i in $(seq $(nproc)); do timeout 300 yes >/dev/null & done`.
+- 3-5 runs under load and a couple without are enough. Stop after about 5 minutes
+  of stress and report what you saw.
+- Confirm no load is left (`pgrep -c yes` prints 0) before you report.
+- Don't fix a flake with only sleeps or retries: wait on the thing the test needs,
+  with a deadline, and fail at once with its output if it dies.
+
 ## Out of scope
 Don't write tests for:
 - unrelated modules

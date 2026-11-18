@@ -162,7 +162,7 @@ class TestDefaultTeamCapabilities:
         assert not {"edit files", "run commands", "web search"} & set(self._caps("architect"))
 
     def test_working_agents_lack_organiser_admin_and_rollback_tools(self):
-        for name in ("coder", "tester", "the_reviewer", "researcher", "scout"):
+        for name in ("architect", "coder", "tester", "the_reviewer", "researcher", "scout"):
             perms = next(a for a in db.DEFAULT_AGENTS if a["name"] == name)["tool_permissions"]
             for tool in ("molt_rollback", "memory_forget", "task_add", "todo_add", "conversation_search", "office_edit"):
                 assert perms.get(tool) == "deny", (name, tool)
@@ -191,3 +191,10 @@ def test_switch_footer_allows_handing_work_to_a_teammate():
     msg = agents.build_agent_switch_msg({"name": "x", "display_name": "X", "goal": "g"})["content"]
     assert "hand it to a teammate" in msg
     assert "do it directly" not in msg
+
+
+def test_architect_briefs_the_what_and_leaves_the_how_to_the_coder():
+    architect = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")
+    assert "Brief the what, not the how" in architect["goal"]
+    assert "function signatures" not in architect["backstory"]
+    assert "don't add a separate test step after the review" in architect["goal"]

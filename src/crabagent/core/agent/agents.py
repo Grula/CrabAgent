@@ -783,11 +783,18 @@ async def _reflect_and_save_lesson(
         )
 
 
+def lesson_workspace(context) -> str:
+    """The workspace a lesson is saved under and looked up by, for *context*."""
+    metadata = getattr(context, "metadata", None) or {}
+    return metadata.get("workspace_path") or str(getattr(context, "workspace", "") or "")
+
+
 async def inject_agent_lessons(
     system_prompt: str,
     user_id: int,
     agent_name: str,
     task_hint: str = "",
+    workspace_path: str | None = None,
 ) -> str:
     """Append a '## Your Past Experiences' block to ``system_prompt`` if the
     agent has previously persisted lessons.
@@ -798,6 +805,10 @@ async def inject_agent_lessons(
 
     P3: Supports cross-agent lesson sharing — if own lessons < limit,
     supplements with high-quality lessons from other agents.
+
+    With ``workspace_path``, lessons learned in other workspaces are left out:
+    what an agent learned about one project's tooling is noise in another.
+    Lessons saved without a workspace apply everywhere.
     """
 
     if not user_id or not agent_name:
@@ -807,9 +818,13 @@ async def inject_agent_lessons(
         agent_memory_search_vector,
     )
 
+    def fits(lesson: dict) -> bool:
+        where = lesson.get("workspace_path") or ""
+        return workspace_path is None or not where or where == workspace_path
+
     lessons: list[dict] = []
     try:
-        lessons = await agent_memory_get_by_agent(user_id, agent_name, limit=5)
+        lessons = await agent_memory_get_by_agent(user_id, agent_name, limit=5, workspace_path=workspace_path)
     except Exception:
         logger.debug("Failed to load agent lessons for %s", agent_name, exc_info=True)
 
@@ -824,7 +839,7 @@ async def inject_agent_lessons(
             )
             existing_keys = {item["key"] for item in lessons}
             for s in similar:
-                if s["key"] not in existing_keys and s.get("agent_name") == agent_name:
+                if s["key"] not in existing_keys and s.get("agent_name") == agent_name and fits(s):
                     lessons.append(s)
                     existing_keys.add(s["key"])
         except Exception:
@@ -842,7 +857,7 @@ async def inject_agent_lessons(
                 fallback=True,
             )
             for g in general:
-                if g["key"] in existing_keys:
+                if g["key"] in existing_keys or not fits(g):
                     continue
                 if g.get("agent_name") in (agent_name, "", None):
                     continue  # skip own or already-loaded
@@ -1086,6 +1101,7 @@ async def spawn_sub_agent(
                 user_id=parent_user_id,
                 agent_name=agent_name,
                 task_hint=task_category,
+                workspace_path=lesson_workspace(parent_context),
             )
         except Exception:
             logger.debug("Failed to inject lessons for sub-agent %s", agent_name, exc_info=True)
@@ -1330,7 +1346,7 @@ async def spawn_sub_agent(
                     model=sub_context.model or agent_def.get("model") or parent_context.model or "",
                     provider_name=sub_context.provider_name or parent_context.provider_name,
                     session_id=session_id,
-                    workspace=parent_context.workspace,
+                    workspace=lesson_workspace(parent_context),
                 )
             except Exception:
                 logger.debug("Failed to extract lesson for %s", agent_name)
@@ -1425,7 +1441,7 @@ async def spawn_sub_agent(
                     model=sub_context.model or agent_def.get("model") or parent_context.model or "",
                     provider_name=sub_context.provider_name or parent_context.provider_name,
                     session_id=session_id,
-                    workspace=parent_context.workspace,
+                    workspace=lesson_workspace(parent_context),
                     error_msg=str(e),
                 )
             except Exception:

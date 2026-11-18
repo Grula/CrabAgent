@@ -429,11 +429,26 @@ asyncio.run(main())
     proc = subprocess.Popen([sys.executable, "-c", code, str(database), str(owner_ready)],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
-        for _ in range(100):
-            if owner_ready.exists():
-                break
+        # The child's import of crabagent.core.database alone costs ~2s (mostly
+        # litellm), so an idle start takes ~3.5s and a machine at 2x CPU
+        # oversubscription has been measured at 12-25s. Wait on a generous
+        # deadline instead of a fixed 5s budget, and report a child that dies
+        # instead of calling it "did not start".
+        deadline = asyncio.get_running_loop().time() + 120
+        while not owner_ready.exists():
+            returncode = proc.poll()
+            if returncode is not None:
+                stdout, stderr = proc.communicate()
+                raise AssertionError(
+                    f"owner process exited with code {returncode} before it was ready\n"
+                    f"stdout:\n{stdout}\nstderr:\n{stderr}")
+            if asyncio.get_running_loop().time() >= deadline:
+                proc.kill()
+                stdout, stderr = proc.communicate()
+                raise AssertionError(
+                    "owner process did not start within 120s\n"
+                    f"stdout:\n{stdout}\nstderr:\n{stderr}")
             await asyncio.sleep(0.05)
-        assert owner_ready.exists(), "owner process did not start"
 
         engine2 = create_async_engine(f"sqlite+aiosqlite:///{database}")
         factory2 = async_sessionmaker(engine2, expire_on_commit=False)

@@ -669,11 +669,14 @@ Use ordinary Markdown when a visualization is not helpful.
 
         # Inject per-agent lessons (not cached in system prompt)
         try:
+            from crabagent.core.agent.agents import lesson_workspace
+
             lessons_block = await _inject_lessons(
                 "",
                 user_id=user.id,
                 agent_name=effective_agent,
                 task_hint=(req.message or "")[:120],
+                workspace_path=lesson_workspace(context),
             )
             if lessons_block.strip():
                 context.messages.append(

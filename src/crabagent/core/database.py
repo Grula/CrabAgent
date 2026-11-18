@@ -1284,8 +1284,8 @@ _NOT_FOR_THE_TEAM = (
     _EMAIL_TOOLS, _CALENDAR_TOOLS, _SCHEDULED_TASK_TOOLS, _IMAGE_TOOLS, _COMPUTER_CONTROL_TOOLS, _TOOLSMITH_TOOLS,
 )
 
-# Personal organiser, office-editing and admin tools the working agents (coder,
-# tester, reviewer, researcher, scout) never need. molt_rollback restores a workspace snapshot and could undo other agents'
+# Personal organiser, office-editing and admin tools the team (architect, coder,
+# tester, reviewer, researcher, scout) never needs; the run view already shows progress. molt_rollback restores a workspace snapshot and could undo other agents'
 # work; memory admin can delete lessons and user memories.
 _ORGANISER_AND_ADMIN_TOOLS = (
     "task_add", "task_update", "task_list", "task_done", "task_delete", "task_remind",
@@ -1312,13 +1312,19 @@ DEFAULT_AGENTS = [
             "context is for planning, not for reading code. One scout per separate area, in one "
             "delegate_parallel; never two scouts on overlapping questions. When the answer sits in a file "
             "you already know (a config key, one function), read it yourself instead, two or three reads at "
-            "most. Stop once you can name the files and the change.\n"
+            "most. Trust a scout's report: don't re-read the files it covered; if something is missing, ask "
+            "it a follow-up. Stop once you can name the files and the change.\n"
             "- Size the plan to the work. A one-file fix is one coder task with a short brief; only "
-            "multi-file features need task IDs, signatures and test lists.\n"
+            "multi-file features need task IDs, the interfaces the tasks share, and test lists.\n"
+            "- Brief the what, not the how: the goal, the files involved, the pass/fail check and what to "
+            "leave alone. Don't design the implementation, write the code or recall library internals in "
+            "your head; that is the coder's job, and it can ask a scout or the researcher.\n"
             "- Route by kind of work: behaviour changes go tester -> coder -> the_reviewer; mechanical "
             "fixes go straight to coder; for a bug, follow bug-triage: reproduce it the way the user hit "
             "it before anyone fixes it, and check the fix on that same path; web research goes to researcher. Tasks on different files go in one "
             "delegate_parallel; a task that needs another's output goes in run_pipeline.\n"
+            "- Put the whole check in the brief that changes the code (the full test suite when shared code "
+            "changes); don't add a separate test step after the review unless the reviewer asks for one.\n"
             "- Check each result against its pass/fail criteria (read the report, git_diff the change). If "
             "something is off, send a targeted follow-up task instead of redoing the work.\n"
             "- Ask before you build on a design choice the request doesn't settle and that is costly to "
@@ -1330,12 +1336,12 @@ DEFAULT_AGENTS = [
         ),
         "backstory": (
             "Your teammates never see this conversation; they only get your brief. A good brief names the "
-            "goal, the exact files and function signatures, the pass/fail check, and what to leave alone, "
-            "so nobody has to guess."
+            "goal, the files involved, the pass/fail check, and what to leave alone, so nobody has to guess; "
+            "how to implement it is the coder's call."
         ),
         "icon": "🧠",
         "tool_permissions": {
-            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS),
+            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS),
             "delegate_task": "auto",
             "delegate_parallel": "auto",
             "run_pipeline": "auto",
@@ -1867,17 +1873,30 @@ async def agent_memory_get_by_agent(
     user_id: int,
     agent_name: str,
     limit: int = 5,
+    workspace_path: str | None = None,
 ) -> list[dict]:
-    from sqlalchemy import select
+    """An agent's lessons, most important first.
 
+    With ``workspace_path``, only lessons learned in that workspace or saved
+    without one (general lessons); ``None`` returns lessons from every workspace.
+    """
+    from sqlalchemy import or_, select
+
+    conditions = [
+        AgentMemory.user_id == user_id,
+        AgentMemory.memory_type == "agent_lesson",
+        AgentMemory.agent_name == agent_name,
+    ]
+    if workspace_path is not None:
+        conditions.append(or_(
+            AgentMemory.workspace_path == workspace_path,
+            AgentMemory.workspace_path == "",
+            AgentMemory.workspace_path.is_(None),
+        ))
     async with async_session_factory() as db:
         result = await db.execute(
             select(AgentMemory)
-            .where(
-                AgentMemory.user_id == user_id,
-                AgentMemory.memory_type == "agent_lesson",
-                AgentMemory.agent_name == agent_name,
-            )
+            .where(*conditions)
             # Newest first among equal importance, so old lessons can't hold the
             # top places forever just by being saved first.
             .order_by(AgentMemory.importance.desc(), AgentMemory.id.desc())
@@ -1893,6 +1912,7 @@ async def agent_memory_get_by_agent(
                 "source": r.source or "",
                 "task_category": r.task_category or "",
                 "access_count": r.access_count or 0,
+                "workspace_path": r.workspace_path or "",
                 "created_at": r.created_at,
             }
             for r in result.scalars().all()
