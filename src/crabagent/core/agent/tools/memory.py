@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from crabagent.core.agent.tools.registry import registry
 
-_MEMORY_TYPE_DESC = '"team" for project knowledge shared by all agents, "lesson" for behavioral patterns and experience'
+_MEMORY_TYPE_DESC = (
+    '"team" for knowledge about this project (kept with the current workspace), '
+    '"lesson" for behavioral patterns and experience'
+)
 
 _CATEGORY_DESC = (
     "team: tech_stack, architecture, convention, api, dependency, decision, user_preference. "
@@ -13,13 +16,14 @@ _CATEGORY_DESC = (
 @registry.register(
     name="memory_save",
     description=(
-        "Save a memory to long-term storage. "
-        "Use 'team' type for project knowledge all agents should know "
-        "(tech stack, architecture, conventions, decisions). "
-        "Use 'lesson' type for behavioral patterns "
-        "(what works, what doesn't, user preferences). "
-        "If the user makes a choice or rejects something, record it. "
-        "Memories persist across sessions and are automatically loaded on startup."
+        "Save a note to long-term storage. Notes are not shown to agents "
+        "automatically: they are found only when an agent searches with memory_recall. "
+        "A project's rules, conventions and decisions (including a choice the user just "
+        "made) belong in its AGENTS.md or spec, where every agent reads them; save a "
+        "note only for what doesn't belong there. "
+        "Use 'team' type for knowledge about this project; it is kept with the current "
+        "workspace. Use 'lesson' type for behavioral patterns "
+        "(what works, what doesn't)."
     ),
     parameters={
         "type": "object",
@@ -81,7 +85,12 @@ async def memory_save(
     from crabagent.core.database import agent_memory_upsert
 
     workspace_path = context.metadata.get("workspace_path") or str(getattr(context, "workspace", "") or "")
-    default_scope = "global" if memory_type == "team" else "agent"
+    # A team note is about the project it was written in; only a note saved
+    # outside any workspace applies everywhere.
+    if memory_type == "team":
+        default_scope = "workspace" if workspace_path else "global"
+    else:
+        default_scope = "agent"
     default_recall = "always" if memory_type == "team" else "query_only"
 
     await agent_memory_upsert(

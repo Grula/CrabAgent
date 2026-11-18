@@ -101,6 +101,60 @@ async def test_memory_save_success(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+async def test_team_note_stays_with_its_project(monkeypatch: pytest.MonkeyPatch):
+    """A team note is about the project it was written in, not every project."""
+    saved = {}
+
+    async def fake_upsert(**kwargs):
+        saved.update(kwargs)
+
+    monkeypatch.setattr("crabagent.core.database.agent_memory_upsert", fake_upsert)
+
+    ctx = AgentContext(workspace=Path("/home/x/projects/splitbill"))
+    ctx.metadata["user_id"] = 1
+    await memory_tools.memory_save(
+        memory_type="team", category="decision", key="decision:rounding",
+        content="Leftover cents go to the first members listed.", context=ctx,
+    )
+    assert saved["scope"] == "workspace"
+    assert saved["workspace_path"] == "/home/x/projects/splitbill"
+
+    ctx.metadata["workspace_path"] = "/home/x/projects/other"
+    await memory_tools.memory_save(
+        memory_type="team", category="decision", key="decision:x", content="x", context=ctx,
+    )
+    assert saved["workspace_path"] == "/home/x/projects/other"  # the session's workspace wins
+
+
+@pytest.mark.asyncio
+async def test_team_note_without_a_workspace_is_global(monkeypatch: pytest.MonkeyPatch):
+    saved = {}
+
+    async def fake_upsert(**kwargs):
+        saved.update(kwargs)
+
+    monkeypatch.setattr("crabagent.core.database.agent_memory_upsert", fake_upsert)
+
+    ctx = AgentContext(workspace=Path.cwd())
+    ctx.workspace = ""  # type: ignore[assignment]
+    ctx.metadata["user_id"] = 1
+    await memory_tools.memory_save(
+        memory_type="team", category="convention", key="convention:x", content="x", context=ctx,
+    )
+    assert saved["scope"] == "global"
+    assert saved["workspace_path"] == ""
+
+
+def test_memory_save_does_not_promise_automatic_loading():
+    from crabagent.core.agent.tools.registry import registry
+
+    description = registry.get("memory_save").description
+    assert "automatically loaded" not in description
+    assert "memory_recall" in description
+    assert "AGENTS.md" in description
+
+
+@pytest.mark.asyncio
 async def test_memory_recall_no_results(monkeypatch: pytest.MonkeyPatch):
     ctx = AgentContext(workspace=Path.cwd())
     ctx.metadata["user_id"] = 1
