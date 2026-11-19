@@ -162,6 +162,28 @@ class TestCompressMiddleware:
         assert result is messages
 
     @pytest.mark.asyncio
+    async def test_compacts_a_big_window_model_once_past_the_cap(self, monkeypatch):
+        """A 1M-token model is compacted at 150k, not left to fill to 800k."""
+        from crabagent.core.agent.middlewares import compress_middleware
+
+        calls = []
+
+        async def fake_compress(context, llm_params, model):
+            calls.append(model)
+
+        monkeypatch.setattr(compress_middleware, "compress_context", fake_compress)
+        mw = CompressMiddleware()
+        for tokens, expected in ((140_000, 0), (160_000, 1)):
+            calls.clear()
+            ctx = AgentContext(workspace=Path.cwd(), model="deepseek-chat", total_tokens=tokens)
+            ctx.metadata["_resolved_model"] = "deepseek-chat"
+            ctx.metadata["_llm_params"] = {}
+
+            await mw.before_llm_call(ctx, [{"role": "user", "content": "hi"}])
+
+            assert len(calls) == expected, tokens
+
+    @pytest.mark.asyncio
     async def test_returns_messages_when_llm_params_missing(self):
         mw = CompressMiddleware()
         ctx = AgentContext(workspace=Path.cwd(), model="gpt-4o", total_tokens=999999)

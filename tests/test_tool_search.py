@@ -362,3 +362,21 @@ def test_agent_switch_note_loads_from_the_profile_but_not_from_boilerplate():
 
     # "past conversations" is in the goal; the browser capability hint is shared boilerplate.
     assert ts.loaded_groups(context) == {"history"}
+
+
+def test_spreadsheet_tools_load_only_when_a_spreadsheet_comes_up():
+    """They were sent with every step of every agent; now they come with the office group."""
+    names = CORE + ["spreadsheet_read", "spreadsheet_export"]
+    idle = _context(names)
+    idle.messages = [{"role": "user", "content": "fix the failing test in tests/test_x.py"}]
+
+    assert not {"spreadsheet_read", "spreadsheet_export"} & _advertised(idle)
+    coding = _context(names)
+    coding.messages = [{"role": "user", "content": "write a parser for data.csv"}]  # CSV in code is not a spreadsheet
+    assert not {"spreadsheet_read", "spreadsheet_export"} & _advertised(coding)
+
+    for request in ("analyse the colours in report.xlsx", "check this spreadsheet", "open the .ods export"):
+        busy = _context(names)
+        busy.messages = [{"role": "user", "content": request}]
+
+        assert {"spreadsheet_read", "spreadsheet_export"} <= _advertised(busy), request

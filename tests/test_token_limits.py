@@ -62,3 +62,32 @@ class TestTokenLimits:
     def test_is_vision_model_accepts_glm_53_flash(self):
         assert is_vision_model("glm-5.3-flash") is True
         assert is_vision_model("openai/GLM-5.3-Flash") is True
+
+
+class TestCompressionTrigger:
+    """Compaction starts at the lower of 80% of the window and a fixed cap."""
+
+    def _settings(self, cap):
+        return SimpleNamespace(
+            model_token_limits={}, context_compression_threshold=0.8, context_compression_max_tokens=cap
+        )
+
+    def test_a_large_window_is_compacted_at_the_cap(self, monkeypatch):
+        monkeypatch.setattr(token_limits, "settings", self._settings(150_000))
+
+        assert token_limits.compression_trigger_tokens("deepseek-chat") == 150_000
+
+    def test_a_small_window_keeps_its_own_threshold(self, monkeypatch):
+        monkeypatch.setattr(token_limits, "settings", self._settings(150_000))
+
+        assert token_limits.compression_trigger_tokens("gpt-4") == 6_400
+
+    def test_a_cap_of_zero_turns_it_off(self, monkeypatch):
+        monkeypatch.setattr(token_limits, "settings", self._settings(0))
+
+        assert token_limits.compression_trigger_tokens("deepseek-chat") == 800_000
+
+    def test_the_default_cap_is_150k(self):
+        from crabagent.core.config import Settings
+
+        assert Settings.model_fields["context_compression_max_tokens"].default == 150_000

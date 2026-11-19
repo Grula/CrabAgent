@@ -1209,17 +1209,17 @@ async def spawn_sub_agent(
             tr_name = event.data.get("name", "")
             tr_result = str(event.data.get("result", ""))
             _detail_lines.append(f"← {tr_name}: {tr_result[:200]}{'...' if len(tr_result) > 200 else ''}")
-            await parent_context.event_bus.emit(
-                AgentEvent(
-                    type=EventType.SUB_AGENT_TOOL_RESULT,
-                    data={
-                        "sub_agent_id": sub_id,
-                        "agent_name": agent_name,
-                        "name": tr_name,
-                        "result": tr_result[:500],
-                    },
-                )
-            )
+            tr_data = {
+                "sub_agent_id": sub_id,
+                "agent_name": agent_name,
+                "name": tr_name,
+                "result": tr_result[:500],
+            }
+            # The loop classified the full result; 500 chars would lose a command's exit code.
+            for key in ("ok", "reason_class"):
+                if key in event.data:
+                    tr_data[key] = event.data[key]
+            await parent_context.event_bus.emit(AgentEvent(type=EventType.SUB_AGENT_TOOL_RESULT, data=tr_data))
         elif event.type in (EventType.THINKING_DELTA,):
             _text_buffer[0] += event.data.get("text", "")
             now = time.time()

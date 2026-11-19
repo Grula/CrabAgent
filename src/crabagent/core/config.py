@@ -53,6 +53,10 @@ class Settings(BaseSettings):
 
     model_token_limits: dict[str, int] = {}
     context_compression_threshold: float = 0.8
+    # Also compact once the context passes this many tokens, however large the
+    # model's window: every step re-sends the whole context, so a 1M-token model
+    # left to fill to 80% re-reads 800k tokens per step. 0 turns the cap off.
+    context_compression_max_tokens: int = 150_000
     context_keep_recent: int = 6
 
     memory_auto_extract: bool = True

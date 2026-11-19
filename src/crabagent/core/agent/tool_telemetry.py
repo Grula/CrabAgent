@@ -1,7 +1,32 @@
 from __future__ import annotations
 
+import re
+
+# bash ends a finished command's output with "[exit code: N]" when N != 0. Its own
+# truncation keeps the tail, so the marker is the last thing in the result. An
+# auto-backgrounded command shows "[exit code: -1]" mid-text, followed by the
+# background note: it is still running, not failed, so the marker must be at the end.
+_BASH_EXIT = re.compile(r"\[exit code: (-?\d+)\]\s*\Z")
+# bash_output(pid=...) opens with "[PID 123] exited (exit code N) | ...".
+_JOB_EXIT = re.compile(r"\[PID \d+\] exited \(exit code (-?\d+)\)")
+
+
+def _exit_code(name: str, s: str) -> int | None:
+    if name == "bash":
+        m = _BASH_EXIT.search(s)
+    elif name == "bash_output":
+        m = _JOB_EXIT.match(s)
+    else:
+        return None
+    return int(m.group(1)) if m else None
+
 
 def classify_tool_outcome(name: str, result: object) -> tuple[bool, str]:
+    """(ok, reason_class) for one tool result.
+
+    Pass the FULL result: the exit code of a shell command is at the end of its
+    output, so a preview cut from the front loses it.
+    """
     if not isinstance(result, str):
         return True, 'ok'
     s = result
@@ -11,10 +36,20 @@ def classify_tool_outcome(name: str, result: object) -> tuple[bool, str]:
         return False, 'unknown_tool'
     if 'is disabled (no permission' in s:
         return False, 'permission_denied'
-    if 'execution denied by user' in s:
+    if 'execution denied by user' in s or s.startswith('Command denied by user:'):
         return False, 'user_denied'
-    if s.startswith('Error'):
+    if s.startswith('Command blocked:'):
+        return False, 'blocked'
+    # "Tool error: ..." is what the loop records when a handler raises.
+    if s.startswith('Error') or s.startswith('Tool error:'):
         return False, 'error'
+    code = _exit_code(name, s)
+    if name == "run_tests" and s.startswith(("FAILED:", "ERROR:")):
+        code = 1
+    if code:  # None (no exit code) and 0 are both fine
+        # Kept apart from 'error': the tool worked, the command failed. Some of these
+        # are expected (a test written to fail first, grep finding nothing).
+        return False, 'exit_nonzero'
     return True, 'ok'
 
 

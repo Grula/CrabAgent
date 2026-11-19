@@ -387,6 +387,51 @@ async def test_run_agent_executes_tool_call_and_appends_tool_message(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_a_failed_command_with_long_output_is_reported_as_failed(monkeypatch: pytest.MonkeyPatch):
+    """The exit code sits at the end of a long output, past the event's 2k preview.
+
+    The loop classifies the full result, so the stats see the failure.
+    """
+    registry = ToolRegistry()
+
+    @registry.register(
+        name="bash",
+        description="fake shell",
+        parameters={"type": "object", "properties": {"command": {"type": "string"}}},
+    )
+    async def fake_bash(command: str, context=None):
+        return "F" * 5000 + "\n3 failed\n[exit code: 1]"
+
+    context = AgentContext(workspace=Path.cwd(), tool_registry=registry, model="gpt-4o", max_iterations=3)
+    events = []
+    context.event_bus.subscribe(lambda event: events.append(event))
+
+    chunks = [
+        _chunk(delta=_delta(tool_calls=[_tool_call("call_1", "bash", '{"command": "pytest"}')]), finish_reason=None),
+        _chunk(delta=_delta(content="done"), finish_reason="stop", usage=_usage()),
+    ]
+
+    async def fake_acompletion(**kwargs):
+        return _stream(chunks)
+
+    async def fake_provider(provider_name=None):
+        return SimpleNamespace(name="mock", provider_type="openai", api_key="k", base_url="", enabled=True)
+
+    monkeypatch.setattr(loop, "_resolve_provider", fake_provider)
+    monkeypatch.setattr(
+        loop, "litellm", SimpleNamespace(acompletion=fake_acompletion, exceptions=loop.litellm.exceptions)
+    )
+    monkeypatch.setattr("crabagent.core.proxy.resolve_llm_proxy", _async_return(""))
+
+    await loop.run_agent(context, "run the tests")
+
+    result_event = next(e for e in events if e.type == EventType.TOOL_RESULT)
+    assert "[exit code: 1]" not in result_event.data["result"]  # the preview lost it
+    assert result_event.data["ok"] is False
+    assert result_event.data["reason_class"] == "exit_nonzero"
+
+
+@pytest.mark.asyncio
 async def test_run_agent_reads_usage_after_finish_chunk(monkeypatch: pytest.MonkeyPatch):
     context = AgentContext(workspace=Path.cwd(), model="gpt-4o", max_iterations=2)
 

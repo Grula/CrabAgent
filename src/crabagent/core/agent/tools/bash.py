@@ -271,6 +271,21 @@ def _build_subprocess_kwargs(workdir: str | None = None) -> dict:
     return kwargs
 
 
+def with_user_profile(command: str) -> str:
+    """The command, preceded on Unix by sourcing the user's profile (for PATH: homebrew etc.).
+
+    On Windows profiles don't apply, so the command runs as given.
+    """
+    if IS_WINDOWS:
+        return command
+    return (
+        "export SHELL=$(echo $SHELL 2>/dev/null || echo /bin/sh); "
+        "[ -f ~/.zprofile ] && . ~/.zprofile; "
+        "[ -f ~/.bash_profile ] && . ~/.bash_profile; "
+        "[ -f ~/.profile ] && . ~/.profile; "
+    ) + command
+
+
 def _get_subprocess_env() -> dict[str, str]:
     """Return an environment dict that encourages UTF-8 output."""
     env = os.environ.copy()
@@ -377,18 +392,7 @@ async def bash_command(
     if background:
         return await _run_background(command, workdir, context)
 
-    # On Unix, source user profile to get correct PATH (homebrew, etc.)
-    # On Windows, profiles don't apply — just run the command directly.
-    if IS_WINDOWS:
-        full_command = command
-    else:
-        _profile_cmd = (
-            "export SHELL=$(echo $SHELL 2>/dev/null || echo /bin/sh); "
-            "[ -f ~/.zprofile ] && . ~/.zprofile; "
-            "[ -f ~/.bash_profile ] && . ~/.bash_profile; "
-            "[ -f ~/.profile ] && . ~/.profile; "
-        )
-        full_command = _profile_cmd + command
+    full_command = with_user_profile(command)
 
     try:
         proc = await asyncio.create_subprocess_shell(

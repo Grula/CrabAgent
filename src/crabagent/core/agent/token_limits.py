@@ -189,3 +189,15 @@ def get_model_token_limit(model: str) -> int:
                     return val
 
     return _FALLBACK
+
+
+def compression_trigger_tokens(model: str) -> int:
+    """Context size (tokens) above which the conversation gets compacted.
+
+    The lower of a share of the model's window and a fixed cap: every step
+    re-sends the whole context, so a large window should not be filled just
+    because it can be.
+    """
+    trigger = int(get_model_token_limit(model) * settings.context_compression_threshold)
+    cap = settings.context_compression_max_tokens
+    return min(trigger, cap) if cap and cap > 0 else trigger

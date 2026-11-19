@@ -140,3 +140,67 @@ async def test_run_recorder_classifies_outcome(monkeypatch: pytest.MonkeyPatch):
     entry = recorder._main_tool_buf[1]
     assert entry.get("ok") is True, entry
     assert entry.get("reason_class") == "ok", entry
+
+
+async def test_run_recorder_keeps_the_loops_verdict_over_the_preview():
+    """The event's result is a front-cut preview; the loop already classified the full text."""
+    recorder = RunRecorder(user_id=1, session_id="s1", model="gpt-4o")
+    recorder._main_run_id = 1
+    recorder._main_tool_buf = [{"name": "bash", "args": {}, "started_at": 0, "result_summary": None, "elapsed": 0}]
+
+    await recorder.on_event(
+        AgentEvent(
+            type=EventType.TOOL_RESULT,
+            data={"name": "bash", "result": "F" * 2000, "id": "tc1", "ok": False, "reason_class": "exit_nonzero"},
+        )
+    )
+
+    entry = recorder._main_tool_buf[0]
+    assert (entry["ok"], entry["reason_class"]) == (False, "exit_nonzero")
+
+
+async def test_sub_agent_tool_results_carry_the_verdict_to_the_parent(monkeypatch: pytest.MonkeyPatch):
+    """A sub-agent's results reach the parent cut to 500 chars, so the verdict travels with them."""
+    from pathlib import Path
+
+    from crabagent.core.agent import agents as agents_module
+    from crabagent.core.agent.context import AgentContext
+
+    agent_def = {
+        "name": "tester", "display_name": "Tester", "role": "r", "goal": "g", "backstory": "b",
+        "tool_permissions": {},
+    }
+
+    async def _ret(value):
+        return value
+
+    monkeypatch.setattr(agents_module, "get_agent", lambda *a, **k: _ret(agent_def))
+    monkeypatch.setattr(agents_module, "_load_shared_context", lambda *a, **k: _ret(""))
+    monkeypatch.setattr(agents_module, "load_sub_agent_model_map", lambda *a, **k: _ret({}))
+
+    async def stub_run_agent(sub_context, task, *args, **kwargs):
+        await sub_context.event_bus.emit(AgentEvent(
+            type=EventType.TOOL_RESULT,
+            data={"name": "bash", "result": "F" * 2000, "id": "tc1", "ok": False, "reason_class": "exit_nonzero"},
+        ))
+        sub_context.messages.append({"role": "assistant", "content": "done"})
+        return sub_context.messages
+
+    monkeypatch.setattr(agents_module, "run_agent", stub_run_agent, raising=False)
+    monkeypatch.setattr("crabagent.core.agent.loop.run_agent", stub_run_agent)
+
+    agents_module._running_sub_agents.clear()
+    parent = AgentContext(workspace=Path("/tmp"), metadata={"user_id": 0})
+    events: list = []
+
+    async def _listen(event):
+        events.append(event)
+
+    parent.event_bus.subscribe(_listen)
+
+    await agents_module.spawn_sub_agent(parent, agent_name="tester", task="x", agent_def=agent_def)
+
+    forwarded = [e for e in events if e.type == EventType.SUB_AGENT_TOOL_RESULT]
+    assert len(forwarded) == 1
+    assert len(forwarded[0].data["result"]) == 500
+    assert (forwarded[0].data["ok"], forwarded[0].data["reason_class"]) == (False, "exit_nonzero")

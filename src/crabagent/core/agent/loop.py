@@ -20,7 +20,8 @@ from crabagent.core.agent.multimodal import (
     split_multimodal_tool_result,
     stringify_tool_result,
 )
-from crabagent.core.agent.token_limits import get_model_token_limit
+from crabagent.core.agent.token_limits import compression_trigger_tokens
+from crabagent.core.agent.tool_telemetry import classify_tool_outcome
 from crabagent.core.agent.tools.tool_search import intercept_unloaded_call
 from crabagent.core.config import settings
 from crabagent.core.event import AgentEvent, EventType
@@ -532,8 +533,7 @@ async def _run_agent(
             # real token count) but BEFORE appending the current response,
             # so compression doesn't need to deal with messages from the
             # current iteration — simplifying DB persistence.
-            max_context = get_model_token_limit(model)
-            if context.total_tokens > max_context * settings.context_compression_threshold:
+            if context.total_tokens > compression_trigger_tokens(model):
                 if context.middlewares:
                     try:
                         await context.middlewares.run_before_llm(context, context.messages)
@@ -642,6 +642,9 @@ async def _run_agent(
                         if meta["source"] == "builtin":
                             result = attach_images_from_tool_result(result, context)
                     preview = _preview_result(result)
+                    # Classify the full result: the preview is cut from the front
+                    # and a shell command's exit code is at the end.
+                    ok, reason_class = classify_tool_outcome(meta["name"], result)
                     end_span(
                         _tool_span,
                         summary=preview[:200] if preview else "",
@@ -656,6 +659,8 @@ async def _run_agent(
                                 "id": meta["tc"]["id"],
                                 "source": meta["source"],
                                 "server_name": meta["server"],
+                                "ok": ok,
+                                "reason_class": reason_class,
                             },
                         )
                     )
@@ -687,6 +692,8 @@ async def _run_agent(
                                 "id": tc["id"],
                                 "source": meta["source"],
                                 "server_name": meta["server"],
+                                "ok": False,
+                                "reason_class": "error",
                             },
                         )
                     )

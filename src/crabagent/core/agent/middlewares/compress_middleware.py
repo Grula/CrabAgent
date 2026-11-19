@@ -15,7 +15,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from crabagent.core.agent.compress import compress_context
-from crabagent.core.agent.token_limits import get_model_token_limit
+from crabagent.core.agent.token_limits import compression_trigger_tokens
 from crabagent.core.config import settings
 
 if TYPE_CHECKING:
@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 class CompressMiddleware:
     """Summarises older messages when total tokens approach the model limit.
 
-    Runs on every ``before_llm_call`` hook. When the cumulative token count
-    exceeds ``settings.context_compression_threshold`` of the model's window,
-    delegates to :func:`compress_context`. Returns the message list unchanged
+    Runs on every ``before_llm_call`` hook. When the context passes
+    :func:`compression_trigger_tokens` (a share of the model's window, capped by
+    ``settings.context_compression_max_tokens``), delegates to :func:`compress_context`. Returns the message list unchanged
     otherwise (and on any error)."""
 
     name = "compress"
@@ -43,11 +43,10 @@ class CompressMiddleware:
         full_model = context.metadata.get("_resolved_model_full")
         bare_model = context.metadata.get("_resolved_model") or context.model or "gpt-4"
         try:
-            max_context = get_model_token_limit(bare_model)
+            trigger = compression_trigger_tokens(bare_model)
         except Exception:
-            max_context = 8000
-        threshold = settings.context_compression_threshold
-        if context.total_tokens <= max_context * threshold:
+            trigger = int(8000 * settings.context_compression_threshold)
+        if context.total_tokens <= trigger:
             return messages
 
         llm_params = context.metadata.get("_llm_params")

@@ -143,7 +143,11 @@ class RunRecorder:
             if tool["name"] == name and tool["result_summary"] is None:
                 tool["result_summary"] = str(result)[:500]
                 tool["elapsed"] = round(finished_at - tool["started_at"], 3)
-                ok, reason_class = classify_tool_outcome(name, result)
+                if "reason_class" in data:
+                    # Classified by the loop on the full result; ``result`` here is a preview.
+                    ok, reason_class = bool(data.get("ok")), str(data["reason_class"])
+                else:
+                    ok, reason_class = classify_tool_outcome(name, result)
                 tool["ok"] = ok
                 tool["reason_class"] = reason_class
                 return tool

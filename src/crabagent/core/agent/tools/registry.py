@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 # Permission keys that stand for a family of tools. The agent settings page
 # offers "browser" as one switch; it covers every ``browser_*`` tool.
 _PERMISSION_FAMILIES: dict[str, str] = {"browser": "browser_"}
+# A tool without its own entry takes another tool's permission: run_tests runs shell
+# commands, so an agent that may not use bash may not run tests either.
+_PERMISSION_INHERITS: dict[str, str] = {"run_tests": "bash"}
 
 
 def resolve_permission(permissions: dict[str, str] | None, tool_name: str) -> str | None:
@@ -44,6 +47,9 @@ def resolve_permission(permissions: dict[str, str] | None, tool_name: str) -> st
     for key, prefix in _PERMISSION_FAMILIES.items():
         if tool_name.startswith(prefix) and key in permissions:
             return permissions[key]
+    parent = _PERMISSION_INHERITS.get(tool_name)
+    if parent:
+        return resolve_permission(permissions, parent)
     return None
 
 

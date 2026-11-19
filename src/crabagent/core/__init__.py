@@ -79,6 +79,7 @@ import crabagent.core.agent.tools.office  # noqa: F401
 import crabagent.core.agent.tools.read  # noqa: F401
 import crabagent.core.agent.tools.shared  # noqa: F401
 import crabagent.core.agent.tools.spreadsheet  # noqa: F401
+import crabagent.core.agent.tools.run_tests  # noqa: F401
 import crabagent.core.agent.tools.tool_search  # noqa: F401
 import crabagent.core.agent.tools.web  # noqa: F401
 import crabagent.core.agent.tools.write  # noqa: F401

@@ -48,14 +48,15 @@ class ToolGroup:
 GROUPS: tuple[ToolGroup, ...] = (
     ToolGroup(
         name="office",
-        summary="create, read and edit Word, Excel and PowerPoint files",
+        summary="create, read and edit Word, Excel and PowerPoint files; analyse spreadsheets and CSV",
         tools=(
             "office_create", "office_read", "office_edit", "office_batch_edit",
             "office_query", "office_render", "office_help",
+            "spreadsheet_read", "spreadsheet_export",
         ),
         keywords=(
             "word document", "word doc", "word file", "ms word", "microsoft word", "docx",
-            "excel", "xlsx", "xls", "spreadsheet", "workbook",
+            "excel", "xlsx", "xls", "spreadsheet", "spreadsheets", "workbook", "ods", "fods",
             "powerpoint", "pptx", "ppt", "slide deck", "slides", "slide", "presentation",
             "office document",
         ),
