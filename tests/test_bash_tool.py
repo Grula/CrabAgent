@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -571,3 +572,95 @@ class TestBackgroundJobs:
 
         assert "no background command" in await bash_tool.bash_output(pid=999999, context=context)
         assert "pid must be a number" in await bash_tool.bash_stop(pid="abc", context=context)
+
+
+class TestBackgroundLogCleanup:
+    """Background logs live in the temp folder; they go once their output has been handed back."""
+
+    @unix_only
+    @pytest.mark.asyncio
+    async def test_a_finished_command_read_to_the_end_leaves_no_log(self, tmp_path: Path, background_logs: Path):
+        context = _session(tmp_path, "s1")
+        started = await bash_command("echo hi; sleep 1; echo bye; exit 4", background=True, context=context)
+        pid = _pid_of(started)
+
+        result = await bash_tool.bash_output(pid=pid, wait_seconds=10, context=context)
+        while "running" in result.splitlines()[0]:
+            result = await bash_tool.bash_output(pid=pid, wait_seconds=10, context=context)
+
+        assert "exited (exit code 4)" in result and "log: deleted" in result
+        assert list(background_logs.iterdir()) == []
+        # Still listed and still stoppable, with its exit code remembered.
+        assert f"PID {pid} | exited (exit code 4)" in await bash_tool.bash_output(context=context)
+        assert "nothing to stop" in await bash_tool.bash_stop(pid=pid, context=context)
+
+    @unix_only
+    @pytest.mark.asyncio
+    async def test_a_command_that_is_already_done_when_started_leaves_no_log(
+        self, tmp_path: Path, background_logs: Path
+    ):
+        context = _session(tmp_path, "s1")
+
+        result = await bash_command("echo done; exit 3", background=True, context=context)
+
+        assert "already exited (exit code 3)" in result and "done" in result
+        assert list(background_logs.iterdir()) == []
+
+    @unix_only
+    @pytest.mark.asyncio
+    async def test_stopping_a_command_deletes_its_log(self, tmp_path: Path, background_logs: Path):
+        context = _session(tmp_path, "s1")
+        started = await bash_command("echo serving; sleep 60", background=True, context=context)
+
+        result = await bash_tool.bash_stop(pid=_pid_of(started), context=context)
+
+        assert "stopped" in result and "serving" in result
+        assert list(background_logs.iterdir()) == []
+
+    @unix_only
+    @pytest.mark.asyncio
+    async def test_a_log_cut_short_in_the_reply_is_kept(self, tmp_path: Path, background_logs: Path):
+        context = _session(tmp_path, "s1")
+        started = await bash_command("seq 1 5000; exit 0", background=True, context=context)
+        pid = _pid_of(started)
+        job = bash_tool._JOBS[pid]
+
+        # The start reply already showed the last 10,000 characters and pointed to the full log.
+        assert "the full log is at" in started
+        assert Path(job.log_file).exists()
+
+    @unix_only
+    @pytest.mark.asyncio
+    async def test_a_timed_out_command_stopped_later_leaves_no_log(self, tmp_path: Path, background_logs: Path):
+        context = _session(tmp_path, "s1")
+        result = await bash_command("echo alpha; sleep 60", timeout=1000, context=context)
+        pid = int(result.split("PID: ")[1].split()[0])
+
+        assert "stopped" in await bash_tool.bash_stop(pid=pid, context=context)
+        for _ in range(50):  # the output copier closes right after the process exits
+            if not list(background_logs.iterdir()):
+                break
+            await asyncio.sleep(0.1)
+            await bash_tool.bash_output(pid=pid, context=context)
+        assert list(background_logs.iterdir()) == []
+
+    @unix_only
+    @pytest.mark.asyncio
+    async def test_old_untracked_logs_are_swept_when_a_new_command_starts(
+        self, tmp_path: Path, background_logs: Path
+    ):
+        context = _session(tmp_path, "s1")
+        stale = background_logs / "crabagent-bg-111.log"
+        fresh = background_logs / "crabagent-bg-222.log"
+        other = background_logs / "someone-else.log"
+        for path in (stale, fresh, other):
+            path.write_text("x")
+        two_days_ago = time.time() - 2 * 86400
+        os.utime(stale, (two_days_ago, two_days_ago))
+        os.utime(other, (two_days_ago, two_days_ago))
+
+        started = await bash_command("sleep 30", background=True, context=context)
+
+        assert not stale.exists()
+        assert fresh.exists() and other.exists()
+        assert "process is running" in started

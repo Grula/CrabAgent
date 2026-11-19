@@ -1380,6 +1380,7 @@ DEFAULT_AGENTS = [
             "git_diff": "auto",
             "bash": "deny",
             "write": "deny",
+            "spreadsheet_export": "deny",  # writes a file
             "edit": "deny",
             "web_search": "deny",
             "web_scrape": "deny",
@@ -1537,6 +1538,7 @@ DEFAULT_AGENTS = [
             "git_diff": "auto",
             "bash": "auto",
             "write": "deny",
+            "spreadsheet_export": "deny",  # writes a file
             "edit": "deny",
             "web_search": "deny",
             "web_scrape": "deny",
@@ -1579,6 +1581,7 @@ DEFAULT_AGENTS = [
             "git_diff": "auto",
             "bash": "deny",
             "write": "deny",
+            "spreadsheet_export": "deny",  # writes a file
             "edit": "deny",
             "web_search": "deny",
             "web_scrape": "deny",
@@ -1617,6 +1620,7 @@ DEFAULT_AGENTS = [
             "browser": "auto",
             "bash": "deny",
             "write": "deny",
+            "spreadsheet_export": "deny",  # writes a file
             "edit": "deny",
         },
         "skills": ["web-research", "docs-lookup", "deep-research"],

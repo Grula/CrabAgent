@@ -17,6 +17,7 @@ project's layout and how to run its Python.
 |---|---|
 | Python imports and locals | `ruff check <src> --select F401,F811,F841` (or `python3 -m pyflakes <src>`) |
 | Python definitions and modules | `python3 <skill-dir>/scripts/py_unused.py --src <package dir> --tests tests --also scripts pyproject.toml <Dockerfile, *.spec>` |
+| Python code the tests never run | `python3 <skill-dir>/scripts/py_coverage.py --src <package dir> -- <the project's test command>` (run it with the project's Python and PYTHONPATH; it follows the subprocesses the tests start) |
 | TS/JS locals and imports | `npx tsc --noEmit --noUnusedLocals -p <tsconfig>` |
 | TS/JS files and exports | `python3 <skill-dir>/scripts/ts_unused.py <frontend dir>` |
 | FastAPI endpoints | `python3 <skill-dir>/scripts/fastapi_routes.py --app <pkg.module:app_or_factory> --client <frontend src> <other clients> --prefix /api` (run it with the project's PYTHONPATH; point any database setting at a throwaway file) |
@@ -42,6 +43,10 @@ A scanner only finds names nobody mentions. Before you call anything dead, check
   - **One method at a time:** a path can be live for POST and dead for DELETE. Grep the
     client calls (`api.del(`, `method: "DELETE"`).
 - **Only tests use it:** it's dead in production. List its tests as part of the removal.
+- **The tests never run it:** that is a lead, not proof. Before calling it dead, check it
+  can't be reached at all: an error path, a Ctrl-C handler or a production-only branch
+  is live but untested (say so under Flags). Unreachable means no caller can get there,
+  for example a check that an earlier check always makes first.
 - **Tests for code that is gone:** list every file in the test folders, in any language (a
   `.cjs` or shell test next to Python ones), and check that what each imports still exists.
   The scripts above only read Python and TypeScript.

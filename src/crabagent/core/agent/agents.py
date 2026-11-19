@@ -1281,8 +1281,9 @@ async def spawn_sub_agent(
         elapsed = round(time.time() - t0, 1)
         if _background_errors:
             raise RuntimeError(_background_errors[-1])
-        if (background or structured_result) and sub_context.budget_exhausted:
-            raise RuntimeError("Agent iteration budget exhausted")
+        # Out of steps: the loop's grace call has asked the agent to summarise what it did
+        # and what is left. That summary is its result; the run still counts as failed.
+        exhausted = sub_context.budget_exhausted
 
         if _text_buffer[0]:
             await parent_context.event_bus.emit(
@@ -1303,6 +1304,13 @@ async def spawn_sub_agent(
             if msg.get("role") == "assistant" and msg.get("content"):
                 last_text = msg["content"]
                 break
+        result_text = last_text
+        if exhausted:
+            result_text = (
+                f"Stopped early: used all {sub_context.iteration} of its {sub_context.max_iterations} steps "
+                "before finishing. Its own summary of what it did and what is left:\n\n"
+                + (last_text or "(it wrote no summary)")
+            )
 
         if session_id and last_text and not background:
             summary = last_text[:2000]
@@ -1367,10 +1375,11 @@ async def spawn_sub_agent(
                     "elapsed": elapsed,
                     "tokens": sub_context.accumulated_total,
                     "iterations": sub_context.iteration,
-                    "result": last_text,
+                    "max_iterations": sub_context.max_iterations,
+                    "result": result_text,
                     "task": task[:200],
                     "model": sub_context.model or parent_context.model or "",
-                    "budget_exhausted": sub_context.budget_exhausted,
+                    "budget_exhausted": exhausted,
                 },
             )
         )
@@ -1386,13 +1395,13 @@ async def spawn_sub_agent(
                 }
             )
 
-        detail_str = last_text
+        detail_str = result_text
         if _detail_lines:
-            detail_str = last_text + "\n" + "\n".join(_detail_lines)
+            detail_str = result_text + "\n" + "\n".join(_detail_lines)
 
         sub_content = _json.dumps(
             {
-                "text": last_text,
+                "text": result_text,
                 "detail": detail_str,
                 "agent_name": agent_name,
                 "display_name": agent_def["display_name"],
@@ -1411,9 +1420,9 @@ async def spawn_sub_agent(
             pending.append({"role": "sub_agent", "content": sub_content, "name": agent_name})
 
         if background or structured_result:
-            return BackgroundAgentResult("succeeded" if last_text else "failed",
-                                         last_text or "(sub-agent produced no output)")
-        return last_text or "(sub-agent produced no output)"
+            return BackgroundAgentResult("succeeded" if last_text and not exhausted else "failed",
+                                         result_text or "(sub-agent produced no output)")
+        return result_text or "(sub-agent produced no output)"
     except Exception as e:
         logger.exception("Sub-agent %s failed", agent_name)
         error_elapsed = round(time.time() - t0, 1)
@@ -1459,6 +1468,8 @@ async def spawn_sub_agent(
                     "sub_agent_id": sub_id,
                     "agent_name": agent_name,
                     "error": str(e),
+                    "tokens": sub_context.accumulated_total,
+                    "iterations": sub_context.iteration,
                 },
             )
         )

@@ -148,6 +148,45 @@ class TestSubAgentBudgetExhausted:
         assert json.loads(content)["budget_exhausted"] is True
 
     @pytest.mark.asyncio
+    async def test_a_pipeline_step_that_runs_out_of_steps_hands_back_its_summary(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _stub_offline_runtime(monkeypatch)
+        _install_run_agent_stub(monkeypatch, exhaust_budget=True)
+        parent = _make_parent_context()
+        events = _capture_events(parent)
+
+        result = await agents_module.spawn_sub_agent(
+            parent, agent_name="implementer", task="x", agent_def=AGENT_DEF, structured_result=True
+        )
+
+        # The step failed, but the caller learns what was done instead of only "budget exhausted".
+        assert isinstance(result, agents_module.BackgroundAgentResult)
+        assert result.status == "failed"
+        assert result.result.startswith("Stopped early: used all")
+        assert "partial done" in result.result
+        # It ends through the normal end event, so its steps and tokens get recorded.
+        data = _end_event_data(events)
+        assert data["budget_exhausted"] is True
+        assert data["iterations"] == data["max_iterations"]
+        assert not [e for e in events if e.type == EventType.SUB_AGENT_ERROR]
+
+    @pytest.mark.asyncio
+    async def test_a_pipeline_step_that_finishes_in_time_succeeds_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _stub_offline_runtime(monkeypatch)
+        _install_run_agent_stub(monkeypatch, exhaust_budget=False)
+        parent = _make_parent_context()
+        _capture_events(parent)
+
+        result = await agents_module.spawn_sub_agent(
+            parent, agent_name="implementer", task="x", agent_def=AGENT_DEF, structured_result=True
+        )
+
+        assert result == agents_module.BackgroundAgentResult("succeeded", "partial done")
+
+    @pytest.mark.asyncio
     async def test_normal_completion_does_not_report_budget_exhausted(
         self, monkeypatch: pytest.MonkeyPatch
     ):

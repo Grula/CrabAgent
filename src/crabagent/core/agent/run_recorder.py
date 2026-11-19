@@ -274,14 +274,21 @@ class RunRecorder:
         from crabagent.core.database import run_record_finalize
 
         elapsed = round(_time.time() - entry["started_at"], 1)
+        iterations = data.get("iterations", 0)
+        exhausted = bool(data.get("budget_exhausted"))
+        error = ""
+        if exhausted:
+            limit = data.get("max_iterations") or iterations
+            error = f"Ran out of steps ({iterations}/{limit}) before finishing"
         await run_record_finalize(
             run_id=entry["run_id"],
-            status="completed",
+            status="failed" if exhausted else "completed",
             elapsed=elapsed,
             tokens_used=data.get("tokens", 0),
-            iterations=data.get("iterations", 0),
+            iterations=iterations,
             tool_calls=entry["tool_buf"][:] if entry["tool_buf"] else None,
             result_summary=str(data.get("result", ""))[:1000],
+            error=error,
         )
         await self._flush_tool_invocations(entry.get("run_id"), entry.get("agent_name", "unknown"), entry["tool_buf"])
         self._sub_runs.pop(sub_id, None)
@@ -298,9 +305,12 @@ class RunRecorder:
             run_id=entry["run_id"],
             status="failed",
             elapsed=elapsed,
+            tokens_used=data.get("tokens", 0),
+            iterations=data.get("iterations", 0),
             tool_calls=entry["tool_buf"][:] if entry["tool_buf"] else None,
             error=str(data.get("error", ""))[:500],
         )
+        await self._flush_tool_invocations(entry.get("run_id"), entry.get("agent_name", "unknown"), entry["tool_buf"])
 
     async def _on_pipeline_start(self, data: dict) -> None:
         self._pipeline_steps = {}

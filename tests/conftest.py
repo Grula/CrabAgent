@@ -1,5 +1,7 @@
 import asyncio
+import atexit
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -10,6 +12,7 @@ import pytest
 # engine is created at import time from CRAB_DB_URL.
 _TEST_DB_DIR = Path(tempfile.mkdtemp(prefix="crabagent-tests-"))
 os.environ.setdefault("CRAB_DB_URL", f"sqlite+aiosqlite:///{_TEST_DB_DIR / 'crabagent.db'}")
+atexit.register(shutil.rmtree, _TEST_DB_DIR, True)  # one folder per test run; don't leave it in /tmp
 
 
 def _create_test_tables() -> None:

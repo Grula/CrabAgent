@@ -332,3 +332,65 @@ async def test_a_failed_sub_agent_keeps_the_steps_it_took(recorder, monkeypatch:
     assert saved == [7]
     assert finalized["status"] == "failed"
     assert finalized["tool_calls"][0]["args"] == {"file_path": "x.py"}
+
+
+def _stub_sub_run_db(recorder, monkeypatch: pytest.MonkeyPatch):
+    finalized, flushed = {}, []
+
+    async def fake_create(**kwargs):
+        return 7
+
+    async def fake_update(run_id, **kwargs):
+        pass
+
+    async def fake_finalize(**kwargs):
+        finalized.update(kwargs)
+
+    async def fake_flush(run_id, agent_name, buf):
+        flushed.append((run_id, agent_name, [t.get("name") for t in buf]))
+
+    monkeypatch.setattr("crabagent.core.database.run_record_create", fake_create)
+    monkeypatch.setattr("crabagent.core.database.run_record_update", fake_update)
+    monkeypatch.setattr("crabagent.core.database.run_record_finalize", fake_finalize)
+    monkeypatch.setattr(recorder, "_flush_tool_invocations", fake_flush)
+    return finalized, flushed
+
+
+@pytest.mark.asyncio
+async def test_a_sub_agent_that_ran_out_of_steps_is_failed_but_keeps_its_summary_and_counts(
+    recorder, monkeypatch: pytest.MonkeyPatch
+):
+    finalized, flushed = _stub_sub_run_db(recorder, monkeypatch)
+
+    await recorder.on_event(AgentEvent(type=EventType.SUB_AGENT_START,
+                                       data={"sub_agent_id": "a", "agent_name": "coder"}))
+    await recorder.on_event(AgentEvent(type=EventType.SUB_AGENT_TOOL_CALL,
+                                       data={"sub_agent_id": "a", "name": "edit", "arguments": {"file_path": "x.py"}}))
+    await recorder.on_event(AgentEvent(type=EventType.SUB_AGENT_END, data={
+        "sub_agent_id": "a", "tokens": 5000, "iterations": 80, "max_iterations": 80,
+        "result": "Stopped early: ... wrote bench.py; checks not run yet", "budget_exhausted": True,
+    }))
+
+    assert finalized["status"] == "failed"
+    assert finalized["error"] == "Ran out of steps (80/80) before finishing"
+    assert finalized["tokens_used"] == 5000
+    assert finalized["iterations"] == 80
+    assert "checks not run yet" in finalized["result_summary"]
+    assert flushed == [(7, "coder", ["edit"])]
+
+
+@pytest.mark.asyncio
+async def test_a_sub_agent_that_errors_keeps_its_token_and_step_counts(recorder, monkeypatch: pytest.MonkeyPatch):
+    finalized, flushed = _stub_sub_run_db(recorder, monkeypatch)
+
+    await recorder.on_event(AgentEvent(type=EventType.SUB_AGENT_START,
+                                       data={"sub_agent_id": "a", "agent_name": "coder"}))
+    await recorder.on_event(AgentEvent(type=EventType.SUB_AGENT_TOOL_CALL,
+                                       data={"sub_agent_id": "a", "name": "bash", "arguments": {"command": "ls"}}))
+    await recorder.on_event(AgentEvent(type=EventType.SUB_AGENT_ERROR,
+                                       data={"sub_agent_id": "a", "error": "boom", "tokens": 1200, "iterations": 9}))
+
+    assert finalized["status"] == "failed"
+    assert finalized["tokens_used"] == 1200
+    assert finalized["iterations"] == 9
+    assert flushed == [(7, "coder", ["bash"])]

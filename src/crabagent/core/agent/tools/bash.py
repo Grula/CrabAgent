@@ -1,4 +1,5 @@
 import asyncio
+import glob
 import logging
 import os
 import shlex
@@ -9,7 +10,7 @@ import sys
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from crabagent.core.agent.tools.path_utils import get_workspace_root
@@ -50,11 +51,55 @@ class BackgroundJob:
     proc: Any = None  # asyncio process handle for auto-backgrounded commands
     start_marker: str = ""  # OS start time of the process; guards against PID reuse
     read_offset: int = 0  # bytes of the log already returned by bash_output
+    exit_code: int | None = None  # remembered once known, so it survives deleting the exit file
+    drains: list = field(default_factory=list)  # tasks still copying an auto-backgrounded command's output
+    log_removed: bool = False  # all output was handed back and the log files were deleted
 
 
 _JOBS: dict[int, BackgroundJob] = {}
 _MAX_TRACKED_JOBS = 200
 _MAX_WAIT_SECONDS = 60
+# A log that no tracked job owns and that nothing has written to for this long is
+# left over from an earlier server run (or from output nobody read) and is deleted.
+_STALE_LOG_SECONDS = 24 * 3600
+
+
+def _job_files(job: BackgroundJob) -> list[str]:
+    files = [job.log_file, job.log_file + ".err"]  # .err: stderr log on Windows
+    if job.exit_file:
+        files.append(job.exit_file)
+    return files
+
+
+def _remove_logs(job: BackgroundJob) -> bool:
+    """Delete a finished job's log files once all its output has been handed back.
+
+    The job stays tracked, so bash_output and bash_stop still report on it.
+    """
+    if job.log_removed:
+        return True
+    if any(not d.done() for d in job.drains):
+        return False  # output is still being copied into the log
+    for path in _job_files(job):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    job.log_removed = True
+    return True
+
+
+def _sweep_stale_logs() -> None:
+    tracked = {path for job in _JOBS.values() for path in _job_files(job)}
+    now = time.time()
+    for path in glob.glob(os.path.join(tempfile.gettempdir(), "crabagent-bg-*")):
+        if path in tracked:
+            continue
+        try:
+            if now - os.path.getmtime(path) > _STALE_LOG_SECONDS:
+                os.remove(path)
+        except OSError:
+            pass
 
 
 def _job_scope(context: Any) -> str:
@@ -95,6 +140,7 @@ async def _register_job(
         pid_int = int(str(pid).strip())
     except ValueError:
         return
+    _sweep_stale_logs()
     if len(_JOBS) >= _MAX_TRACKED_JOBS:
         # Forget the oldest entries; their processes are unaffected.
         for old_pid in sorted(_JOBS, key=lambda p: _JOBS[p].started_at)[: len(_JOBS) - _MAX_TRACKED_JOBS + 1]:
@@ -113,8 +159,11 @@ async def _register_job(
 
 async def _job_state(job: BackgroundJob) -> tuple[bool, int | None]:
     """Return ``(running, exit_code)`` for *job*; exit_code is None when unknown."""
+    if job.exit_code is not None:
+        return False, job.exit_code
     if job.proc is not None:
         code = getattr(job.proc, "returncode", None)
+        job.exit_code = code
         return code is None, code
 
     exit_code: int | None = None
@@ -125,6 +174,7 @@ async def _job_state(job: BackgroundJob) -> tuple[bool, int | None]:
         except (OSError, ValueError):
             exit_code = None
     if exit_code is not None:
+        job.exit_code = exit_code
         return False, exit_code
 
     if not await _check_process_alive(job.pid):
@@ -136,6 +186,13 @@ async def _job_state(job: BackgroundJob) -> tuple[bool, int | None]:
 
 def _read_new_output(job: BackgroundJob, max_chars: int) -> str:
     """Return log text written since the last call and advance the read position."""
+    return _read_output(job, max_chars)[0]
+
+
+def _read_output(job: BackgroundJob, max_chars: int) -> tuple[str, bool]:
+    """Like _read_new_output, plus whether all of the new text was returned (nothing cut)."""
+    if job.log_removed:
+        return "", True
     try:
         size = os.path.getsize(job.log_file)
         if size < job.read_offset:  # log was truncated or replaced
@@ -145,12 +202,17 @@ def _read_new_output(job: BackgroundJob, max_chars: int) -> str:
             data = fh.read()
         job.read_offset += len(data)
     except OSError:
-        return ""
+        return "", True
     text = data.decode("utf-8", errors="replace")
     if len(text) > max_chars:
         omitted = len(text) - max_chars
         text = f"[... {omitted} earlier characters omitted; the full log is at {job.log_file}]\n" + text[-max_chars:]
-    return text
+        return text, False
+    return text, True
+
+
+def _log_note(job: BackgroundJob) -> str:
+    return "log: deleted, all output shown" if job.log_removed else f"log: {job.log_file}"
 
 
 def _format_runtime(seconds: float) -> str:
@@ -514,6 +576,7 @@ async def _auto_background(
         already_logged = 0
 
     # Redirect process remaining output to log file (append mode)
+    drains = []
     for stream, prefix in ((proc.stdout, b""), (proc.stderr, b"[stderr] ")):
         if not stream:
             continue
@@ -523,7 +586,7 @@ async def _auto_background(
             continue
         drain = _drain_to_fd(stream, log_fd, prefix=prefix)
         try:
-            asyncio.ensure_future(drain)
+            drains.append(asyncio.ensure_future(drain))
         except Exception:
             drain.close()
             os.close(log_fd)
@@ -560,6 +623,7 @@ async def _auto_background(
     job = _JOBS.get(pid) if isinstance(pid, int) else None
     if job is not None:
         job.read_offset = already_logged
+        job.drains = drains  # the log is complete only once these finish
 
     return (
         f"{result}\n"
@@ -702,11 +766,13 @@ async def _run_background(
         if job is None:
             return f"[background] PID={pid_str} — already finished\n  log: {log_file}"
         _, exit_code = await _job_state(job)
-        output = _read_new_output(job, 10_000).rstrip()
+        output, complete = _read_output(job, 10_000)
+        if complete:
+            _remove_logs(job)
         return (
             f"[background] PID={pid_str} — already {_describe_state(False, exit_code)}\n"
-            f"  log: {log_file}\n"
-            f"{output or '[no output]'}"
+            f"  {_log_note(job)}\n"
+            f"{output.rstrip() or '[no output]'}"
         )
     except TimeoutError:
         try:
@@ -791,11 +857,14 @@ async def bash_output(
             break
         await asyncio.sleep(0.5)
 
-    output = _read_new_output(job, max_chars).rstrip()
+    output, complete = _read_output(job, max_chars)
+    if not running and complete:
+        _remove_logs(job)  # finished and fully read: the log has nothing left to give
     header = (
         f"[PID {job.pid}] {_describe_state(running, exit_code)} | "
-        f"started {_format_runtime(time.time() - job.started_at)} ago | log: {job.log_file}"
+        f"started {_format_runtime(time.time() - job.started_at)} ago | {_log_note(job)}"
     )
+    output = output.rstrip()
     return f"{header}\n{output or '[no new output]'}"
 
 
@@ -854,7 +923,11 @@ async def bash_stop(pid: int | str, context: Any = None) -> str:
 
     running, exit_code = await _job_state(job)
     if not running:
-        return f"[PID {job.pid}] already {_describe_state(False, exit_code)}; nothing to stop."
+        tail, complete = _read_output(job, 2_000)
+        if complete:
+            _remove_logs(job)
+        message = f"[PID {job.pid}] already {_describe_state(False, exit_code)}; nothing to stop."
+        return f"{message}\n{tail.rstrip()}" if tail.strip() else message
 
     try:
         await _terminate(job)
@@ -867,5 +940,8 @@ async def bash_stop(pid: int | str, context: Any = None) -> str:
     running, exit_code = await _job_state(job)
     if running:
         return f"[PID {job.pid}] did not exit after being signalled; it may need manual attention."
-    tail = _read_new_output(job, 2_000).rstrip()
+    tail, complete = _read_output(job, 2_000)
+    if complete:
+        _remove_logs(job)
+    tail = tail.rstrip()
     return f"[PID {job.pid}] stopped.\n{tail}" if tail else f"[PID {job.pid}] stopped."

@@ -223,7 +223,8 @@ async def _render_and_emit_preview(
 @registry.register(
     name="office_read",
     description="Read Office document content. Supports .docx (Word), .xlsx (Excel), .pptx (PowerPoint). "
-    "Returns plain text or structured JSON for AI analysis of document data.",
+    "Returns plain text or structured JSON for AI analysis of document data. "
+    "For spreadsheets (including .ods/.csv, cell colours and notes) use spreadsheet_read instead.",
     parameters={
         "type": "object",
         "properties": {
