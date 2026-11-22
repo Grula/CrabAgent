@@ -75,11 +75,12 @@ class TestRemovedBuiltins:
             rows = {r.name: r for r in (await session.execute(select(db.AgentProfile))).scalars()}
         assert set(rows) == {"architect", "coder", "tester", "the_reviewer", "researcher", "scout"}
         assert "plan" in json.loads(rows["architect"].skills)
-        assert {"write-spec", "write-readme", "project-init"} <= set(json.loads(rows["architect"].skills))
+        assert {"write-spec", "write-readme", "project-init", "design-patterns"} <= set(
+            json.loads(rows["architect"].skills))
         assert "docx" not in json.loads(rows["architect"].skills)
         assert json.loads(rows["the_reviewer"].skills) == [
-            "strict-review", "code-review", "security-review", "dead-code-audit", "git-workflow", "docs-lookup",
-            "run-app"]
+            "strict-review", "code-review", "security-review", "dead-code-audit", "design-patterns", "git-workflow",
+            "docs-lookup", "run-app"]
         # An empty list means no skills at all (None would mean every skill).
         assert json.loads(rows["scout"].skills) == []
 

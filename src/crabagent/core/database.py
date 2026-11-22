@@ -1398,6 +1398,7 @@ DEFAULT_AGENTS = [
             "bug-triage",
             "code-review",
             "strict-review",
+            "design-patterns",
             "deep-research",
             "git-workflow",
             "run-app",
@@ -1545,8 +1546,8 @@ DEFAULT_AGENTS = [
             "browser": "deny",
         },
         "skills": [
-            "strict-review", "code-review", "security-review", "dead-code-audit", "git-workflow", "docs-lookup",
-            "run-app",
+            "strict-review", "code-review", "security-review", "dead-code-audit", "design-patterns", "git-workflow",
+            "docs-lookup", "run-app",
         ],
     },
     {
