@@ -20,7 +20,10 @@ from crabagent.core.office.spreadsheet import (
 )
 
 _MAX_ROWS = 500
-_MAX_OUTPUT = 30_000
+# Must stay under the agent loop's cut for a tool result (loop._MAX_TOOL_RESULT_CHARS,
+# 20,000): past it the loop drops the end of the page, the "Next page" line with it, and
+# the rows in between are silently lost.
+_MAX_OUTPUT = 15_000
 _MAX_VALUE = 200
 
 
@@ -247,10 +250,10 @@ def _rows(book: Workbook, sheet: Sheet, start_row: int, max_rows: int, columns: 
     if headers and first > header_row:
         lines.append(f"header (row {header_row}): "
                      + " | ".join(f"{col_letter(c)} {headers[c][:40]}" for c in cols if c in headers))
-    size = sum(len(line) for line in lines)
+    size = sum(len(line) + 1 for line in lines)
     shown = 0
     for r in candidates:
-        if shown >= max_rows or size > _MAX_OUTPUT:
+        if shown >= max_rows:
             break
         row_fill, row_color, row_bold = _row_format(sheet, r)
         tags = []
@@ -270,8 +273,10 @@ def _rows(book: Workbook, sheet: Sheet, start_row: int, max_rows: int, columns: 
             notes = _cell_notes(cell, row_fill, row_color, row_bold, formulas)
             parts.append(f"{col_letter(c)}={_show(cell.value)}" + (f" {{{notes}}}" if notes else ""))
         line = f"{r}" + (f" [{', '.join(tags)}]" if tags else "") + ": " + " | ".join(parts)
+        if shown and size + len(line) + 1 > _MAX_OUTPUT:
+            break  # this row starts the next page
         lines.append(line)
-        size += len(line)
+        size += len(line) + 1
         shown += 1
     if not candidates:
         lines.append("(no rows" + (" with that fill" if fill.strip() else "") + f" from row {first})")

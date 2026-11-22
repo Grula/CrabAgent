@@ -314,6 +314,26 @@ class TestSpreadsheetRead:
         assert "Showing 2 of 6 rows. Next page: start_row=4." in page
         assert "C=" not in page
 
+    def test_a_big_page_fits_the_agent_loop_and_loses_no_rows(self, tmp_path: Path, ctx):
+        """Seen live: 120 wide rows came to ~29k chars, the loop cut the result at 20k and the
+        agent lost 35 rows plus the "Next page" line. A page must stop below that cut."""
+        from crabagent.core.agent.loop import _MAX_TOOL_RESULT_CHARS
+
+        body = "\n".join(f"{n};COPELDIS;PdfPipeline;Faltando;Itens da fatura;{'campo ' * 25}{n};0.31085"
+                         for n in range(1, 301))
+        (tmp_path / "wide.csv").write_text("Fatura;Dist;Extrator;Tipo;Grupo;Campo;Valor\n" + body + "\n")
+
+        seen: list[str] = []
+        start = 0
+        while True:
+            page = tool.spreadsheet_read("wide.csv", mode="rows", max_rows=500, start_row=start, context=ctx)
+            assert len(page) < _MAX_TOOL_RESULT_CHARS
+            seen += [line.split(":", 1)[0] for line in page.splitlines() if line[:1].isdigit()]
+            if "Next page: start_row=" not in page:
+                break
+            start = int(page.rsplit("start_row=", 1)[1].rstrip("."))
+        assert seen == [str(r) for r in range(2, 302)]  # every data row exactly once
+
     def test_sheet_choice_and_errors(self, tmp_path: Path, ctx):
         make_xlsx(tmp_path / "f.xlsx")
         assert "A=1" in tool.spreadsheet_read("f.xlsx", mode="rows", sheet="escondida", header_row=0, context=ctx)
