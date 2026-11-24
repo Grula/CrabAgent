@@ -1,4 +1,5 @@
 import { api } from "./client";
+import type { FileContextFields } from "./files";
 
 export interface Session {
   session_id: string;
@@ -141,11 +142,16 @@ export function sendPrompt(
   fileContext?: string,
   workspaceType?: string,
   workMode?: boolean,
+  fileContextFields?: FileContextFields,
 ): Promise<{ status: string }> {
   return api.post(`/sessions/${sessionId}/prompt`, {
     message, model, provider, images, agent,
     reasoning_effort: reasoningEffort,
-    file_context: fileContext || undefined,
+    // fileContextFields (built by fileContextFields()) carries the dirty buffer;
+    // the plain path argument stays for every existing caller.
+    file_context: fileContextFields?.file_context || fileContext || undefined,
+    file_context_dirty: fileContextFields?.file_context_dirty || undefined,
+    file_context_content: fileContextFields?.file_context_content,
     workspace_type: workspaceType || undefined,
     work_mode: workMode || undefined,
   });

@@ -87,7 +87,12 @@ class TestCompressionTrigger:
 
         assert token_limits.compression_trigger_tokens("deepseek-chat") == 800_000
 
-    def test_the_default_cap_is_150k(self):
+    def test_the_default_cap_is_deepseeks_1m_window(self):
         from crabagent.core.config import Settings
 
-        assert Settings.model_fields["context_compression_max_tokens"].default == 150_000
+        assert Settings.model_fields["context_compression_max_tokens"].default == 1_000_000
+
+    def test_with_the_default_cap_deepseek_compacts_at_80_percent_of_1m(self):
+        from crabagent.core.agent.token_limits import compression_trigger_tokens
+
+        assert compression_trigger_tokens("deepseek-chat") == 800_000

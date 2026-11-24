@@ -74,6 +74,10 @@ class EventType(StrEnum):
     TASK_CREATED = "task_created"
     TASK_UPDATED = "task_updated"
 
+    # A workspace file changed on disk (agent tool or the in-app editor).
+    # Payload: {path (workspace-relative), abs_path, mtime_ms, tool, origin}
+    FILE_UPDATED = "file_updated"
+
 
 @dataclass
 class AgentEvent:

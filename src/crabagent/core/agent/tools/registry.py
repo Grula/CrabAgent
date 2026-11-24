@@ -6,7 +6,10 @@ import inspect
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+from .schema_validation import coerce_args, validate_args
 
 
 @dataclass
@@ -25,12 +28,20 @@ class ToolInfo:
 
 logger = logging.getLogger(__name__)
 
+# Built-ins whose success means a workspace file changed on disk. Every other
+# tool (MCP, shell, office) stays out: FILE_UPDATED drives editor reloads.
+_FILE_WRITE_TOOLS = frozenset({"write", "edit", "update_agents_md"})
+
 # Permission keys that stand for a family of tools. The agent settings page
 # offers "browser" as one switch; it covers every ``browser_*`` tool.
 _PERMISSION_FAMILIES: dict[str, str] = {"browser": "browser_"}
 # A tool without its own entry takes another tool's permission: run_tests runs shell
 # commands, so an agent that may not use bash may not run tests either.
 _PERMISSION_INHERITS: dict[str, str] = {"run_tests": "bash"}
+
+# How many argument problems the validation error tells the model about; the
+# rest are covered by a trailing ellipsis to keep the result string small.
+_MAX_REPORTED_ARG_PROBLEMS = 5
 
 
 def resolve_permission(permissions: dict[str, str] | None, tool_name: str) -> str | None:
@@ -296,6 +307,54 @@ class ToolRegistry:
             )
             shutil.rmtree(str(md), ignore_errors=True)
 
+    async def _emit_file_updated(self, name: str, arguments: dict[str, Any], context: Any, result: Any) -> None:
+        """Announce a successful file write to the UI (open-buffer reloads).
+
+        Only the file-mutating built-ins count, and only when the handler did not
+        return an error string: the frontend reloads an open editor buffer per
+        FILE_UPDATED, so a failed write must stay silent.
+        """
+        if context is None or name not in _FILE_WRITE_TOOLS:
+            return
+        if not isinstance(result, str) or result.lstrip().startswith("Error"):
+            return
+        if name == "update_agents_md":
+            raw = "AGENTS.md"
+        else:
+            raw = str(arguments.get("file_path") or arguments.get("path") or "")
+        if not raw:
+            return
+        try:
+            ws = context.workspace.resolve()
+            target = Path(raw).expanduser()
+            if not target.is_absolute():
+                target = ws / target
+            target = target.resolve()
+            rel = str(target.relative_to(ws))
+            mtime_ms = int(target.stat().st_mtime * 1000)
+        except (ValueError, OSError, AttributeError):
+            return
+        bus = getattr(context, "event_bus", None)
+        if not bus:
+            return
+        from crabagent.core.event import AgentEvent, EventType
+
+        try:
+            await bus.emit(
+                AgentEvent(
+                    type=EventType.FILE_UPDATED,
+                    data={
+                        "path": rel,
+                        "abs_path": str(target),
+                        "mtime_ms": mtime_ms,
+                        "tool": name,
+                        "origin": "agent",
+                    },
+                )
+            )
+        except Exception:
+            logger.debug("Failed to emit FILE_UPDATED for %s", name, exc_info=True)
+
     async def execute(self, name: str, arguments: dict[str, Any], context: Any = None) -> object:
         import time as _t
 
@@ -371,6 +430,22 @@ class ToolRegistry:
                         f"Required parameters: {', '.join(missing)}. "
                         f"Please retry the tool call with all required arguments."
                     )
+            # Repair the common "nearly right" argument shapes the model sends
+            # ("5" for integer, a JSON string for an object, ...) and prove the
+            # result against the declared JSON Schema before the handler runs.
+            # One insertion point covers sync, coroutine, MCP and custom tools.
+            kwargs = coerce_args(tool.parameters, kwargs)
+            problems = validate_args(tool.parameters, kwargs)
+            if problems:
+                shown = problems[:_MAX_REPORTED_ARG_PROBLEMS]
+                detail = "; ".join(shown)
+                if len(problems) > _MAX_REPORTED_ARG_PROBLEMS:
+                    detail += "; …"
+                logger.warning("Tool '%s': invalid arguments: %s", name, detail)
+                return (
+                    f"Error: invalid arguments for tool '{name}': {detail}. "
+                    f"Fix the arguments and call the tool again."
+                )
             if "context" in sig.parameters and context is not None:
                 kwargs["context"] = context
             _t1 = _t.monotonic()
@@ -386,6 +461,8 @@ class ToolRegistry:
             # Flush pending molts immediately for direct tool calls (outside run_agent)
             if context is not None and not context.metadata.get("_batch_molt"):
                 await self._flush_molt_snapshot(context)
+            # Tell the UI an open editor buffer is stale (once per successful write)
+            await self._emit_file_updated(name, arguments, context, result)
             # Preserve structured and multimodal outputs. The agent loop handles
             # protocol-safe serialization and moves image blocks to user messages.
             return result if isinstance(result, (str, list, dict)) else str(result)

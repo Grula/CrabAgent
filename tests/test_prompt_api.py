@@ -95,6 +95,62 @@ async def test_running_prompt_accepts_followup_without_starting_second_run(monke
 
 
 @pytest.mark.asyncio
+async def test_running_prompt_followup_carries_the_open_editor_file(monkeypatch, tmp_path):
+    """A follow-up sent mid-run must keep the open-file block the new-run path adds."""
+    from types import SimpleNamespace
+
+    from crabagent.core.agent.context import AgentContext
+
+    (tmp_path / "app.py").write_text("print('disk')\n", encoding="utf-8")
+    context = AgentContext(workspace=tmp_path)
+    context.metadata["_accept_followups"] = True
+    monkeypatch.setattr(prompt_api, "get_owned_conversation", _owned_conversation)
+    monkeypatch.setattr(prompt_api, "_tasks", {"session": SimpleNamespace(done=lambda: False)})
+    monkeypatch.setattr(prompt_api, "_contexts", {"session": context})
+
+    result = await prompt_api.prompt_async(
+        "session",
+        prompt_api.PromptRequest(
+            message="rename it",
+            file_context="app.py",
+            file_context_dirty=True,
+            file_context_content="print('buffer')\n",
+        ),
+        None,
+        SimpleNamespace(id=1),
+        None,
+    )
+
+    assert result["status"] == "queued"
+    queued = context.metadata["_pending_user_messages"][0]
+    assert isinstance(queued, str)
+    assert "app.py" in queued
+    # The dirty buffer wins over the disk copy, exactly like the new-run path.
+    assert "print('buffer')" in queued
+    assert queued.endswith("rename it")
+
+
+@pytest.mark.asyncio
+async def test_running_prompt_followup_without_open_file_is_unchanged(monkeypatch):
+    from types import SimpleNamespace
+
+    from crabagent.core.agent.context import AgentContext
+
+    context = AgentContext(workspace=Path.cwd())
+    context.metadata["_accept_followups"] = True
+    monkeypatch.setattr(prompt_api, "get_owned_conversation", _owned_conversation)
+    monkeypatch.setattr(prompt_api, "_tasks", {"session": SimpleNamespace(done=lambda: False)})
+    monkeypatch.setattr(prompt_api, "_contexts", {"session": context})
+
+    result = await prompt_api.prompt_async(
+        "session", prompt_api.PromptRequest(message="hi"), None, SimpleNamespace(id=1), None
+    )
+
+    assert result["status"] == "queued"
+    assert context.metadata["_pending_user_messages"] == ["hi"]
+
+
+@pytest.mark.asyncio
 async def test_finishing_prompt_does_not_accept_followup(monkeypatch):
     from types import SimpleNamespace
 

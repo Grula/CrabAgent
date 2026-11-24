@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import mimetypes
 import os
 import secrets
 import time as _time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File as FastFile, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File as FastFile, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.database import User, get_db
 from crabagent.serve.deps import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -41,16 +44,79 @@ def _resolve_path(base: Path, raw: str) -> Path | None:
     return resolved
 
 
+async def _session_workspace(
+    db: AsyncSession, session_id: str | None, user: User
+) -> Path | None:
+    """The chat's own workspace, or None when the caller should fall back.
+
+    A chat runs in ``Conversation.workspace`` (see ``serve/api/prompt.py``),
+    which is not the server CWD the ``/files`` routes used historically. Only
+    the owning user's conversation counts; anything else (unknown session,
+    foreign session, missing/invalid directory) falls back to the server
+    workspace so existing callers keep their behaviour.
+    """
+    if not session_id:
+        return None
+    try:
+        from crabagent.serve.services import conversation as conv_svc
+
+        conv = await conv_svc.get_conversation(db, session_id)
+    except Exception:
+        logger.debug("Session workspace lookup failed for %s", session_id, exc_info=True)
+        return None
+    if conv is None or getattr(conv, "user_id", None) != getattr(user, "id", None):
+        return None
+    raw = getattr(conv, "workspace", None)
+    if not raw:
+        return None
+    try:
+        path = Path(raw).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+    return path if path.is_dir() else None
+
+
+async def _workspace_base(db: AsyncSession, session_id: str | None, user: User) -> Path:
+    """Base directory for a ``/files`` request: the chat's workspace or the server CWD."""
+    from crabagent.core.config import settings
+
+    return await _session_workspace(db, session_id, user) or settings.workspace.resolve()
+
+
+def _emit_file_updated(request: Request | None, session_id: str | None, data: dict) -> None:
+    """Broadcast FILE_UPDATED to one session's SSE subscribers (API-handler style)."""
+    if request is None or not session_id:
+        return
+    from crabagent.core.event import AgentEvent, EventType
+
+    event = AgentEvent(type=EventType.FILE_UPDATED, data=data)
+    seen: set[int] = set()
+    for entry in list(getattr(request.app.state, "event_queues", {}).values()):
+        if not isinstance(entry, tuple) or len(entry) < 2 or entry[0] != session_id:
+            continue
+        # Queue tuples come in two shapes: (sid, q, ts) and the production
+        # (sid, critical_q, stream_q, ts). FILE_UPDATED is not critical, so it goes
+        # on exactly one queue — the stream queue when there is one — following
+        # prompt._sse_forward's rule; putting it on both delivers it twice.
+        queue = entry[2] if len(entry) >= 4 else entry[1]
+        if not hasattr(queue, "put_nowait") or id(queue) in seen:
+            continue
+        seen.add(id(queue))
+        try:
+            queue.put_nowait(event)
+        except Exception:
+            logger.debug("Failed to queue FILE_UPDATED", exc_info=True)
+
+
 @router.get("/tree")
 async def list_tree(
     path: str = Query("", description="Path relative to workspace, or absolute path when absolute=true"),
     depth: int = Query(1, ge=1, le=5),
     absolute: bool = Query(False, description="Treat path as absolute filesystem path"),
+    session_id: str | None = Query(None, description="Chat session whose workspace to use"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from crabagent.core.config import settings
-
     if absolute:
         target = Path(path).resolve() if path else Path("/")
         if not target.exists():
@@ -59,7 +125,7 @@ async def list_tree(
             raise HTTPException(status_code=400, detail="Not a directory")
         return _build_tree(target, target, depth=depth, absolute=True)
 
-    workspace = settings.workspace.resolve()
+    workspace = await _workspace_base(db, session_id, user)
     target = _resolve_path(workspace, path.lstrip("/"))
     if not target:
         raise HTTPException(status_code=400, detail="Path outside workspace")
@@ -192,19 +258,248 @@ async def search_files(
     return {"results": results[:limit], "total": len(results)}
 
 
+_LANGUAGE_BY_EXTENSION = {
+    ".py": "python",
+    ".pyi": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".json": "json",
+    ".md": "markdown",
+    ".mdx": "markdown",
+    ".html": "html",
+    ".htm": "html",
+    ".css": "css",
+    ".scss": "scss",
+    ".less": "less",
+    ".yml": "yaml",
+    ".yaml": "yaml",
+    ".toml": "toml",
+    ".ini": "ini",
+    ".cfg": "ini",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "bash",
+    ".sql": "sql",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".c": "c",
+    ".h": "c",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".hpp": "cpp",
+    ".cs": "csharp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".swift": "swift",
+    ".lua": "lua",
+    ".xml": "xml",
+    ".dockerfile": "dockerfile",
+}
+
+
+def detect_language(path: str) -> str:
+    """Best-effort language label for an editor file path."""
+    name = Path(path).name.lower()
+    if name in ("dockerfile", "makefile"):
+        return name
+    return _LANGUAGE_BY_EXTENSION.get(Path(path).suffix.lower(), "")
+
+
+def decode_file_bytes(raw: bytes) -> tuple[str, str, bool]:
+    """Decode file bytes losslessly. Returns (text, encoding, is_binary).
+
+    A NUL byte means binary. Otherwise strict UTF-8 wins; the fallback is
+    latin-1, which maps bytes 1:1 to code points, so writing the text back with
+    the returned encoding reproduces the original bytes exactly. (surrogateescape
+    would also be lossless but lone surrogates cannot be serialised to JSON.)
+    """
+    if b"\x00" in raw:
+        return "", "", True
+    try:
+        return raw.decode("utf-8"), "utf-8", False
+    except UnicodeDecodeError:
+        pass
+    try:
+        return raw.decode("latin-1"), "latin-1", False
+    except Exception:
+        return "", "", True
+
+
+MAX_TEXT_BYTES = 1024 * 1024
+
+
+def read_text_file(
+    target: Path,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> dict:
+    """Read a text file for the editor without ever raising on binary content.
+
+    Whole-file reads keep the 1 MB cap. With a line range the file is streamed,
+    so a file far above the cap can still be paged without loading it all.
+    """
+    st = target.stat()
+    info: dict = {
+        "content": "",
+        "truncated": False,
+        "binary": False,
+        "encoding": "utf-8",
+        "size": st.st_size,
+        "mtime_ms": int(st.st_mtime * 1000),
+        "language": detect_language(target.name),
+        "start_line": None,
+        "end_line": None,
+        "total_lines": None,
+        "has_more": False,
+    }
+
+    if start_line is None and end_line is None:
+        if st.st_size > MAX_TEXT_BYTES:
+            info["truncated"] = True
+            info["message"] = "File too large (>1MB); read it with start_line/end_line"
+            return info
+        text, encoding, is_binary = decode_file_bytes(target.read_bytes())
+        if is_binary:
+            info["binary"] = True
+            info["message"] = "Binary file, no text content"
+            return info
+        info.update(
+            content=text,
+            encoding=encoding,
+            start_line=1,
+            total_lines=len(text.splitlines()),
+        )
+        info["end_line"] = info["total_lines"] or 1
+        return info
+
+    first = max(1, start_line or 1)
+    last = end_line if end_line is not None else -1
+    chunk: list[bytes] = []
+    total = 0
+    line_no = 0
+    hit_byte_cap = False
+    with target.open("rb") as fh:
+        for raw_line in fh:
+            line_no += 1
+            if line_no < first:
+                continue
+            if last >= 0 and line_no > last:
+                break
+            if total + len(raw_line) > MAX_TEXT_BYTES:
+                hit_byte_cap = True
+                break
+            chunk.append(raw_line)
+            total += len(raw_line)
+    text, encoding, is_binary = decode_file_bytes(b"".join(chunk))
+    if is_binary:
+        info["binary"] = True
+        info["message"] = "Binary file, no text content"
+        return info
+    info.update(
+        content=text,
+        encoding=encoding,
+        start_line=first,
+        # An empty chunk (start_line past EOF) must not report an inverted range.
+        end_line=max(first, first + len(chunk) - 1),
+        truncated=hit_byte_cap,
+        has_more=hit_byte_cap or (last >= 0 and line_no > last),
+    )
+    return info
+
+
+_FILE_CONTEXT_CONTENT_LIMIT = 64 * 1024
+
+_EDITOR_TYPE_LABELS = {
+    "document": "Office document",
+    "code": "code file",
+    "prototype": "HTML prototype",
+    "markdown": "Markdown document",
+}
+
+
+def build_file_context_block(
+    file_path: str,
+    workspace: Path,
+    *,
+    workspace_type: str = "",
+    dirty: bool = False,
+    content: str = "",
+) -> str:
+    """Describe the file the user has open in the editor, for THIS run only.
+
+    Called per prompt (never cached into ``conversations.system_prompt``): the
+    open file changes constantly, so baking it into the cached prompt would
+    either go stale or force a prompt-cache miss on every file switch.
+    """
+    if not file_path:
+        return ""
+    base = Path(workspace).resolve()
+    raw = Path(file_path).expanduser()
+    target = raw if raw.is_absolute() else base / file_path
+    try:
+        target = target.resolve()
+    except (OSError, RuntimeError):
+        return ""
+    try:
+        rel = str(target.relative_to(base))
+    except ValueError:
+        rel = file_path
+    language = detect_language(str(target)) or "text"
+    label = _EDITOR_TYPE_LABELS.get(workspace_type, "file")
+
+    lines = [
+        f"📎 [Open file] The user has `{rel}` open in the editor ({label}).",
+        f"Path (workspace-relative): {rel}",
+        f"Language: {language}",
+    ]
+
+    if dirty and content:
+        buffer_content = content
+        if len(buffer_content) > _FILE_CONTEXT_CONTENT_LIMIT:
+            buffer_content = (
+                buffer_content[:_FILE_CONTEXT_CONTENT_LIMIT]
+                + "\n… [buffer truncated for context]"
+            )
+        fence = "````" if "```" in buffer_content else "```"
+        lines.append(
+            "The user has unsaved changes in the editor buffer. The disk copy of this "
+            "file is STALE; the text below is the unsaved editor buffer and is what the "
+            "user is looking at right now."
+        )
+        lines.append(f"Unsaved editor buffer:\n{fence}{language}\n{buffer_content}\n{fence}")
+        return "\n".join(lines)
+
+    if not target.is_file():
+        lines.append("This file does not exist on disk yet.")
+        return "\n".join(lines)
+    info = read_text_file(target)
+    if info["binary"]:
+        lines.append("This file is binary; the editor shows no text for it.")
+        return "\n".join(lines)
+    lines.append("Read the file from disk if you need its contents.")
+    return "\n".join(lines)
+
+
 @router.get("/read")
 async def read_file(
     path: str = Query(..., description="Relative path from workspace, or absolute path when absolute=true"),
     absolute: bool = Query(False, description="Treat path as absolute filesystem path"),
+    start_line: int | None = Query(None, ge=1, description="First line to return (1-indexed, inclusive)"),
+    end_line: int | None = Query(None, ge=1, description="Last line to return (1-indexed, inclusive)"),
+    session_id: str | None = Query(None, description="Chat session whose workspace to use"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from crabagent.core.config import settings
-
     if absolute:
         target = Path(path).resolve()
     else:
-        workspace = settings.workspace.resolve()
+        workspace = await _workspace_base(db, session_id, user)
         t = _resolve_path(workspace, path.lstrip("/"))
         if not t:
             raise HTTPException(status_code=400, detail="Path outside workspace")
@@ -215,49 +510,109 @@ async def read_file(
     if not target.is_file():
         raise HTTPException(status_code=400, detail="Not a file")
 
-    MAX_SIZE = 1024 * 1024
-    if target.stat().st_size > MAX_SIZE:
-        return {"path": path, "content": "", "truncated": True, "message": "File too large (>1MB)"}
-
-    try:
-        content = target.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, Exception):
-        content = ""
-
-    return {"path": path, "content": content, "truncated": False}
+    return {"path": path, **read_text_file(target, start_line, end_line)}
 
 
 @router.post("/write")
 async def write_file(
     req: WriteFileRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from crabagent.core.config import settings
+    from crabagent.core.agent.tools.path_utils import file_lock
+
+    base = await _workspace_base(db, req.session_id, user)
 
     if req.absolute:
         target = Path(req.path).resolve()
         if not str(target).startswith(str(Path.home())):
             raise HTTPException(status_code=400, detail="Absolute path must be under home directory")
     else:
-        workspace = settings.workspace.resolve()
-        t = _resolve_path(workspace, req.path.lstrip("/"))
+        t = _resolve_path(base, req.path.lstrip("/"))
         if not t:
             raise HTTPException(status_code=400, detail="Path outside workspace")
         target = t
 
     try:
+        rel = str(target.relative_to(base))
+    except ValueError:
+        rel = str(target)
+
+    encoding = req.encoding if req.encoding in ("utf-8", "latin-1") else "utf-8"
+    try:
+        data = req.content.encode(encoding, errors="surrogateescape")
+    except (UnicodeEncodeError, LookupError):
+        raise HTTPException(status_code=400, detail=f"Cannot encode content as {encoding}")
+
+    # Same per-file lock the write tool uses, so a UI save cannot interleave
+    # with an agent write to the same file.
+    lock = file_lock(target)
+    await asyncio.to_thread(lock.acquire)
+    try:
+        current_mtime_ms = int(target.stat().st_mtime * 1000) if target.exists() else None
+        if req.expected_mtime_ms is not None and req.expected_mtime_ms != current_mtime_ms:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "File changed on disk since it was opened "
+                    f"(expected mtime {req.expected_mtime_ms} ms, found {current_mtime_ms} ms). "
+                    "Reload the file before saving, or save without expected_mtime_ms to overwrite."
+                ),
+            )
+        # Undo history: snapshot the pre-save content through the tool registry's
+        # existing molt path, so /sessions/{id}/molts/{molt_id}/rollback restores it.
+        await _snapshot_before_ui_write(base, target, req.session_id)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(req.content, encoding="utf-8")
-        return {"status": "ok", "path": req.path, "size": target.stat().st_size}
+        await asyncio.to_thread(target.write_bytes, data)
+        st = target.stat()
+        size = st.st_size
+        mtime_ms = int(st.st_mtime * 1000)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write file: {e}")
+    finally:
+        lock.release()
+
+    _emit_file_updated(
+        request,
+        req.session_id,
+        {
+            "path": rel,
+            "abs_path": str(target),
+            "mtime_ms": mtime_ms,
+            "tool": "editor",
+            "origin": "ui",
+        },
+    )
+    return {"status": "ok", "path": req.path, "size": size, "mtime_ms": mtime_ms}
+
+
+async def _snapshot_before_ui_write(workspace: Path, target: Path, session_id: str | None) -> None:
+    """Snapshot a file before an editor save, reusing the agent tools' molt code."""
+    from types import SimpleNamespace
+
+    from crabagent.core.agent.tools.registry import registry as tool_registry
+
+    ctx = SimpleNamespace(
+        workspace=workspace,
+        metadata={"session_id": session_id or "", "branch_id": "main"},
+    )
+    try:
+        await tool_registry._take_molt_snapshot("write", {"path": str(target)}, ctx)
+        await tool_registry._flush_molt_snapshot(ctx)
+    except Exception:
+        logger.warning("Molt snapshot failed for editor save of %s", target, exc_info=True)
 
 
 class WriteFileRequest(BaseModel):
     path: str
     content: str
     absolute: bool = False
+    session_id: str | None = None
+    expected_mtime_ms: int | None = None
+    encoding: str = "utf-8"
 
 
 @router.get("/image")

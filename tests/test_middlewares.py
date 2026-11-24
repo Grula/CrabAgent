@@ -162,8 +162,8 @@ class TestCompressMiddleware:
         assert result is messages
 
     @pytest.mark.asyncio
-    async def test_compacts_a_big_window_model_once_past_the_cap(self, monkeypatch):
-        """A 1M-token model is compacted at 150k, not left to fill to 800k."""
+    async def test_compacts_a_big_window_model_at_80_percent_of_its_window(self, monkeypatch):
+        """A 1M-token model (DeepSeek) is compacted at 800k: the default cap is its 1M window."""
         from crabagent.core.agent.middlewares import compress_middleware
 
         calls = []
@@ -173,7 +173,7 @@ class TestCompressMiddleware:
 
         monkeypatch.setattr(compress_middleware, "compress_context", fake_compress)
         mw = CompressMiddleware()
-        for tokens, expected in ((140_000, 0), (160_000, 1)):
+        for tokens, expected in ((790_000, 0), (810_000, 1)):
             calls.clear()
             ctx = AgentContext(workspace=Path.cwd(), model="deepseek-chat", total_tokens=tokens)
             ctx.metadata["_resolved_model"] = "deepseek-chat"

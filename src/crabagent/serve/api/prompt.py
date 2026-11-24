@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from crabagent.core.agent.context import AgentContext
-from crabagent.core.agent.loop import run_agent
+from crabagent.core.agent.loop import _provider_error_message, run_agent
 from crabagent.core.agent.system_prompt import build_system_prompt, is_current_prompt
 from crabagent.core.agent.tools.registry import registry
 from crabagent.core.config import settings
@@ -189,6 +189,10 @@ class PromptRequest(BaseModel):
     agent: str | None = None
     reasoning_effort: str | None = None
     file_context: str = ""
+    # Editor state for the open file. Injected per run (never into the cached
+    # system prompt) — see build_file_context_block in serve/api/files.py.
+    file_context_dirty: bool = False
+    file_context_content: str = ""
     workspace_type: str = ""
     work_mode: bool = False
 
@@ -248,6 +252,30 @@ async def apply_agent_profile(context, effective_agent: str) -> None:
         context.model = agent_def["model"]
 
 
+async def _report_run_failure(context: AgentContext, exc: BaseException) -> None:
+    """Emit the AGENT_ERROR a failed run owes the UI.
+
+    The run task's outer ``except`` only sets ``_run_error`` and logs, so the
+    user saw AGENT_END (a stopped run) with no reason. The message comes from
+    the same helper the loop uses, so a 401 reads the same however deep it was
+    raised.
+    """
+    try:
+        message = _provider_error_message(
+            exc,
+            context.metadata.get("resolved_provider") or context.provider_name,
+            context.metadata.get("resolved_model") or context.model,
+        )
+        await context.event_bus.emit(
+            AgentEvent(
+                type=EventType.AGENT_ERROR,
+                data={"error": message, "stage": "agent_task"},
+            )
+        )
+    except Exception:
+        logger.warning("Failed to emit AGENT_ERROR", exc_info=True)
+
+
 @router.post("/sessions/{session_id}/prompt", status_code=status.HTTP_202_ACCEPTED)
 async def prompt_async(
     session_id: str,
@@ -262,14 +290,33 @@ async def prompt_async(
         context = _contexts.get(session_id)
         if not context or not context.metadata.get("_accept_followups") or context.budget_exhausted:
             raise HTTPException(status_code=409, detail="Session is finishing; retry shortly")
-        content: str | list[dict] = req.message
+        # The open editor file is per-prompt context, so a follow-up sent while
+        # the agent is still running must carry it too — same helper as the
+        # new-run path, never duplicated logic.
+        queued_text = req.message
+        if req.file_context:
+            try:
+                from crabagent.serve.api.files import build_file_context_block
+
+                _file_block = build_file_context_block(
+                    req.file_context,
+                    context.workspace,
+                    workspace_type=req.workspace_type,
+                    dirty=req.file_context_dirty,
+                    content=req.file_context_content,
+                )
+                if _file_block:
+                    queued_text = f"{_file_block}\n\n{queued_text}"
+            except Exception:
+                logger.debug("Failed to build active file context for follow-up", exc_info=True)
+        content: str | list[dict] = queued_text
         local_images = _extract_local_images(req.message)
         if req.images or local_images:
             image_blocks = [
                 {"type": "image_url", "image_url": {"url": image}, **_save_image_temp(image)}
                 for image in (req.images or [])
             ] + local_images
-            content = [{"type": "text", "text": req.message}] + image_blocks
+            content = [{"type": "text", "text": queued_text}] + image_blocks
             context.metadata["attached_image_paths"] = [block["file_path"] for block in image_blocks]
         context.metadata.setdefault("_pending_user_messages", []).append(content)
         return {"status": "queued", "session_id": session_id}
@@ -684,6 +731,28 @@ Use ordinary Markdown when a visualization is not helpful.
                 )
         except Exception:
             pass
+
+    # ── Active file context (this run only) ──
+    # Deliberately in the messages, not the cached system prompt: the open file
+    # changes constantly, so caching it would go stale or cost a prompt-cache
+    # miss on every file switch. Same pattern as the workspace-switch message.
+    if req.file_context:
+        try:
+            from crabagent.serve.api.files import build_file_context_block
+
+            _file_block = build_file_context_block(
+                req.file_context,
+                workspace,
+                workspace_type=req.workspace_type,
+                dirty=req.file_context_dirty,
+                content=req.file_context_content,
+            )
+            if _file_block:
+                context.messages.append(
+                    {"role": "user", "content": _file_block, "agent": effective_agent}
+                )
+        except Exception:
+            logger.debug("Failed to build active file context", exc_info=True)
 
     persistence = PersistenceListener(conversation_id=conv.id, branch_id=active_branch)
     persistence.sequence = user_msg_seq
@@ -1104,9 +1173,12 @@ Use ordinary Markdown when a visualization is not helpful.
             # that terminal event for a successful completion.
             context.metadata["_run_cancelled"] = True
             logger.info("Agent task cancelled for session %s", session_id)
-        except Exception:
+        except Exception as exc:
             context.metadata["_run_error"] = True
             logger.exception("Agent task failed for session %s", session_id)
+            # Never let a failure reach the UI as a bare "Request failed": the
+            # user needs the provider, the model and what to do about it.
+            await _report_run_failure(context, exc)
         finally:
             context.metadata["_accept_followups"] = False
             # Keep accepted follow-ups in history even if the run was aborted or failed.
@@ -1163,6 +1235,7 @@ Use ordinary Markdown when a visualization is not helpful.
                         data={
                             **stats_data,
                             "cancelled": bool(context.metadata.get("_run_cancelled")),
+                            "reason": context.metadata.get("_cancel_reason", ""),
                         },
                     )
                 )
@@ -1312,6 +1385,10 @@ Use ordinary Markdown when a visualization is not helpful.
                 logger.exception("Failed to update conversation")
 
     context.metadata["_accept_followups"] = True
+    # This handler emits the terminal AGENT_END itself (stats + persistence in
+    # the finally block), so the loop must not emit a second one on a
+    # cooperative cancel.
+    context.metadata["_caller_emits_agent_end"] = True
     _contexts[session_id] = context
     task = asyncio.create_task(_run())
     _tasks[session_id] = task
@@ -1339,7 +1416,25 @@ async def abort_session(
     if not task or task.done():
         raise HTTPException(status_code=404, detail="No running task for this session")
 
-    task.cancel()
+    # Cooperative stop first: the loop finishes the tool it is running, keeps
+    # what already happened in history, and emits AGENT_END(cancelled=True)
+    # itself. Hard task cancellation remains the fallback for a run that does
+    # not reach a checkpoint in time.
+    context = _contexts.get(session_id)
+    if context is not None:
+        context.metadata["_cancel_reason"] = "Stopped by user"
+        context.request_cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.info("Cooperative stop for session %s timed out; cancelling the task", session_id)
+            task.cancel()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("Agent task ended with an error during abort for %s", session_id, exc_info=True)
+    else:
+        task.cancel()
     try:
         from crabagent.core.goals.scheduler import cancel_goal_continuation
 

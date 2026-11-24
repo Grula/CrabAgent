@@ -49,7 +49,6 @@ import McpServerPanel from "../components/McpServerPanel";
 import McpStatusBar from "../components/McpStatusBar";
 import BranchSelector from "../components/BranchSelector";
 import FileBrowser from "../components/FileBrowser";
-import TodoWidget from "../components/TodoWidget";
 import NotificationBell from "../components/NotificationBell";
 import FloatingMenu from "../components/ui/FloatingMenu";
 import { ScheduledTaskPanel } from "../components/ScheduledTaskPanel";
@@ -72,13 +71,23 @@ import { cn } from "../lib/cn";
 import { reasoningOptions, effectiveEffort } from "../lib/reasoningEffort";
 import { dbMessagesToChat } from "../lib/messageTransforms";
 import { DocumentPanel, DocState } from "../components/DocumentPanel";
-import { CodePanel } from "../components/CodePanel";
+import { CodePanel, promptFileContext, type CodePanelState, type ExternalFileChange } from "../components/CodePanel";
+import { DocTabs, type DocTab } from "../components/DocTabs";
+import type { CodeEditorHandle } from "../components/code-editor";
 import { PrototypePanel } from "../components/PrototypePanel";
 import { MeetingPanel } from "../components/MeetingPanel";
 import { MarkdownPanel } from "../components/MarkdownPanel";
 import BrowserPanel from "../components/BrowserPanel";
 import { SSEEvent } from "../api/events";
 import * as documentsApi from "../api/documents";
+import {
+  hasUnsavedEditorEdits,
+  needsDiscardConfirmForSessionSwitch,
+  needsDiscardConfirmForWorkTabSwitch,
+  needsOfficePreview,
+  workspaceFileKind,
+} from "../lib/workspaceFiles";
+import { DiscardChangesDialog } from "../components/DiscardChangesDialog";
 
 interface Props {
   /** Chat page (sessions + full chat) or Work page (side chat + work tabs). */
@@ -104,6 +113,11 @@ const STARTER_PROMPTS = [
   { icon: <Sparkles size={14} />, label: "Brainstorm ideas", prompt: "Brainstorm ideas for " },
   { icon: <MessageSquare size={14} />, label: "Write a doc", prompt: "Write a document about " },
 ];
+
+/** Basename of a workspace path, used for the tab chip labels. */
+function fileBaseName(path: string): string {
+  return path.split("/").pop() || path;
+}
 
 export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange, onActiveSessionChange, onActiveBranchChange }: Props) {
   const mode = view;
@@ -157,6 +171,13 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   // ── Document panel state (must be before useChatState) ─────────
   const [docState, setDocState] = useState<DocState | null>(null);
   const [currentDocPath, setCurrentDocPath] = useState<string | null>(null);
+  // ── Open editor bridge (Work → Documents) ────────────────────
+  // Refs, not state: the prompt path reads them synchronously and a re-render
+  // per keystroke is exactly what the panel's editor seam avoids.
+  const editorHandleRef = useRef<CodeEditorHandle | null>(null);
+  const editorStateRef = useRef<CodePanelState | null>(null);
+  const [externalFileChange, setExternalFileChange] = useState<ExternalFileChange | null>(null);
+  const fileChangeSeqRef = useRef(0);
 
   // ── Document panel width (resizable + persistent) ──────────────
   // Layout: [SessionList 256px] [Chat flex-1] [DocPanel]
@@ -186,19 +207,75 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   // ── Work page state ────────────────────────────────────────────
   const [mobileWorkChat, setMobileWorkChat] = useState(false);
   const [pendingHighlight, setPendingHighlight] = useState<{ path?: string; text?: string } | null>(null);
+  // Documents open next to the code editor, in open order (markdown, prototype
+  // HTML, office). The code editor keeps its own tabs; this list is only what
+  // the tab strip adds beside the code chip. Both survive a document switch, so
+  // opening a .md no longer unmounts CodePanel and drops its buffers.
+  const [openDocs, setOpenDocs] = useState<{ path: string; name: string }[]>([]);
+  // Sticky: true from the first code file opened in this chat. It decides whether
+  // the code chip exists and whether CodePanel is mounted (kept mounted, hidden
+  // while a document is shown) so its tabs and buffers survive.
+  const [codeStarted, setCodeStarted] = useState(false);
+  // Last code path opened: CodePanel turns a new initialPath into a tab and
+  // focuses an existing one, so it must stay on a code file, not on the doc shown.
+  const [lastCodePath, setLastCodePath] = useState<string | null>(null);
+  // A dirty code buffer plus a click on another Work tab (Timeline/Chat/...): hold
+  // the switch until the user confirms, because the tab change unmounts the panel.
+  const [pendingWorkTab, setPendingWorkTab] = useState<{ tab: WorkTab; dirtyName: string } | null>(null);
+  // A dirty code buffer plus a chat switch: the buffer would land in another
+  // workspace, so hold the switch until the user confirms.
+  const [pendingSessionSwitch, setPendingSessionSwitch] = useState<{ run: () => void; dirtyName: string } | null>(null);
   // Kind of file open in the Documents tab.
   type WorkspaceType = "document" | "code" | "prototype" | "markdown";
   const [workspaceType, setWorkspaceType] = useState<WorkspaceType>("document");
+  // The code editor is the visible panel: the active path is a code file. While
+  // it is false CodePanel stays mounted but hidden behind the open document.
+  // Read from the path, not from `workspaceType`: that state is filled by an
+  // effect, so for the render right after a document opens it still says "code"
+  // — the editor would stay visible and an office preview would be created
+  // behind it. The two agree on every later render (same detection helper).
+  const codeActive =
+    workTab === "documents" &&
+    currentDocPath !== null &&
+    workspaceFileKind(fileBaseName(currentDocPath)) === "code";
+  const codeActiveRef = useRef(codeActive);
+  codeActiveRef.current = codeActive;
   const [meetingActive, setMeetingActive] = useState(false);
   const [fileTreeRefreshKey, setFileTreeRefreshKey] = useState(0);
   // +1 after each finished iteration (LLM call done, token usage persisted) to drive the stats bar refresh
   const [statsTick, setStatsTick] = useState(0);
 
-  /** Switch to the Work page, optionally on a given tab. */
+  /** The unguarded tab switch: only for callers that already hold a yes. */
+  const commitWorkTab = useCallback((tab: WorkTab) => {
+    onWorkTabChange(tab);
+  }, [onWorkTabChange]);
+
+  /**
+   * The single entry point for changing the Work tab. Leaving the Documents tab
+   * unmounts CodePanel, which drops every open buffer: while the editor is dirty
+   * the change waits for a confirmation and Cancel keeps both the tab and the
+   * buffer. The tab bar, the agent timeline, "Start meeting" and opening a
+   * document all come through here; a clean editor switches straight away.
+   */
+  const handleWorkTabClick = useCallback((tab: WorkTab) => {
+    const editor = editorStateRef.current;
+    if (needsDiscardConfirmForWorkTabSwitch({
+      currentTab: workTab,
+      nextTab: tab,
+      codeDirty: hasUnsavedEditorEdits(editor),
+    })) {
+      const dirtyPath = editor?.openPath || currentDocPath || "";
+      setPendingWorkTab({ tab, dirtyName: dirtyPath.split("/").pop() || "this file" });
+      return;
+    }
+    commitWorkTab(tab);
+  }, [workTab, currentDocPath, commitWorkTab]);
+
+  /** Switch to the Work page, optionally on a given tab (the tab asks first). */
   const openWork = useCallback((tab?: WorkTab) => {
-    if (tab) onWorkTabChange(tab);
+    if (tab) handleWorkTabClick(tab);
     onViewChange("work");
-  }, [onViewChange, onWorkTabChange]);
+  }, [onViewChange, handleWorkTabClick]);
 
   const handleStartMeeting = useCallback(() => {
     setMeetingActive(true);
@@ -305,6 +382,22 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
       // That LLM call's token usage was just persisted — trigger a debounced stats bar refresh
       setStatsTick((k) => k + 1);
     }
+    if (event.type === "file_updated") {
+      // An agent tool (or another client) wrote a file: hand the change to the
+      // open editor, which decides reload vs. conflict banner.
+      const path = typeof event.data.path === "string" ? event.data.path : "";
+      if (path) {
+        fileChangeSeqRef.current += 1;
+        setExternalFileChange({
+          path,
+          absPath: typeof event.data.abs_path === "string" ? event.data.abs_path : undefined,
+          tool: typeof event.data.tool === "string" ? event.data.tool : undefined,
+          origin: typeof event.data.origin === "string" ? event.data.origin : undefined,
+          mtimeMs: typeof event.data.mtime_ms === "number" ? event.data.mtime_ms : undefined,
+          seq: fileChangeSeqRef.current,
+        });
+      }
+    }
     if (event.type.startsWith("goal_")) {
       const snapshot = event.data.goal as GoalData | undefined;
       // Completed or archived goals should not continue occupying the chat header.
@@ -316,6 +409,49 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
       handleAgentRunBoardEvent(event);
     }
   }, [handleAgentRunBoardEvent, handleDocEvent]);
+
+  // Stable (ref-only) callbacks: an inline arrow here would be fine too, but
+  // these never need to re-render anything.
+  const handleEditorReady = useCallback((handle: CodeEditorHandle | null) => {
+    editorHandleRef.current = handle;
+  }, []);
+  const handleEditorState = useCallback((state: CodePanelState) => {
+    editorStateRef.current = state;
+    // The panel owns the open documents; follow its active tab so reopening a
+    // file from the tree is a path change again and never a remount. While the
+    // panel is hidden behind a document its report must not steal the active
+    // path back, or the document would be replaced by the code editor.
+    if (!codeActiveRef.current) return;
+    if (state.openPath) setLastCodePath(state.openPath);
+    setCurrentDocPath(state.openPath);
+  }, []);
+
+  /**
+   * The panel reports every edit but not its own unmount, so drop the last
+   * snapshot once it is gone: a stale "dirty" state would ask a pointless
+   * discard question on the next session switch. CodePanel is mounted for the
+   * whole time it started, hidden behind a document included: its buffers are
+   * still there (and still dirty) while the user reads a .md.
+   */
+  const editorMounted = workTab === "documents" && codeStarted;
+  useEffect(() => {
+    if (!editorMounted) editorStateRef.current = null;
+  }, [editorMounted]);
+
+  /**
+   * A chat switch changes the workspace the editor writes to, so a dirty buffer
+   * confirms first. On discard the switch runs and CodePanel closes its tabs —
+   * a buffer from the old chat must never be saved into the new workspace.
+   */
+  const guardSessionSwitch = useCallback((run: () => void) => {
+    const editor = editorStateRef.current;
+    if (!needsDiscardConfirmForSessionSwitch({ codeDirty: hasUnsavedEditorEdits(editor) })) {
+      run();
+      return;
+    }
+    const dirtyPath = editor?.openPath || currentDocPath || "";
+    setPendingSessionSwitch({ run, dirtyName: dirtyPath.split("/").pop() || "this file" });
+  }, [currentDocPath]);
 
   const {
     sessions,
@@ -330,7 +466,6 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     activeBranch,
     replaying,
     replayProgress,
-    todoRefreshKey,
     activeMonitors,
     selectSession,
     newSession,
@@ -356,11 +491,42 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     setTimelineAgent("");
   }, [activeSession?.session_id]);
 
-  // ── Open Office document from file tree ───────────────────────
-  const handleOpenDoc = useCallback(async (path: string, name: string) => {
+  /**
+   * Another chat is another workspace: CodePanel drops its own tabs (it watches
+   * sessionId) and the page drops the document tabs and the sticky code state,
+   * so a chip can never reopen a file from the previous chat. The switch guard
+   * has already asked when the editor held unsaved edits.
+   */
+  const docsSessionRef = useRef(activeSession?.session_id ?? null);
+  useEffect(() => {
+    const sessionId = activeSession?.session_id ?? null;
+    if (docsSessionRef.current === sessionId) return;
+    docsSessionRef.current = sessionId;
+    setOpenDocs([]);
+    setDocState(null);
+    setCurrentDocPath(null);
+    setCodeStarted(false);
+    setLastCodePath(null);
+    setWorkspaceType("document");
+  }, [activeSession?.session_id]);
+
+  // ── Open a file from the tree into the Documents tab ──────────
+  const openDocInPanel = useCallback(async (path: string, name: string) => {
     const ws = activeSession?.workspace || workspace || "";
-    // HTML and Markdown files go directly to their workspace mode, no doc preview
-    if (name.toLowerCase().endsWith(".html") || name.toLowerCase().endsWith(".md")) {
+    // A code file becomes a tab in the code editor, which stays mounted (and
+    // keeps every other code tab and buffer) while documents come and go.
+    if (workspaceFileKind(name) === "code") {
+      setCodeStarted(true);
+      setLastCodePath(path);
+      setCurrentDocPath(path);
+      setDocState(null);
+      openWork("documents");
+      return;
+    }
+    // Every other kind is a document tab beside the code chip, in open order.
+    setOpenDocs((prev) => (prev.some((doc) => doc.path === path) ? prev : [...prev, { path, name }]));
+    // Markdown and HTML have their own panels: no Office preview request.
+    if (!needsOfficePreview(name)) {
       setCurrentDocPath(path);
       setDocState(null);
       openWork("documents");
@@ -411,6 +577,88 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
       } : prev);
     }
   }, [activeSession?.workspace, workspace, openWork]);
+
+  /**
+   * The tree's "Open in workspace". Nothing is lost by opening another kind of
+   * file any more: the code editor stays mounted with its tabs and buffers while
+   * a document takes the visible area, so this never needs a discard prompt.
+   */
+  const handleOpenDoc = useCallback((path: string, name: string) => {
+    return openDocInPanel(path, name);
+  }, [openDocInPanel]);
+
+  /** The tab strip: the code chip (once the editor started) then the documents. */
+  const docTabItems: DocTab[] = [];
+  if (codeStarted && lastCodePath) {
+    docTabItems.push({
+      path: lastCodePath,
+      name: fileBaseName(lastCodePath),
+      kind: "code",
+      active: codeActive,
+    });
+  }
+  for (const doc of openDocs) {
+    docTabItems.push({ path: doc.path, name: doc.name, kind: "doc", active: currentDocPath === doc.path });
+  }
+
+  /** Show an open document chip; an office preview reloads when another one is cached. */
+  const activateDoc = useCallback((path: string, name: string) => {
+    if (needsOfficePreview(name)) {
+      // One office preview at a time: another document re-runs the load.
+      if (docState?.filePath === path) {
+        setCurrentDocPath(path);
+        return;
+      }
+      void openDocInPanel(path, name);
+      return;
+    }
+    // Markdown and HTML panels are keyed by path and cheap to remount.
+    setDocState(null);
+    setCurrentDocPath(path);
+  }, [docState?.filePath, openDocInPanel]);
+
+  const handleSelectDocTab = useCallback((path: string) => {
+    if (codeStarted && path === lastCodePath) {
+      // Enough on its own: workspaceType recomputes and the code wrapper unhides.
+      setCurrentDocPath(path);
+      return;
+    }
+    const doc = openDocs.find((item) => item.path === path);
+    if (doc) activateDoc(doc.path, doc.name);
+  }, [codeStarted, lastCodePath, openDocs, activateDoc]);
+
+  /**
+   * Close one document tab. The code chip takes over when the editor ever
+   * started, otherwise the neighbouring document; with nothing left the
+   * Documents tab goes back to its empty state.
+   */
+  const handleCloseDocTab = useCallback((path: string) => {
+    const index = openDocs.findIndex((doc) => doc.path === path);
+    if (index < 0) return;
+    const remaining = openDocs.filter((doc) => doc.path !== path);
+    setOpenDocs(remaining);
+    // The cached office preview goes with its tab.
+    if (docState?.filePath === path) setDocState(null);
+    if (codeActive || currentDocPath !== path) return;
+    if (codeStarted && lastCodePath) {
+      setCurrentDocPath(lastCodePath);
+      return;
+    }
+    const neighbour = remaining[Math.min(index, remaining.length - 1)];
+    if (neighbour) {
+      activateDoc(neighbour.path, neighbour.name);
+      return;
+    }
+    setCurrentDocPath(null);
+    setDocState(null);
+  }, [openDocs, docState?.filePath, codeActive, currentDocPath, codeStarted, lastCodePath, activateDoc]);
+
+  /** A panel's own close button: drop its tab and clear the visible document. */
+  const closeActiveDoc = useCallback(() => {
+    if (currentDocPath) setOpenDocs((prev) => prev.filter((doc) => doc.path !== currentDocPath));
+    setDocState(null);
+    setCurrentDocPath(null);
+  }, [currentDocPath]);
 
   // Sync active session ID to parent (for NavBar language switcher reset)
   useEffect(() => {
@@ -662,7 +910,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  const onSelectSession = useCallback(
+  const doSelectSession = useCallback(
     async (session: Session) => {
       const model = await selectSession(session, selectedModel, models);
       setSelectedModel(model);
@@ -684,12 +932,31 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     [selectSession, selectedModel, models, setSelectedModel, providerModels, clearAgentRunBoard],
   );
 
-  const onNewSession = useCallback(async () => {
+  /** Session switches ask first while the editor holds unsaved edits. */
+  const onSelectSession = useCallback((session: Session) => {
+    guardSessionSwitch(() => { void doSelectSession(session); });
+  }, [guardSessionSwitch, doSelectSession]);
+
+  /**
+   * The single place that creates a chat. It drops the editor's tabs (another
+   * chat is another workspace), so every caller asks first via
+   * `guardSessionSwitch` — a dirty buffer would otherwise be lost silently.
+   */
+  const createSession = useCallback(async () => {
     const model = await newSession(selectedModel, models);
     setSelectedModel(model);
-    setSelectedAgent("default");
     clearAgentRunBoard();
   }, [newSession, selectedModel, models, setSelectedModel, clearAgentRunBoard]);
+
+  const doNewSession = useCallback(async () => {
+    await createSession();
+    setSelectedAgent("default");
+  }, [createSession, setSelectedAgent]);
+
+  /** Starting a new chat leaves the current workspace too: same guard. */
+  const onNewSession = useCallback(() => {
+    guardSessionSwitch(() => { void doNewSession(); });
+  }, [guardSessionSwitch, doNewSession]);
 
   const handleToggleHistorySearchable = useCallback(async (session: Session) => {
     try {
@@ -703,13 +970,17 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     }
   }, [activeSession?.session_id, setActiveSession, setSessions]);
 
-  const onSelectSessionById = useCallback(
+  const doSelectSessionById = useCallback(
     async (sessionId: string) => {
       const model = await selectSessionById(sessionId, selectedModel, models);
       setSelectedModel(model);
     },
     [selectSessionById, selectedModel, models, setSelectedModel],
   );
+
+  const onSelectSessionById = useCallback((sessionId: string) => {
+    guardSessionSwitch(() => { void doSelectSessionById(sessionId); });
+  }, [guardSessionSwitch, doSelectSessionById]);
 
   const _OFFICE_EXTS = [".docx", ".xlsx", ".pptx"];
   const _TEXT_EXTS = [".pdf", ".csv", ".txt", ".md", ".json", ".xml", ".html", ".htm", ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".c", ".cpp", ".h", ".sh", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".sql", ".r", ".rb", ".php", ".css", ".scss", ".vue", ".svelte"];
@@ -848,6 +1119,15 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
           text = `[delegate_parallel] tasks=${JSON.stringify(tasksJson)}\n\nOriginal request: ${text}`;
         }
       }
+      // Path only while clean (the agent reads the disk copy); a dirty buffer
+      // sends its text too so the prompt matches what the user sees. While a
+      // document is the visible panel the hidden editor's file is not the one
+      // the user is working on, so it rides along only when the code panel is active.
+      const editorState = codeActive ? editorStateRef.current : null;
+      const editorFileContext = promptFileContext(
+        editorState,
+        editorState?.dirty ? (editorHandleRef.current?.getContent() ?? "") : "",
+      );
       await sessionsApi.sendPrompt(
         activeSession.session_id,
         text || "Please analyze this image",
@@ -859,6 +1139,8 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
         currentDocPath || undefined,
         promptWorkspaceType,
         promptWorkMode,
+        // The file open in Work → Documents rides along with this prompt.
+        editorFileContext,
       );
     } catch (error) {
       if (!wasSending) setSending(false);
@@ -999,32 +1281,34 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     inbox: "Check my email for new messages",
   };
 
+  const sendQuickPrompt = useCallback(async (sessionId: string, promptText: string) => {
+    setMessages((prev) => [
+      ...prev,
+      { id: `u-${Date.now()}`, role: "user", content: promptText },
+    ]);
+    setSending(true);
+    try {
+      await sessionsApi.sendPrompt(sessionId, promptText, selectedModel, undefined, undefined, undefined, selectedProvider ?? undefined);
+    } catch {
+      setSending(false);
+    }
+  }, [selectedModel, selectedProvider, setMessages, setSending]);
+
   const handleQuickAction = useCallback(
-    async (action: "digest" | "remind" | "inbox") => {
+    (action: "digest" | "remind" | "inbox") => {
       const promptText = quickActionPrompts[action];
       if (!promptText) return;
-      // Ensure we have an active session
-      let sid = activeSession?.session_id;
-      if (!sid) {
-        const model = await newSession(selectedModel, models);
-        setSelectedModel(model);
-        sid = ""; // newSession sets activeSession via state; next render will have it
+      const targetSid = activeSession?.session_id;
+      if (!targetSid) {
+        // Creating the chat drops the editor's tabs, so ask first like any other
+        // session switch. Nothing is sent afterwards: the new id is not in this
+        // render's state yet, which is the behaviour this path always had.
+        guardSessionSwitch(() => { void createSession(); });
+        return;
       }
-      if (!activeSession && !sid) return;
-      const targetSid = activeSession?.session_id || sid;
-      if (!targetSid) return;
-      setMessages((prev) => [
-        ...prev,
-        { id: `u-${Date.now()}`, role: "user", content: promptText },
-      ]);
-      setSending(true);
-      try {
-        await sessionsApi.sendPrompt(targetSid, promptText, selectedModel, undefined, undefined, undefined, selectedProvider ?? undefined);
-      } catch {
-        setSending(false);
-      }
+      void sendQuickPrompt(targetSid, promptText);
     },
-    [activeSession, selectedModel, models, selectedProvider, newSession, setMessages, setSending, setSelectedModel, quickActionPrompts],
+    [activeSession?.session_id, createSession, guardSessionSwitch, quickActionPrompts, sendQuickPrompt],
   );
 
   const handleNotificationAction = useCallback(
@@ -1044,14 +1328,8 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   );
 
   // ── Workspace type detection ──────────────────────────────
-  const CODE_EXTS = new Set(["py", "ts", "tsx", "js", "jsx", "json", "go", "rs", "java", "c", "cpp", "css", "scss", "vue", "svelte", "sh", "bash", "yaml", "yml", "toml", "sql"]);
-  const detectWorkspaceType = (name: string): WorkspaceType => {
-    const ext = name.split(".").pop()?.toLowerCase() || "";
-    if (ext === "html") return "prototype";
-    if (ext === "md") return "markdown";
-    if (CODE_EXTS.has(ext)) return "code";
-    return "document";
-  };
+  // Extension lists live in lib/workspaceFiles, shared with the file tree.
+  const detectWorkspaceType = (name: string): WorkspaceType => workspaceFileKind(name) ?? "document";
 
   useEffect(() => {
     if (currentDocPath) {
@@ -1305,21 +1583,28 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   const [starting, setStarting] = useState(false);
   const [starterSeed, setStarterSeed] = useState<{ text: string; key: number } | undefined>();
 
-  const startConversation = async (text: string) => {
+  const doStartConversation = useCallback(async (text: string) => {
     if (starting) return;
     setStarting(true);
     try {
       // Keep the agent picked on the start screen (onNewSession resets it).
-      const model = await newSession(selectedModel, models);
-      setSelectedModel(model);
-      clearAgentRunBoard();
+      await createSession();
       setFirstMessage(text);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not start a conversation");
     } finally {
       setStarting(false);
     }
-  };
+  }, [starting, createSession]);
+
+  /**
+   * The start screen's first message creates the chat, which drops the editor's
+   * tabs: with no active session the workspace column can still hold a dirty
+   * buffer, so it asks first and Cancel leaves the editor untouched.
+   */
+  const startConversation = useCallback((text: string) => {
+    guardSessionSwitch(() => { void doStartConversation(text); });
+  }, [guardSessionSwitch, doStartConversation]);
 
   useEffect(() => {
     if (firstMessage === null || !activeSession) return;
@@ -1484,7 +1769,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                       key={tab.id}
                       role="tab"
                       aria-selected={active}
-                      onClick={() => onWorkTabChange(tab.id)}
+                      onClick={() => handleWorkTabClick(tab.id)}
                       className={cn(
                         "flex shrink-0 items-center gap-1.5 px-2.5 h-7 rounded-md text-[12px] transition-colors",
                         active
@@ -1502,14 +1787,16 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                 })}
               </div>
 
-              {workTab === "documents" && docState && (
+              {/* The office preview in the tab bar; hidden while the code editor
+                  takes the area (its state is kept for when the doc returns). */}
+              {workTab === "documents" && docState && !codeActive && (
                 <>
                   <div className="w-px h-4 mx-1 bg-[var(--border)]" />
                   <span className="min-w-0 text-[13px] font-medium truncate text-[var(--text-primary)]">
                     {docState.fileName}
                   </span>
                   <button
-                    onClick={() => { setDocState(null); setCurrentDocPath(null); }}
+                    onClick={closeActiveDoc}
                     title={"Close document"}
                     aria-label={"Close document"}
                     className="p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
@@ -1560,7 +1847,11 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
             {/* Workspace content — horizontal: content + file list */}
             <div className="flex-1 min-h-0 flex">
               {/* Content area (left) */}
-              <div className="flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                {workTab === "documents" && docTabItems.length > 0 && (
+                  <DocTabs tabs={docTabItems} onSelect={handleSelectDocTab} onClose={handleCloseDocTab} />
+                )}
+                <div className="flex-1 min-h-0 overflow-hidden">
                 {workTab === "browser" && <BrowserPanel />}
                 {workTab === "timeline" && (
                   <AgentTimeline
@@ -1598,73 +1889,87 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                     </div>
                   </div>
                 )}
-                {workTab === "documents" && (workspaceType === "code" && currentDocPath ? (
-                  <CodePanel
-                    key={currentDocPath}
-                    initialPath={currentDocPath}
-                    initialContent=""
-                    workMode={true}
-                  />
-                ) : workspaceType === "prototype" && currentDocPath ? (
-                  <PrototypePanel
-                    key={currentDocPath}
-                    filePath={currentDocPath}
-                    onClose={() => { setDocState(null); setCurrentDocPath(null); }}
-                  />
-                ) : workspaceType === "markdown" && currentDocPath ? (
-                  <MarkdownPanel
-                    key={currentDocPath}
-                    filePath={currentDocPath}
-                    onClose={() => { setDocState(null); setCurrentDocPath(null); }}
-                  />
-                ) : docState ? (
-                  <DocumentPanel
-                    doc={docState}
-                    onClose={() => { setDocState(null); setCurrentDocPath(null); }}
-                    maximized={false}
-                    onToggleMaximize={() => {}}
-                    onDownload={() => {
-                      if (docState?.filePath) {
-                        const link = document.createElement("a");
-                        link.href = `/api/documents/download?path=${encodeURIComponent(docState.filePath)}`;
-                        link.download = docState.fileName;
-                        link.click();
-                      }
-                    }}
-                    onRefreshPreview={async () => {
-                      if (!docState?.filePath) return;
-                      setDocState((prev) => prev ? { ...prev, previewLoading: true } : prev);
-                      try {
-                        const preview = await documentsApi.getPreview(
-                          docState.filePath,
-                          docState.workspace || activeSession?.workspace || "",
-                        );
-                        setDocState((prev) => prev ? {
-                          ...prev,
-                          previewLoading: false,
-                          previewHtml: preview.html,
-                          previewError: null,
-                        } : prev);
-                      } catch (e: any) {
-                        setDocState((prev) => prev ? {
-                          ...prev,
-                          previewLoading: false,
-                          previewError: e?.message || "Failed to refresh preview",
-                        } : prev);
-                      }
-                    }}
-                    workMode={true}
-                    pendingHighlight={pendingHighlight}
-                    onAIEdit={handleAIEdit}
-                  />
-                ) : (
-                  <div className="h-full flex items-center justify-center text-[var(--text-tertiary)]">
-                    <div className="text-center">
-                      <LayoutPanelTop size={32} className="mx-auto mb-3 opacity-30" />
-                      <p className="text-sm">{"Nothing to work on. Ask AI to create or open a file."}</p>
+                {workTab === "documents" && (
+                  <>
+                    {/* Kept mounted (just hidden) while a document is shown, so its
+                        tabs and unsaved buffers survive document switching. */}
+                    <div className={cn("h-full min-h-0", !codeActive && "hidden")}>
+                      {codeStarted && (
+                        <CodePanel
+                          initialPath={lastCodePath ?? undefined}
+                          initialContent=""
+                          workMode={true}
+                          visible={codeActive}
+                          sessionId={activeSession?.session_id}
+                          externalChange={externalFileChange}
+                          onEditorReady={handleEditorReady}
+                          onStateChange={handleEditorState}
+                        />
+                      )}
                     </div>
-                  </div>
-                ))}
+                    {!codeActive && (workspaceType === "prototype" && currentDocPath ? (
+                      <PrototypePanel
+                        key={currentDocPath}
+                        filePath={currentDocPath}
+                        onClose={closeActiveDoc}
+                      />
+                    ) : workspaceType === "markdown" && currentDocPath ? (
+                      <MarkdownPanel
+                        key={currentDocPath}
+                        filePath={currentDocPath}
+                        onClose={closeActiveDoc}
+                      />
+                    ) : docState ? (
+                      <DocumentPanel
+                        doc={docState}
+                        onClose={closeActiveDoc}
+                        maximized={false}
+                        onToggleMaximize={() => {}}
+                        onDownload={() => {
+                          if (docState?.filePath) {
+                            const link = document.createElement("a");
+                            link.href = `/api/documents/download?path=${encodeURIComponent(docState.filePath)}`;
+                            link.download = docState.fileName;
+                            link.click();
+                          }
+                        }}
+                        onRefreshPreview={async () => {
+                          if (!docState?.filePath) return;
+                          setDocState((prev) => prev ? { ...prev, previewLoading: true } : prev);
+                          try {
+                            const preview = await documentsApi.getPreview(
+                              docState.filePath,
+                              docState.workspace || activeSession?.workspace || "",
+                            );
+                            setDocState((prev) => prev ? {
+                              ...prev,
+                              previewLoading: false,
+                              previewHtml: preview.html,
+                              previewError: null,
+                            } : prev);
+                          } catch (e: any) {
+                            setDocState((prev) => prev ? {
+                              ...prev,
+                              previewLoading: false,
+                              previewError: e?.message || "Failed to refresh preview",
+                            } : prev);
+                          }
+                        }}
+                        workMode={true}
+                        pendingHighlight={pendingHighlight}
+                        onAIEdit={handleAIEdit}
+                      />
+                    ) : (
+                      <div className="h-full flex items-center justify-center text-[var(--text-tertiary)]">
+                        <div className="text-center">
+                          <LayoutPanelTop size={32} className="mx-auto mb-3 opacity-30" />
+                          <p className="text-sm">{"Nothing to work on. Ask AI to create or open a file."}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+                </div>
               </div>
 
               {/* File list on the Documents tab — right side */}
@@ -1675,7 +1980,9 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                   sessionId={activeSession?.session_id || null}
                   workspace={activeSession?.workspace || workspace || undefined}
                   onOpenDoc={(path, name) => {
-                    setShowWorkFiles(false);
+                    // The file browser is a full-width bottom sheet below the md
+                    // breakpoint; on larger screens it is a sidebar, so keep it open.
+                    if (window.innerWidth < 768) setShowWorkFiles(false);
                     handleOpenDoc(path, name);
                   }}
                   refreshTrigger={fileTreeRefreshKey}
@@ -1970,15 +2277,11 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
           timeline={timeline}
           onOpenTimeline={(agent) => {
             setTimelineAgent(agent);
-            onWorkTabChange("timeline");
+            // Same gate as the tab bar: this unmounts the editor too.
+            handleWorkTabClick("timeline");
           }}
         />
       )}
-
-      <TodoWidget
-        sessionId={activeSession?.session_id || null}
-        refreshKey={todoRefreshKey}
-      />
 
       {/* No provider overlay */}
       {!providersLoading && providers.length === 0 && (
@@ -2109,6 +2412,34 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
             {compressionError && <p className="text-xs text-[var(--danger)]">{compressionError}</p>}
           </div>
         </Modal>
+      )}
+      {pendingWorkTab && (
+        <DiscardChangesDialog
+          fileName={pendingWorkTab.dirtyName}
+          description="Leaving Documents closes the editor, and its unsaved edits would be thrown away."
+          body="Save with Ctrl/Cmd+S to keep your edits, or discard them and switch tabs."
+          confirmTestId="work-tab-discard-confirm"
+          onCancel={() => setPendingWorkTab(null)}
+          onDiscard={() => {
+            const next = pendingWorkTab;
+            setPendingWorkTab(null);
+            if (next) commitWorkTab(next.tab);
+          }}
+        />
+      )}
+      {pendingSessionSwitch && (
+        <DiscardChangesDialog
+          fileName={pendingSessionSwitch.dirtyName}
+          description="Switching conversations closes the editor, and its unsaved edits would be thrown away."
+          body="Save with Ctrl/Cmd+S to keep your edits, or discard them and switch conversations."
+          confirmTestId="session-switch-discard-confirm"
+          onCancel={() => setPendingSessionSwitch(null)}
+          onDiscard={() => {
+            const next = pendingSessionSwitch;
+            setPendingSessionSwitch(null);
+            next?.run();
+          }}
+        />
       )}
 
     </div>

@@ -17,13 +17,7 @@ import {
 } from "lucide-react";
 import { FileEntry, createEntry, deleteFile, getDownloadUrl, getTree, isImageFile, moveEntries, renameFile } from "../api/files";
 import { cn } from "../lib/cn";
-
-const WORKSPACE_EXTENSIONS = new Set([".xlsx", ".docx", ".pptx", ".html", ".md"]);
-
-function opensInWorkspace(name: string): boolean {
-  const dot = name.lastIndexOf(".");
-  return dot >= 0 && WORKSPACE_EXTENSIONS.has(name.slice(dot).toLowerCase());
-}
+import { opensInWorkspace } from "../lib/workspaceFiles";
 
 interface Props {
   entries: FileEntry[];
@@ -256,6 +250,7 @@ function TreeNode({ entry, entries: _entries, depth, absolute, rootPath, selecte
       onDrop={(event) => { event.preventDefault(); event.stopPropagation(); setDragOver(false); if (isDir) onMove(entry.path); }}
       onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); setMenuPosition({ x: event.clientX, y: event.clientY }); }}
       onClick={(event) => { onSelect(entry, event); if (isDir && !event.metaKey && !event.ctrlKey && !event.shiftKey) toggle(); }}
+      onDoubleClick={(event) => { if (!isDir && onOpenDoc && opensInWorkspace(entry.name)) { event.stopPropagation(); onOpenDoc(entry.path, entry.name); } }}
       className={cn("group flex items-center gap-1.5 py-1 pr-2 text-xs rounded-md cursor-pointer transition-colors", dragOver ? "bg-[var(--brand-bg)] text-[var(--brand)] ring-2 ring-inset ring-[var(--brand)]" : isSelected ? "bg-[var(--brand-bg)] text-[var(--brand)]" : "hover:bg-[var(--bg-tertiary)] text-[var(--text-primary)]")}
       style={{ paddingLeft: 8 + depth * 14 }}
       title={entry.path}

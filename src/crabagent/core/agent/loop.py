@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 
@@ -164,13 +165,128 @@ def _classify_rate_limit_error(error: Exception) -> dict[str, object]:
     }
 
 
-def _provider_error_message(detail: str) -> str:
+def _provider_error_text(detail: str) -> str:
     """Keep the useful provider message without exposing LiteLLM's wrapper text."""
     for separator in ("OpenAIException - ", "message': '", 'message": "', " - ", ": "):
         if separator in detail:
             message = detail.rsplit(separator, 1)[-1]
             return message.split("'", 1)[0].split('"', 1)[0].strip()
     return detail[:300]
+
+
+def _http_status_of(exc: str | BaseException) -> int | None:
+    """Best-effort HTTP status for a provider failure (attribute or message)."""
+    for attr in ("status_code", "http_status", "code"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int) and 100 <= value <= 599:
+            return value
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if isinstance(status, int):
+        return status
+    match = re.search(r"\b([45]\d{2})\b", str(exc)[:500])
+    return int(match.group(1)) if match else None
+
+
+_MAX_PROVIDER_ERROR_CHARS = 200
+
+
+def _provider_error_message(
+    exc: str | BaseException,
+    provider: str | None = None,
+    model: str | None = None,
+) -> str:
+    """Build one short, actionable sentence for a provider/model failure.
+
+    Naming the provider, the model and the failure class is what turns a bare
+    "Request failed" into something the user can act on. Every failure path in
+    this module (pre-loop provider setup, the loop's fatal/exhausted path) and
+    the API's outer exception handler use this helper so they agree.
+
+    Called with a detail string and no provider/model it keeps the historical
+    behaviour (wrapper text stripped), which ``_classify_rate_limit_error``
+    relies on.
+    """
+    if provider is None and model is None and isinstance(exc, str):
+        return _provider_error_text(exc)
+
+    label = f"provider '{provider}'" if provider else "the provider"
+    model_note = f" (model '{model}')" if model else ""
+    status = _http_status_of(exc)
+    text = str(exc)
+    compact = text.lower().replace("_", " ")
+    detail = " ".join(_provider_error_text(text).split())[:90]
+    # The catch-all and bad-request paths carry their detail as the only
+    # actionable hint, so they get more room than the classified failures.
+    detail_long = " ".join(_provider_error_text(text).split())[:_MAX_PROVIDER_ERROR_CHARS]
+    raw_detail = " ".join(text.split())[:_MAX_PROVIDER_ERROR_CHARS]
+
+    auth_markers = (
+        "invalid api key",
+        "incorrect api key",
+        "unauthorized",
+        "authentication",
+        "api key is invalid",
+        "no api key",
+    )
+    quota_markers = ("rate limit", "quota", "too many requests", "insufficient credit")
+    setup_markers = (
+        "no provider configured",
+        "unavailable or disabled",
+        "not configured",
+        "not logged in",
+        "login to authorize",
+    )
+
+    if (
+        status in (401, 403)
+        or isinstance(exc, litellm.exceptions.AuthenticationError)
+        or isinstance(exc, litellm.exceptions.PermissionDeniedError)
+        or any(marker in compact for marker in auth_markers)
+    ):
+        message = (
+            f"The API key for {label}{model_note} was rejected — "
+            "check it in Settings → Providers."
+        )
+    elif any(marker in compact for marker in setup_markers):
+        hint = "" if "settings" in compact else " Check Settings → Providers."
+        message = f"{label[0].upper()}{label[1:]}{model_note} is not available — {detail}{hint}"
+    elif status == 429 or isinstance(exc, litellm.exceptions.RateLimitError) or any(
+        marker in compact for marker in quota_markers
+    ):
+        message = (
+            f"{label[0].upper()}{label[1:]}{model_note} is out of quota or rate limiting "
+            "requests — wait a moment, top up, or switch models."
+        )
+    elif isinstance(exc, (litellm.exceptions.Timeout, asyncio.TimeoutError)) or "timed out" in compact:
+        message = f"Calling {label}{model_note} timed out — this is usually transient; retry in a moment."
+    elif status is not None and 500 <= status <= 599:
+        message = (
+            f"{label[0].upper()}{label[1:]}{model_note} returned HTTP {status} "
+            "(server error) — transient; retry in a moment."
+        )
+    elif isinstance(exc, (litellm.exceptions.APIConnectionError, ConnectionError, OSError)):
+        message = f"Could not reach {label}{model_note} — check your network or proxy, then retry."
+    elif isinstance(exc, litellm.exceptions.ContextWindowExceededError):
+        message = f"The conversation no longer fits {label}{model_note} — start a new chat or shorten the content."
+    elif isinstance(exc, litellm.exceptions.BadRequestError):
+        # Keep the established wording: the provider's own message is the only
+        # thing that says which parameter it rejected.
+        lead = "Invalid request parameters:"
+        room = _MAX_PROVIDER_ERROR_CHARS - len(lead) - 1
+        message = f"{lead} {raw_detail[:room]}" if raw_detail and room > 0 else lead
+    else:
+        # Unrecognised failure — often an app bug rather than a credential
+        # problem, so the wording stays neutral and the detail is kept (up to
+        # the cap) instead of being cut to 90 chars.
+        lead = f"Agent request failed — {label}{model_note}"
+        room = _MAX_PROVIDER_ERROR_CHARS - len(lead) - 2
+        suffix = f": {detail_long[:room]}" if detail_long and room > 0 else ""
+        message = f"{lead}{suffix}"
+
+    if len(message) <= _MAX_PROVIDER_ERROR_CHARS:
+        return message
+    return message[: _MAX_PROVIDER_ERROR_CHARS - 1] + "…"
 
 
 async def _emit_retry_with_countdown(
@@ -230,6 +346,52 @@ async def _consume_user_messages(context: AgentContext) -> bool:
     return bool(pending)
 
 
+async def _prepare_llm(
+    context: AgentContext,
+    saved_model: str | None,
+    saved_provider_name: str | None,
+) -> tuple[ProviderInfo, dict, str]:
+    """Resolve provider + litellm params + fully-prefixed model for a run.
+
+    Raises on any setup problem (provider missing/disabled, ChatGPT not
+    logged in, proxy/param build failure); the caller turns that into an
+    actionable ``AGENT_ERROR``.
+    """
+    provider = await _resolve_provider(context.provider_name or saved_provider_name)
+    # Record it immediately: if a later setup step fails, the error message and
+    # the API's outer handler can still name the provider.
+    context.metadata["resolved_provider"] = provider.name
+    from crabagent.core.proxy import resolve_llm_proxy
+
+    proxy = await resolve_llm_proxy(provider)
+    # OpenCode Go requires a stable x-opencode-session per conversation
+    # (requests without it are rejected since 2026-09). Reuse the chat
+    # session ID so all turns of one conversation share the same value.
+    llm = _litellm_params(provider, proxy, session_id=context.metadata.get("session_id") or None)
+    # CLI/API overrides win; otherwise use the Settings page pair before env defaults.
+    model = context.model or saved_model or settings.default_model
+    if "/" not in model:
+        from crabagent.core.provider_store import model_prefix_for
+
+        model = f"{model_prefix_for(provider.provider_type)}/{model}"
+
+    # For chatgpt provider, verify OAuth token exists before calling litellm
+    # (litellm would otherwise block trying interactive device code login)
+    if provider.provider_type == "chatgpt":
+        import os
+
+        token_file = os.path.join(
+            os.getenv("CHATGPT_TOKEN_DIR", os.path.expanduser("~/.config/litellm/chatgpt")),
+            os.getenv("CHATGPT_AUTH_FILE", "auth.json"),
+        )
+        if not os.path.exists(token_file):
+            raise ValueError(
+                "ChatGPT subscription not logged in. "
+                "Please go to Settings → Providers → ChatGPT → Login to authorize first."
+            )
+    return provider, llm, model
+
+
 async def run_agent(
     context: AgentContext,
     query: str | list[dict],
@@ -267,35 +429,42 @@ async def _run_agent(
             logger.debug("middleware run_start failed", exc_info=True)
 
     saved_model, saved_provider_name = await _get_default_model_settings()
-    provider = await _resolve_provider(context.provider_name or saved_provider_name)
-    from crabagent.core.proxy import resolve_llm_proxy
-
-    proxy = await resolve_llm_proxy(provider)
-    # OpenCode Go requires a stable x-opencode-session per conversation
-    # (requests without it are rejected since 2026-09). Reuse the chat
-    # session ID so all turns of one conversation share the same value.
-    llm = _litellm_params(provider, proxy, session_id=context.metadata.get("session_id") or None)
-    # CLI/API overrides win; otherwise use the Settings page pair before env defaults.
-    model = context.model or saved_model or settings.default_model
-    if "/" not in model:
-        from crabagent.core.provider_store import model_prefix_for
-
-        model = f"{model_prefix_for(provider.provider_type)}/{model}"
-
-    # For chatgpt provider, verify OAuth token exists before calling litellm
-    # (litellm would otherwise block trying interactive device code login)
-    if provider.provider_type == "chatgpt":
-        import os
-
-        token_file = os.path.join(
-            os.getenv("CHATGPT_TOKEN_DIR", os.path.expanduser("~/.config/litellm/chatgpt")),
-            os.getenv("CHATGPT_AUTH_FILE", "auth.json"),
+    try:
+        provider, llm, model = await _prepare_llm(context, saved_model, saved_provider_name)
+    except Exception as exc:
+        # Setup failures (no/disabled provider, ChatGPT not logged in, proxy or
+        # param build errors) used to escape to the caller, which only logged
+        # them: the UI then showed a bare "Request failed". Report them here.
+        _setup_provider = (
+            context.metadata.get("resolved_provider") or context.provider_name or saved_provider_name or ""
         )
-        if not os.path.exists(token_file):
-            raise ValueError(
-                "ChatGPT subscription not logged in. "
-                "Please go to Settings → Providers → ChatGPT → Login to authorize first."
+        _setup_model = context.model or saved_model or settings.default_model or ""
+        message = _provider_error_message(exc, _setup_provider or None, _setup_model or None)
+        logger.error("Provider setup failed: %s", exc, exc_info=True)
+        # Mirror the mid-loop fatal path: the run failed, it was not merely
+        # stopped, so goal auto-continuation and the UI must see the error state.
+        context.metadata["_run_error"] = True
+        await context.event_bus.emit(
+            AgentEvent(
+                type=EventType.AGENT_ERROR,
+                data={
+                    "error": message,
+                    "stage": "provider_setup",
+                    "provider": _setup_provider,
+                    "model": _setup_model,
+                },
             )
+        )
+        end_span(_root_span, status="error", error=message)
+        context.metadata["_accept_followups"] = False
+        # Every other exit runs the end hooks; do not skip them on this one.
+        if context.middlewares:
+            try:
+                await context.middlewares.run_end(context)
+            except Exception:
+                logger.debug("middleware run_end failed", exc_info=True)
+        return context.messages
+
     context.metadata["resolved_model"] = model.split("/", 1)[-1] if "/" in model else model
     context.metadata["resolved_provider"] = provider.name
 
@@ -329,7 +498,15 @@ async def _run_agent(
     if context.system_prompt:
         context.system_prompt = build_runtime_system_prompt(context)
 
+    _token_budget_hit = False
     while not context.budget_exhausted:
+        # Cooperative cancellation and the run-level input-token budget are
+        # both checked before the next model call.
+        if context.cancelled:
+            break
+        if context.input_tokens_exhausted:
+            _token_budget_hit = True
+            break
         await _consume_user_messages(context)
         context.iteration += 1
         await context.event_bus.emit(AgentEvent(type=EventType.ITERATION_START, data={"iteration": context.iteration}))
@@ -558,6 +735,29 @@ async def _run_agent(
                 )
                 if await _consume_user_messages(context):
                     continue
+                if context.cancelled:
+                    break
+                # Stop / continuation hook: a middleware may inject a message and
+                # force one more round. Bounded by the iteration + token budgets,
+                # so a misbehaving hook cannot loop forever. Default: stop.
+                injected = None
+                if context.middlewares:
+                    try:
+                        injected = await context.middlewares.run_stop(context, full_text)
+                    except Exception:
+                        logger.debug("middleware stop hook failed", exc_info=True)
+                if injected and context.iteration < context.max_iterations:
+                    injected_msg = {
+                        "role": "user",
+                        "content": str(injected),
+                        "agent": context.current_agent,
+                        "internal": True,
+                    }
+                    context.messages.append(injected_msg)
+                    await context.event_bus.emit(
+                        AgentEvent(type=EventType.MESSAGE_CREATED, data={"message": injected_msg})
+                    )
+                    continue
                 # Close admission before the first await in run finalization.
                 context.metadata["_accept_followups"] = False
                 break
@@ -674,14 +874,41 @@ async def _run_agent(
                     )
                     raise
 
-            gathered = await asyncio.gather(*[_run_and_emit(m) for m in tool_metas], return_exceptions=True)
+            # Cancellable batch: the cancel flag is checked before each call is
+            # started, so a stop does not launch new work. Calls already running
+            # finish (they cannot be interrupted safely mid-side-effect).
+            _tool_tasks: list[asyncio.Task] = []
+            for meta in tool_metas:
+                if context.cancelled:
+                    break
+                _tool_tasks.append(asyncio.create_task(_run_and_emit(meta)))
+            gathered: list = (
+                list(await asyncio.gather(*_tool_tasks, return_exceptions=True)) if _tool_tasks else []
+            )
 
             pending_tool_images: list[tuple[str, list[dict]]] = []
             for i in range(len(tool_metas)):
-                result_entry = gathered[i]
+                # None marks a call that was skipped because the run was cancelled.
+                result_entry = gathered[i] if i < len(gathered) else None
                 meta = tool_metas[i]
                 tc = meta["tc"]
-                if isinstance(result_entry, Exception):
+                if result_entry is None:
+                    result = "Tool call skipped: the run was stopped before this tool started."
+                    await context.event_bus.emit(
+                        AgentEvent(
+                            type=EventType.TOOL_RESULT,
+                            data={
+                                "name": meta["name"],
+                                "result": result,
+                                "id": tc["id"],
+                                "source": meta["source"],
+                                "server_name": meta["server"],
+                                "ok": False,
+                                "reason_class": "cancelled",
+                            },
+                        )
+                    )
+                elif isinstance(result_entry, Exception):
                     result = f"Tool error: {result_entry}"
                     await context.event_bus.emit(
                         AgentEvent(
@@ -741,6 +968,10 @@ async def _run_agent(
             await context.event_bus.emit(
                 AgentEvent(type=EventType.ITERATION_END, data={"iteration": context.iteration})
             )
+
+            if context.cancelled:
+                # Stop after persisting the tool results we already have.
+                break
 
         except Exception as e:
             err_name = type(e).__name__
@@ -956,6 +1187,17 @@ async def _run_agent(
             if retryable and _llm_retry_count >= _llm_retry_max:
                 final_msg += f" (still failing after {_llm_retry_max} retries)"
 
+            # The classified (rate-limit / quota / plan) path already carries a
+            # title + action pair; every other failure gets one actionable
+            # sentence naming the provider, the model and the failure class.
+            error_text = final_msg
+            if error_info is None:
+                error_text = _provider_error_message(
+                    e,
+                    context.metadata.get("resolved_provider") or provider.name,
+                    context.metadata.get("resolved_model") or model.split("/", 1)[-1],
+                )
+
             logger.error(f"Agent loop error (final): {e}", exc_info=True)
             await context.event_bus.emit(
                 AgentEvent(
@@ -973,12 +1215,48 @@ async def _run_agent(
                 AgentEvent(
                     type=EventType.AGENT_ERROR,
                     data={
-                        "error": final_msg,
+                        "error": error_text,
                         **({"error_info": error_info} if error_info else {}),
+                        "provider": context.metadata.get("resolved_provider") or provider.name,
+                        "model": context.metadata.get("resolved_model") or model.split("/", 1)[-1],
                     },
                 )
             )
             break
+
+    if _token_budget_hit:
+        _limit = context.token_budget
+        _used = context.accumulated_prompt
+        await context.event_bus.emit(
+            AgentEvent(
+                type=EventType.BUDGET_WARNING,
+                data={
+                    "type": "token_budget",
+                    "message": (
+                        f"⚠️ Input-token budget reached: {_used:,} of {_limit:,} tokens used "
+                        f"after {context.iteration} iterations"
+                    ),
+                    "used": _used,
+                    "limit": _limit,
+                },
+            )
+        )
+        await context.event_bus.emit(
+            AgentEvent(
+                type=EventType.BUDGET_EXHAUSTED,
+                data={
+                    "type": "token_budget",
+                    "iterations": context.iteration,
+                    "used": _used,
+                    "limit": _limit,
+                    "message": (
+                        f"Input-token budget of {_limit:,} tokens exhausted "
+                        f"({_used:,} used); wrapping up with a summary"
+                    ),
+                },
+            )
+        )
+        await _grace_call(context, llm, model, reason=_TOKEN_BUDGET_NOTE)
 
     if context.budget_exhausted:
         await context.event_bus.emit(
@@ -988,6 +1266,9 @@ async def _run_agent(
 
     # Fire middleware end hooks (reflect / title / etc.)
     context.metadata["_run_elapsed"] = round(time.time() - _t0, 1)
+
+    if context.cancelled:
+        await _finish_cancelled(context)
 
     # ── Finalise root span ──
     end_span(
@@ -1012,16 +1293,23 @@ async def _run_agent(
     return context.messages
 
 
-async def _grace_call(context: AgentContext, llm: dict, model: str):
+_ITERATION_BUDGET_NOTE = (
+    "You have exhausted your iteration budget. "
+    "Please summarize what you've done and any remaining steps."
+)
+_TOKEN_BUDGET_NOTE = (
+    "You have exhausted the input-token budget for this run. "
+    "Please summarize what you've done and any remaining steps."
+)
+
+
+async def _grace_call(context: AgentContext, llm: dict, model: str, reason: str | None = None):
     try:
         _g0 = time.time()
         context.messages.append(
             {
                 "role": "user",
-                "content": (
-                    "You have exhausted your iteration budget. "
-                    "Please summarize what you've done and any remaining steps."
-                ),
+                "content": reason or _ITERATION_BUDGET_NOTE,
                 "agent": context.current_agent,
             }
         )
@@ -1039,6 +1327,34 @@ async def _grace_call(context: AgentContext, llm: dict, model: str):
         await context.event_bus.emit(AgentEvent(type=EventType.TEXT_DONE, data={"text": content}))
     except Exception as e:
         logger.error(f"Grace call failed: {e}")
+
+
+async def _finish_cancelled(context: AgentContext, reason: str = "Stopped by user") -> None:
+    """Record a cooperative stop and emit the terminal AGENT_END.
+
+    Callers that emit their own AGENT_END (the API request handler, which
+    finalises stats/persistence in a ``finally``) set
+    ``context.metadata["_caller_emits_agent_end"]`` so the UI does not receive
+    a second end event; they forward ``reason``/``cancelled`` instead.
+    """
+    context.metadata["_run_cancelled"] = True
+    context.metadata["_cancel_reason"] = reason
+    context.metadata["_accept_followups"] = False
+    if context.metadata.get("_caller_emits_agent_end"):
+        return
+    await context.event_bus.emit(
+        AgentEvent(
+            type=EventType.AGENT_END,
+            data={
+                "cancelled": True,
+                "reason": reason,
+                "iterations": context.iteration,
+                "elapsed_seconds": context.metadata.get("_run_elapsed", 0),
+                "model": context.metadata.get("resolved_model", context.model or ""),
+                "tokens": context.visible_tokens,
+            },
+        )
+    )
 
 
 def _build_messages(context: AgentContext, text_only: bool = False) -> list[dict]:

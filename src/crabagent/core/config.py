@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     workspace: Path = Path.cwd()
 
     max_iterations: int = 200
+    # Run-level cap on cumulative *input* (prompt) tokens across all rounds of a
+    # single run, alongside max_iterations. 0 (default) disables the budget; a
+    # positive value caps cumulative prompt tokens per run. Disabled by default
+    # because most input tokens are cache reads, so a fixed threshold trips on
+    # legitimate long runs.
+    max_run_input_tokens: int = 0
     max_tokens: int = 16384
     reasoning_effort: str = "medium"
 
@@ -54,9 +60,10 @@ class Settings(BaseSettings):
     model_token_limits: dict[str, int] = {}
     context_compression_threshold: float = 0.8
     # Also compact once the context passes this many tokens, however large the
-    # model's window: every step re-sends the whole context, so a 1M-token model
-    # left to fill to 80% re-reads 800k tokens per step. 0 turns the cap off.
-    context_compression_max_tokens: int = 150_000
+    # model's window. 1M = DeepSeek's window, so for it the threshold decides
+    # (80% → compaction at 800k). Lower it to compact earlier and re-send less
+    # context per step (every step re-sends the whole context). 0 turns the cap off.
+    context_compression_max_tokens: int = 1_000_000
     context_keep_recent: int = 6
 
     memory_auto_extract: bool = True
