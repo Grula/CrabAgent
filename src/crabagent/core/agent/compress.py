@@ -98,7 +98,9 @@ async def summarize_messages(
         if msg.get("_compress_ack") or msg.get("role") in ("stats", "screenshot"):
             continue
 
-        content = msg.get("content", "")
+        # `or ""`: a tool or assistant message can carry content=None (e.g. an empty
+        # ask_question reply, or a turn that only made tool calls).
+        content = msg.get("content") or ""
         # Handle list content (e.g. image blocks) — strip to text only.
         if isinstance(content, list):
             text_parts = []
@@ -250,16 +252,23 @@ async def compress_context(context: AgentContext, llm_params: dict, model: str) 
         logger.warning("Context compression returned an empty summary; keeping original")
         return
 
+    ack = {
+        "role": "assistant",
+        "content": "Understood. I will continue based on this context summary.",
+        "_compress_ack": True,
+    }
+    if any(m.get("role") == "assistant" and m.get("reasoning_content") for m in messages):
+        # In thinking mode with tools, DeepSeek rejects a request in which any
+        # assistant message lacks reasoning_content ("The `reasoning_content` in
+        # the thinking mode must be passed back to the API"). Only give the ack
+        # one when the run is thinking, so other providers see no new field.
+        ack["reasoning_content"] = "The earlier conversation is summarised above; I continue from it."
     compressed = [
         {
             "role": "compress",
             "content": summary,
         },
-        {
-            "role": "assistant",
-            "content": "Understood. I will continue based on this context summary.",
-            "_compress_ack": True,
-        },
+        ack,
     ]
 
     context.messages = compressed + recent

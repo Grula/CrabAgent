@@ -82,6 +82,84 @@ async def test_compress_context_replaces_messages_with_summary(monkeypatch: pyte
     assert context.total_tokens == 0
 
 
+def _tool_loop(reasoning: bool) -> list[dict]:
+    """A user brief followed by four tool-call rounds, as a thinking model produces them."""
+    messages: list[dict] = [{"role": "user", "content": "brief"}]
+    for i in range(4):
+        call = {"role": "assistant", "content": "", "tool_calls": [
+            {"id": f"c{i}", "type": "function", "function": {"name": "bash", "arguments": "{}"}}]}
+        if reasoning:
+            call["reasoning_content"] = f"thinking {i}"
+        messages += [call, {"role": "tool", "tool_call_id": f"c{i}", "content": f"out {i}"}]
+    return messages
+
+
+@pytest.mark.asyncio
+async def test_a_compacted_thinking_run_sends_reasoning_on_every_assistant_message(monkeypatch):
+    # 2026-11-23: two DeepSeek runs crossed the 150k compaction cap and their next request failed
+    # with "The `reasoning_content` in the thinking mode must be passed back to the API": the
+    # acknowledgement inserted after the summary was the only assistant message without it.
+    from crabagent.core.agent.loop import _build_messages
+
+    context = AgentContext(workspace=Path.cwd(), system_prompt="sys", messages=_tool_loop(reasoning=True))
+
+    async def fake_acompletion(**kwargs):
+        return FakeStream([FakeChunk(content="SUMMARY")])
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    monkeypatch.setattr(compress.settings, "context_keep_recent", 4)
+
+    await compress.compress_context(context, {}, "deepseek-flash")
+
+    sent = _build_messages(context)
+    assistants = [m for m in sent if m["role"] == "assistant"]
+    assert len(assistants) == 3  # the acknowledgement plus the two kept tool-call rounds
+    assert all(m.get("reasoning_content") for m in assistants)
+
+
+@pytest.mark.asyncio
+async def test_messages_with_no_content_still_compress(monkeypatch):
+    # 2026-11-23: an empty ask_question reply (content=None) made every compaction fail with
+    # "object of type 'NoneType' has no len()", so a DeepSeek chat grew to 230k tokens unchecked.
+    messages = [{"role": "user", "content": "brief"}]
+    for i in range(4):
+        messages += [
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": f"c{i}", "type": "function", "function": {"name": "ask_question", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": f"c{i}", "content": None},
+        ]
+    context = AgentContext(workspace=Path.cwd(), system_prompt="sys", messages=messages)
+    sent = []
+
+    async def fake_acompletion(**kwargs):
+        sent.append(kwargs["messages"])
+        return FakeStream([FakeChunk(content="SUMMARY")])
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    monkeypatch.setattr(compress.settings, "context_keep_recent", 4)
+
+    await compress.compress_context(context, {}, "deepseek-flash")
+
+    assert context.messages[0] == {"role": "compress", "content": "SUMMARY"}
+    # Empty content must not turn into the literal text "None".
+    assert not any(str(m.get("content")).startswith("None") for m in sent[0])
+
+
+@pytest.mark.asyncio
+async def test_a_compacted_run_without_reasoning_sends_no_reasoning_field(monkeypatch):
+    context = AgentContext(workspace=Path.cwd(), system_prompt="sys", messages=_tool_loop(reasoning=False))
+
+    async def fake_acompletion(**kwargs):
+        return FakeStream([FakeChunk(content="SUMMARY")])
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    monkeypatch.setattr(compress.settings, "context_keep_recent", 4)
+
+    await compress.compress_context(context, {}, "gpt-4o")
+
+    assert not any("reasoning_content" in m for m in context.messages)
+
+
 @pytest.mark.asyncio
 async def test_compress_context_preserves_recent_messages(monkeypatch: pytest.MonkeyPatch):
     context = AgentContext(

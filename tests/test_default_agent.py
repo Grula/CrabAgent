@@ -228,6 +228,19 @@ def test_architect_briefs_only_seen_facts_and_recommends_what_the_request_promis
     assert "Recommend the option that keeps what the request already promises" in goal
 
 
+def test_architect_checks_commands_and_keeps_the_users_choices_in_every_question():
+    # 2026-11-23: a brief told the coder to run `golden-init --limit 3`, a flag that doesn't exist.
+    # Two questions about scope and budget marked no recommendation (the rule sat in the
+    # design-choice bullet), and the second listed "promote the drafts as they are" first although
+    # the user had chosen to verify them before any run.
+    goal = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")["goal"]
+    assert "check that its subcommand and flags exist" in goal
+    rule = next(line for line in goal.splitlines() if line.startswith("- Every ask_question"))
+    assert 'marked "(recommended)"' in rule
+    assert "a scope, a budget" in rule
+    assert "no option may quietly drop one" in rule
+
+
 def test_architect_prompt_matches_the_sub_agent_step_cap():
     architect = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")
     assert f"stops after about {agents.SUB_AGENT_MAX_STEPS} steps" in architect["goal"]
