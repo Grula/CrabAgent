@@ -13,6 +13,7 @@ REQUIRES_SESSION = (
     "delete_tool",
     "delegate_task",
     "handoff_to",
+    "switch_agent",
     "request_help",
     "run_pipeline",
     "plan_task",

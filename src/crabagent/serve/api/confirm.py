@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 CONFIRM_TTL_SECONDS = 120
 
-_pending_confirms: dict[str, tuple[asyncio.Future[bool], str, str, str]] = {}
-# confirm_id → (future, session_id, tool_name, args_summary)
+_pending_confirms: dict[str, tuple[asyncio.Future[bool], str, str, str, dict | None]] = {}
+# confirm_id → (future, session_id, tool_name, args_summary, diff_preview)
 
 
 class ToolConfirmRequest(BaseModel):
@@ -46,8 +46,8 @@ async def request_confirmation(
     if len(args_summary) > 200:
         args_summary = args_summary[:200] + "..."
 
-    _pending_confirms[confirm_id] = (future, session_id, tool_name, args_summary)
-    await _persist_confirmation(session_id, confirm_id, tool_name, args_summary)
+    _pending_confirms[confirm_id] = (future, session_id, tool_name, args_summary, diff_preview)
+    await _persist_confirmation(session_id, confirm_id, tool_name, args_summary, diff_preview)
 
     # Trusted work system: also persist a TaskRequest so the approval
     # survives restarts. The live Future above is only a bridge.
@@ -115,7 +115,13 @@ async def request_confirmation(
     return future
 
 
-async def _persist_confirmation(session_id: str, confirm_id: str, tool_name: str, args_summary: str) -> None:
+async def _persist_confirmation(
+    session_id: str,
+    confirm_id: str,
+    tool_name: str,
+    args_summary: str,
+    diff_preview: dict | None = None,
+) -> None:
     """Store the card so session reloads do not depend on the SSE connection."""
     from sqlalchemy import func, select
 
@@ -138,6 +144,10 @@ async def _persist_confirmation(session_id: str, confirm_id: str, tool_name: str
                 name=tool_name,
                 tool_call_id=confirm_id,
                 branch_id=conversation.active_branch or "main",
+                # Stored as produced (the producer already caps it at 400 lines /
+                # 100k chars) so a reloaded card shows the same diff as the live
+                # event. NULL when there is nothing to preview.
+                diff_preview=json.dumps(diff_preview, ensure_ascii=False) if diff_preview else None,
             )
         )
         await db.commit()
@@ -173,16 +183,18 @@ def pop_pending(confirm_id: str) -> asyncio.Future[bool] | None:
 def get_pending_confirms_for_session(session_id: str) -> list[dict]:
     """Return all pending (unanswered) tool_confirm requests for a session."""
     result = []
-    for confirm_id, (_future, sid, tool_name, args_summary) in _pending_confirms.items():
+    for confirm_id, (_future, sid, tool_name, args_summary, diff_preview) in _pending_confirms.items():
         if sid != session_id or _future.done():
             continue
-        result.append(
-            {
-                "confirm_id": confirm_id,
-                "tool_name": tool_name,
-                "args_summary": args_summary,
-            }
-        )
+        payload = {
+            "confirm_id": confirm_id,
+            "tool_name": tool_name,
+            "args_summary": args_summary,
+        }
+        # Same optional key as the live event, so an SSE reconnect keeps the diff.
+        if diff_preview:
+            payload["diff_preview"] = diff_preview
+        result.append(payload)
     return result
 
 

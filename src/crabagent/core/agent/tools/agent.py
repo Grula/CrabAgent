@@ -4,6 +4,7 @@ import logging
 import time as _time
 
 from crabagent.core.agent.tools.registry import registry
+from crabagent.core.database import Conversation, async_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,71 @@ async def handoff_to(agent_name: str, context_summary: str, context=None) -> str
     from crabagent.core.agent.agents import spawn_sub_agent
 
     return await spawn_sub_agent(agent_name, context_summary, context, include_history=True)
+
+
+@registry.register(
+    name="switch_agent",
+    description=(
+        "Hand this chat over to another agent. From the user's next message on, that agent runs the "
+        "chat as the main agent, with the whole conversation and all its own tools (delegation "
+        "included). Use it when the request is that agent's job, for example code changes or "
+        "multi-step dev work for the architect. After calling it, stop: tell the user in one line who "
+        "takes over and that their next message goes to that agent. Don't start the work yourself."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "agent_name": {
+                "type": "string",
+                "description": "Name of the agent that takes over the chat (e.g. 'architect')",
+            },
+            "summary": {
+                "type": "string",
+                "description": (
+                    "The request for the next agent: the user's goal in their own words, and every "
+                    "choice and constraint they stated. No plan or design of your own."
+                ),
+            },
+        },
+        "required": ["agent_name", "summary"],
+    },
+    metadata={"source": "builtin", "category": "agent"},
+)
+async def switch_agent(agent_name: str, summary: str, context=None) -> str:
+    from sqlalchemy import update
+
+    from crabagent.core.agent.agents import get_agent, is_internal_profile
+    from crabagent.core.event import AgentEvent, EventType
+
+    session_id = (getattr(context, "metadata", None) or {}).get("session_id") if context else None
+    if not session_id:
+        return "Error: switch_agent needs a chat session"
+    name = (agent_name or "").strip()
+    if name == getattr(context, "current_agent", None):
+        return f"Error: this chat already runs as '{name}'"
+    profile = await get_agent(name) if name and not is_internal_profile(name) else None
+    if not profile or profile.get("enabled") is False:
+        return f"Error: no enabled agent named '{name}'. Use list_agents to see the agents."
+
+    async with async_session_factory() as db:
+        await db.execute(update(Conversation).where(Conversation.session_id == session_id).values(agent=name))
+        await db.commit()
+
+    display = profile.get("display_name") or name
+    try:
+        await context.event_bus.emit(
+            AgentEvent(
+                type=EventType.AGENT_SWITCHED,
+                data={"session_id": session_id, "agent": name, "display_name": display, "summary": summary},
+            )
+        )
+    except Exception:
+        logger.debug("Failed to emit AGENT_SWITCHED", exc_info=True)
+    return (
+        f"Switched this chat to {display} ({name}). It takes over with the user's next message and sees "
+        "this whole conversation. Stop now: tell the user in one line that their next message goes to "
+        f"{display}. Don't start the work yourself."
+    )
 
 
 @registry.register(

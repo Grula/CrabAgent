@@ -20,6 +20,7 @@ from crabagent.core.agent.tools.subprocess_cancel import (
     CANCELLED_NOTE,
     spawn_cancellable,
     subprocess_kwargs,
+    terminate_process_group,
     watch_cancel,
 )
 from crabagent.core.agent.tools.text_encoding import StreamDecoder, windows_output_encoding
@@ -442,9 +443,16 @@ async def bash_command(
             return _format_result(full_out, full_err, proc.returncode)
 
         except TimeoutError:
-            # Process still running after timeout → auto-background
+            # Process still running after timeout → auto-background, unless the
+            # user stopped the run: then the cancel wins and the group is killed.
             return await _auto_background(
-                proc, collected_stdout, collected_stderr, command, timeout_sec, context
+                proc,
+                collected_stdout,
+                collected_stderr,
+                command,
+                timeout_sec,
+                context,
+                watcher=watcher,
             )
         finally:
             if watcher is not None and not watcher.done():
@@ -548,6 +556,38 @@ async def _settle_cancel(watcher: asyncio.Task | None, limit: float = 10.0) -> N
         pass
 
 
+def _cancel_pending(context: Any, cancel_event: Any = None) -> bool:
+    """True once the user stopped the run (the loop sets the event on the context)."""
+    event = cancel_event if cancel_event is not None else getattr(context, "cancel_event", None)
+    if event is not None:
+        try:
+            if event.is_set():
+                return True
+        except Exception:  # a stub context without the event API
+            pass
+    return getattr(context, "cancelled", False) is True
+
+
+async def _cancelled_result(
+    proc: asyncio.subprocess.Process,
+    watcher: asyncio.Task | None,
+    collected_stdout: list[str],
+    collected_stderr: list[str],
+) -> str:
+    """Kill *proc*'s group (the watcher does it when it still can) and report a cancel."""
+    if watcher is not None and not watcher.done():
+        await _settle_cancel(watcher)
+    if proc.returncode is None:
+        await terminate_process_group(proc)
+    code = proc.returncode if proc.returncode is not None else -1
+    return _format_result(
+        "".join(collected_stdout),
+        "".join(collected_stderr),
+        code,
+        note=CANCELLED_NOTE,
+    )
+
+
 # ── Platform-specific helpers ──────────────────────────────────────────
 
 
@@ -585,10 +625,18 @@ async def _auto_background(
     command: str,
     timeout_sec: float,
     context: Any,
+    watcher: asyncio.Task | None = None,
 ) -> str:
     """Process exceeded timeout — redirect remaining output to a log file and return."""
 
     pid = proc.pid
+
+    # A cancel that raced with the timeout wins: the user asked for the command to
+    # stop, so the group is killed here instead of being handed to the background
+    # manager (which knows nothing about the cancel and would let it keep running).
+    if _cancel_pending(context):
+        return await _cancelled_result(proc, watcher, collected_stdout, collected_stderr)
+
     log_dir = tempfile.gettempdir()
     log_file = os.path.join(log_dir, f"crabagent-bg-{pid}.log")
 
@@ -622,6 +670,30 @@ async def _auto_background(
             drain.close()
             os.close(log_fd)
 
+    async def _hand_back_cancelled() -> str:
+        """Kill the group, forget the job and drop the log the hand-over created."""
+        for drain in drains:
+            drain.cancel()
+        _JOBS.pop(pid, None)
+        result = await _cancelled_result(
+            proc, watcher, collected_stdout, collected_stderr
+        )
+        try:
+            os.unlink(log_file)
+        except OSError:
+            pass
+        return result
+
+    # Check if process is still alive
+    await asyncio.sleep(1)
+    alive_info = await _check_process_alive(pid)
+    status_line = f"  command: {alive_info}\n" if alive_info else ""
+
+    # The cancel can land while the hand-over above is starting (those checks take
+    # seconds); re-check before anything tells the model the job moved.
+    if _cancel_pending(context):
+        return await _hand_back_cancelled()
+
     # Emit final event to inform frontend
     try:
         tool_call_id = ""
@@ -639,11 +711,6 @@ async def _auto_background(
     except Exception:
         pass
 
-    # Check if process is still alive
-    await asyncio.sleep(1)
-    alive_info = await _check_process_alive(pid)
-    status_line = f"  command: {alive_info}\n" if alive_info else ""
-
     partial_out = "".join(collected_stdout)
     partial_err = "".join(collected_stderr)
     result = _format_result(partial_out, partial_err, -1)
@@ -655,6 +722,11 @@ async def _auto_background(
     if job is not None:
         job.read_offset = already_logged
         job.drains = drains  # the log is complete only once these finish
+
+    # Registering is another await; a cancel in that window must not leave a
+    # tracked job (or an "it moved to the background" answer) behind.
+    if _cancel_pending(context):
+        return await _hand_back_cancelled()
 
     return (
         f"{result}\n"

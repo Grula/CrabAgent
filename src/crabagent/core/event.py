@@ -78,6 +78,10 @@ class EventType(StrEnum):
     # Payload: {path (workspace-relative), abs_path, mtime_ms, tool, origin}
     FILE_UPDATED = "file_updated"
 
+    # A tool handed the chat to another agent (switch_agent).
+    # Payload: {session_id, agent, display_name, summary}
+    AGENT_SWITCHED = "agent_switched"
+
 
 @dataclass
 class AgentEvent:

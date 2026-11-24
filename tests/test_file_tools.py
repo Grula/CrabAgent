@@ -193,6 +193,39 @@ def test_match_include():
     assert not _match_include("a.js", ["*.ts"])
 
 
+def test_match_include_bare_pattern_matches_nested_basename():
+    # regression: bare globs keep matching the filename only, as before
+    assert _match_include("a.py", ["*.py"], "pkg/sub/a.py")
+    assert not _match_include("a.txt", ["*.py"], "pkg/a.py")
+
+
+def test_match_include_brace_expansion_still_works():
+    patterns = _expand_braces("*.{ts,tsx}")
+    assert _match_include("a.tsx", patterns, "pkg/a.tsx")
+    assert not _match_include("a.js", patterns, "pkg/a.js")
+
+
+def test_match_include_path_globs():
+    # "**/" spans any number of directories, including none
+    assert _match_include("a.py", ["src/**/*.py"], "src/a.py")
+    assert _match_include("a.py", ["src/**/*.py"], "src/pkg/a.py")
+    assert not _match_include("b.py", ["src/**/*.py"], "tests/b.py")
+    # "*" stays within one path segment
+    assert _match_include("a.py", ["src/*.py"], "src/a.py")
+    assert not _match_include("a.py", ["src/*.py"], "src/pkg/a.py")
+    # "?" matches one non-slash character
+    assert _match_include("a.py", ["src/?.py"], "src/a.py")
+    assert not _match_include("ab.py", ["src/?.py"], "src/ab.py")
+
+
+def test_match_include_path_glob_accepts_leading_dot_slash():
+    for rel in ("src/a.py", "src/pkg/a.py", "tests/b.py"):
+        assert _match_include("a.py", ["./src/**/*.py"], rel) == _match_include(
+            "a.py", ["src/**/*.py"], rel
+        )
+    assert _match_include("a.py", ["./src/**/*.py"], "src/pkg/a.py")
+
+
 def test_grep_files_single_file_mode(tmp_path: Path):
     target = tmp_path / "f.txt"
     target.write_text("hello\nworld\nfoo\n", encoding="utf-8")
@@ -224,6 +257,18 @@ def test_grep_files_nonexistent_path(tmp_path: Path):
     context = AgentContext(workspace=tmp_path)
     result = grep_files("x", path="./nonexistent", context=context)
     assert "does not exist" in result
+
+
+def test_grep_files_include_directory_scoped_glob(tmp_path: Path):
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "nested.py").write_text("needle = 1\n", encoding="utf-8")
+    (tmp_path / "pkg" / "skip.txt").write_text("needle = 2\n", encoding="utf-8")
+    context = AgentContext(workspace=tmp_path)
+
+    result = grep_files("needle", path=".", include="**/*.py", context=context)
+
+    assert "nested.py" in result
+    assert "skip.txt" not in result
 
 
 # ── edit: replace_all and input validation ────────────────────────────
@@ -353,6 +398,8 @@ def test_grep_description_distinguishes_contents_from_file_names():
     assert "Glob pattern matched against file paths" in include
     assert "not file content, not a regex" in include
     assert '"*.py"' in include
+    # directory-scoped globs are supported too.
+    assert '"src/**/*.py"' in include
     # the content search is the regex.
     assert "always a regular expression, not a glob" in include
 

@@ -208,6 +208,10 @@ class Message(Base):
     tool_calls: Mapped[str] = mapped_column(Text, nullable=True)
     tool_call_id: Mapped[str] = mapped_column(String(100), nullable=True)
     name: Mapped[str] = mapped_column(String(100), nullable=True)
+    # JSON payload for a pending tool confirmation (role="tool_confirm"): the
+    # unified diff preview shown on the card. Stored as produced; NULL when the
+    # call has nothing to preview.
+    diff_preview: Mapped[str] = mapped_column(Text, nullable=True)
     reasoning_content: Mapped[str] = mapped_column(Text, nullable=True)
     parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     branch_id: Mapped[str] = mapped_column(String(32), default="main")
@@ -1065,6 +1069,7 @@ async def init_db() -> None:
         await ensure_column(conn, "messages", "branch_id", "VARCHAR(32) DEFAULT 'main'")
         await ensure_column(conn, "messages", "agent", "VARCHAR(100) DEFAULT 'default'")
         await ensure_column(conn, "messages", "compressed", "BOOLEAN DEFAULT 0")
+        await ensure_column(conn, "messages", "diff_preview", "TEXT")
 
         # Search exclusively uses messages_fts_cjk. Retire the old index,
         # which indexed every tool response and base64 image payload as well.
@@ -1314,6 +1319,65 @@ _ORGANISER_AND_ADMIN_TOOLS = (
 # and the people it delegates to. Bundled skills (plan, parallel-workflows, ...)
 # are written around these names. ``skills`` is each agent's own skill list.
 DEFAULT_AGENTS = [
+    {
+        # The front desk: cheap answers itself, dev work goes to the architect by
+        # switching the chat (switch_agent), so the architect runs as the main agent
+        # with its delegation tools. handoff_to would run it as a sub-agent, and
+        # sub-agents cannot delegate.
+        "name": "general",
+        "display_name": "General Assistant",
+        "role": "Front Desk & General Assistant",
+        "goal": (
+            "Answer questions, explain things, look things up and run quick checks yourself; hand code "
+            "changes and multi-step dev work to the architect with switch_agent.\n"
+            "- Do it yourself: questions about the code or the app (grep, glob, read, git_diff), how to use "
+            "a command or a feature, web lookups (web_search, web_scrape; cite the URL), reading documents, "
+            "and one-off commands the user names or a quick check needs (bash asks the user first). Lead "
+            "with the answer and keep it short.\n"
+            "- You never change anything: no file edits or writes, and no commands that modify the "
+            "project, install packages or start servers.\n"
+            "- Switch to the architect (switch_agent, agent_name \"architect\") when the request needs a file "
+            "changed, a feature built, a bug fixed, or several steps of dev work. The summary carries the "
+            "user's goal in their own words and every choice and constraint they stated, plus facts you "
+            "already found (with file:line), but no plan of your own. Then stop and tell the user in one "
+            "line that their next message goes to the architect.\n"
+            "- When it's unclear whether the user wants an answer or a change, ask with ask_question (2-4 "
+            "options, your recommendation first).\n"
+            "- You don't delegate: the team list in your prompt tells you who does what, but delegate_task, "
+            "run_pipeline and handoff_to are not yours. If another agent asks you something, answer it "
+            "directly."
+        ),
+        "backstory": (
+            "You are the first agent the user talks to. Quick answers are cheap with you; dev work is done "
+            "better by the architect's team, so you pass it on early instead of half-doing it."
+        ),
+        "icon": "💬",
+        "tool_permissions": {
+            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS),
+            "read": "auto",
+            "glob": "auto",
+            "grep": "auto",
+            "git_diff": "auto",
+            "web_search": "auto",
+            "web_scrape": "auto",
+            "office_read": "auto",
+            "office_query": "auto",
+            "bash": "confirm",
+            "run_tests": "confirm",
+            "switch_agent": "auto",
+            "write": "deny",
+            "edit": "deny",
+            "spreadsheet_export": "deny",  # writes a file
+            "browser": "deny",
+            "delegate_task": "deny",
+            "delegate_parallel": "deny",
+            "run_pipeline": "deny",
+            "plan_task": "deny",
+            "delegate_background": "deny",
+            "handoff_to": "deny",
+        },
+        "skills": ["docs-lookup", "web-research"],
+    },
     {
         "name": "architect",
         "display_name": "System Architect",

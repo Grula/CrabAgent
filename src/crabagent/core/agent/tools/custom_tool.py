@@ -162,6 +162,7 @@ async def create_tool(
         "run_pipeline",
         "plan_task",
         "handoff_to",
+        "switch_agent",
         "request_help",
         "list_agents",
         "skill",

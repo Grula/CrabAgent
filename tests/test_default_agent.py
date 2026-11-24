@@ -73,7 +73,7 @@ class TestRemovedBuiltins:
         await db._ensure_default_agents()
         async with agents_db() as session:
             rows = {r.name: r for r in (await session.execute(select(db.AgentProfile))).scalars()}
-        assert set(rows) == {"architect", "coder", "tester", "the_reviewer", "researcher", "scout"}
+        assert set(rows) == {"general", "architect", "coder", "tester", "the_reviewer", "researcher", "scout"}
         assert "plan" in json.loads(rows["architect"].skills)
         assert {"write-spec", "write-readme", "project-init", "design-patterns"} <= set(
             json.loads(rows["architect"].skills))

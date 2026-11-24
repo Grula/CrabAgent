@@ -58,12 +58,70 @@ def _expand_braces(pattern: str) -> list[str]:
     return [f"{prefix}{opt}{suffix}" for opt in options]
 
 
-def _match_include(fname: str, patterns: list[str]) -> bool:
-    """Check whether *fname* matches any of the include patterns."""
-    for pat in patterns:
-        if fnmatch.fnmatch(fname, pat):
-            return True
-    return False
+def _compile_path_glob(pattern: str) -> re.Pattern[str]:
+    """Compile a directory-scoped include glob into a regex over relative paths.
+
+    ``**`` spans any number of directories (``src/**/*.py`` matches both
+    ``src/a.py`` and ``src/pkg/a.py``), ``*`` stays within one path segment
+    and ``?`` matches one non-``/`` character. A leading ``./`` is ignored.
+    """
+    if pattern.startswith("./"):
+        pattern = pattern[2:]
+    out: list[str] = []
+    i = 0
+    while i < len(pattern):
+        char = pattern[i]
+        if char == "*" and pattern.startswith("**", i):
+            i += 2
+            if i < len(pattern) and pattern[i] == "/":
+                # "**/" = zero or more whole directory segments.
+                out.append("(?:[^/]+/)*")
+                i += 1
+            else:
+                out.append(".*")
+            continue
+        if char == "*":
+            out.append("[^/]*")
+        elif char == "?":
+            out.append("[^/]")
+        else:
+            out.append(re.escape(char))
+        i += 1
+    flags = re.IGNORECASE if os.path.normcase("A") == os.path.normcase("a") else 0
+    return re.compile("".join(out), flags)
+
+
+class _IncludeMatcher:
+    """Pre-compiled ``include`` filter.
+
+    Patterns without ``/`` match the bare filename with plain ``fnmatch``
+    semantics; patterns with ``/`` match the search-relative path (POSIX
+    separators) using the ``**``-aware glob rules.
+    """
+
+    def __init__(self, patterns: list[str]) -> None:
+        self._bare: list[str] = []
+        self._paths: list[re.Pattern[str]] = []
+        for pattern in patterns:
+            if "/" in pattern:
+                self._paths.append(_compile_path_glob(pattern))
+            else:
+                self._bare.append(pattern)
+
+    def match(self, fname: str, rel_path: str) -> bool:
+        """Whether *fname* or *rel_path* matches any include pattern."""
+        for pattern in self._bare:
+            if fnmatch.fnmatch(fname, pattern):
+                return True
+        for regex in self._paths:
+            if regex.fullmatch(rel_path):
+                return True
+        return False
+
+
+def _match_include(fname: str, patterns: list[str], rel_path: str | None = None) -> bool:
+    """Check whether *fname* (or *rel_path*) matches any of the include patterns."""
+    return _IncludeMatcher(patterns).match(fname, fname if rel_path is None else rel_path)
 
 
 def _matches_with_context(
@@ -130,9 +188,10 @@ def _is_binary(filepath: str) -> bool:
                 "type": "string",
                 "description": (
                     "Glob pattern matched against file paths to limit which files are searched "
-                    '(not file content, not a regex). Examples: "*.py", "*.{ts,tsx}"; '
-                    "brace expansion is supported. The content search is pattern, which is "
-                    "always a regular expression, not a glob."
+                    '(not file content, not a regex): a bare filename glob ("*.py", '
+                    '"*.{ts,tsx}") or a directory-scoped glob ("src/**/*.py", where ** spans '
+                    "directories). Brace expansion is supported. The content search is pattern, "
+                    "which is always a regular expression, not a glob."
                 ),
             },
             "ignore_dirs": {
@@ -231,7 +290,7 @@ def grep_files(
     skip_dirs: set[str] = set(ignore_dirs) if ignore_dirs is not None else _DEFAULT_IGNORE_DIRS
 
     # ── Build include patterns (with brace expansion) ───────────────────
-    include_patterns = _expand_braces(include) if include else []
+    matcher = _IncludeMatcher(_expand_braces(include)) if include else None
 
     results: list[str] = []
     match_count = 0
@@ -256,8 +315,10 @@ def grep_files(
 
         # --- Process files ---
         for fname in files:
-            if include_patterns:
-                if not _match_include(fname, include_patterns):
+            fpath = os.path.join(current_root, fname)
+            if matcher is not None:
+                rel_path = os.path.relpath(fpath, root_path).replace(os.sep, "/")
+                if not matcher.match(fname, rel_path):
                     continue
 
             scanned += 1
@@ -276,7 +337,6 @@ def grep_files(
                     "pattern, or include filter."
                 )
 
-            fpath = os.path.join(current_root, fname)
             try:
                 # Skip oversized files and binary files
                 if os.path.getsize(fpath) > _MAX_FILE_SIZE:

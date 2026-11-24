@@ -382,6 +382,12 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
       // That LLM call's token usage was just persisted — trigger a debounced stats bar refresh
       setStatsTick((k) => k + 1);
     }
+    if (event.type === "agent_switched") {
+      // switch_agent handed this chat to another agent: the next prompt must go
+      // to it, so follow the switch in the picker (it sends the agent with every prompt).
+      const agent = typeof event.data.agent === "string" ? event.data.agent : "";
+      if (agent) setSelectedAgent(agent);
+    }
     if (event.type === "file_updated") {
       // An agent tool (or another client) wrote a file: hand the change to the
       // open editor, which decides reload vs. conflict banner.

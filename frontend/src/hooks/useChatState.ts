@@ -230,6 +230,19 @@ export function useChatState(onEvent?: (event: SSEEvent) => void, workspace?: st
         }
         return;
       }
+      if (event.type === "agent_switched") {
+        // switch_agent handed the chat to another agent; keep the cached session in
+        // step so reopening this chat picks that agent. ChatPage moves the picker.
+        const sid = (event.data.session_id as string) || activeSessionRef.current?.session_id;
+        const agent = event.data.agent as string;
+        if (sid && agent) {
+          setSessions((prev) => prev.map((s) => (s.session_id === sid ? { ...s, agent } : s)));
+          if (activeSessionRef.current?.session_id === sid) {
+            activeSessionRef.current = { ...activeSessionRef.current, agent };
+            setActiveSession(activeSessionRef.current);
+          }
+        }
+      }
       if (event.type === "agent_start" && !event.data.replay) setSending(true);
       if (event.type === "tool_result") {
         const name = event.data.name as string;

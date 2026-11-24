@@ -1,5 +1,6 @@
 import { api } from "./client";
 import type { FileContextFields } from "./files";
+import type { DiffPreview } from "../types/ChatMessage";
 
 export interface Session {
   session_id: string;
@@ -37,6 +38,9 @@ export interface Message {
   compressed?: boolean;
   image_data?: string;
   has_images?: boolean;
+  /** Pending change of a write/edit confirmation; only sent (and only for
+   *  role "tool_confirm") when the backend stored one. */
+  diff_preview?: DiffPreview;
 }
 
 export interface BranchInfo {

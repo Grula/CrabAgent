@@ -1,4 +1,5 @@
 import { ChatMessage } from "../types/ChatMessage";
+import type { DiffPreview } from "../types/ChatMessage";
 import { SSEEvent } from "../api/events";
 import { Message } from "../api/sessions";
 
@@ -446,6 +447,18 @@ export function sseEventToMessages(event: SSEEvent, messages: ChatMessage[]): Ch
   return updated;
 }
 
+/** A stored `diff_preview` is used as-is, but only when it carries the keys
+ *  the card renders. A partial/foreign payload (older row, hand-edited JSON)
+ *  is dropped entirely — the confirmation then looks exactly as it did before
+ *  the preview existed instead of throwing or showing "+undefined". */
+function storedDiffPreview(value: unknown): DiffPreview | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const d = value as Record<string, unknown>;
+  if (typeof d.path !== "string" || typeof d.unified !== "string") return undefined;
+  if (typeof d.added !== "number" || typeof d.removed !== "number") return undefined;
+  return value as DiffPreview;
+}
+
 export function dbMessagesToChat(msgs: Message[]): ChatMessage[] {
   const result: ChatMessage[] = [];
   const pendingToolCalls: { id: string; name: string; args: unknown }[] = [];
@@ -462,6 +475,7 @@ export function dbMessagesToChat(msgs: Message[]): ChatMessage[] {
       } catch {
         argsSummary = m.content || "";
       }
+      const diffPreview = storedDiffPreview(m.diff_preview);
       result.push({
         id: `db-${m.id}`,
         role: "tool_confirm",
@@ -470,6 +484,9 @@ export function dbMessagesToChat(msgs: Message[]): ChatMessage[] {
         tool_name: m.name || "",
         args_summary: argsSummary,
         confirmed,
+        // Same rule as the live SSE path: the key stays off the message when
+        // the backend has nothing to show, so no empty card section appears.
+        ...(diffPreview ? { diff_preview: diffPreview } : {}),
       });
       continue;
     }

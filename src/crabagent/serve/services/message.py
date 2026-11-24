@@ -117,6 +117,22 @@ def message_to_dict(msg: Message) -> dict:
     return d
 
 
+def _stored_diff_preview(msg: Message) -> dict | None:
+    """Parse the diff preview stored on a ``tool_confirm`` row.
+
+    Returns None when the column is empty, holds invalid JSON or is not an
+    object, so callers omit the key entirely instead of sending null.
+    """
+    raw = getattr(msg, "diff_preview", None)
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) and parsed else None
+
+
 def _json_safe(content: str) -> dict:
     try:
         parsed = json.loads(content or "")
@@ -214,6 +230,12 @@ def message_to_response(msg: Message, strip_images: bool = True) -> dict:
         d["name"] = msg.name
     if msg.reasoning_content:
         d["reasoning_content"] = msg.reasoning_content
+    if msg.role == "tool_confirm":
+        # A confirmation card reloaded from the DB keeps the diff preview that
+        # was stored when the request was created (serve/api/confirm.py).
+        stored_preview = _stored_diff_preview(msg)
+        if stored_preview is not None:
+            d["diff_preview"] = stored_preview
     d["branch_id"] = msg.branch_id or "main"
     d["parent_id"] = msg.parent_id
     d["compressed"] = bool(msg.compressed)

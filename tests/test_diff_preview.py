@@ -230,3 +230,160 @@ async def test_confirm_event_includes_diff_preview_only_when_present(tmp_path, m
 
     # No preview → the key is absent, so existing clients see the old payload.
     assert set(events[0].data) == {"confirm_id", "tool_name", "args_summary"}
+
+
+# ── persisted confirmation (session reload) ──────────────────────────
+
+
+@pytest.fixture
+async def confirm_db(tmp_path, monkeypatch):
+    """A real SQLite database wired into ``database.async_session_factory``."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    import crabagent.core.database as database
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'confirm.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(database.Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(database, "async_session_factory", factory)
+    yield factory
+    await engine.dispose()
+
+
+async def _add_conversation(factory, session_id: str) -> int:
+    import crabagent.core.database as database
+
+    async with factory() as db:
+        conversation = database.Conversation(
+            session_id=session_id, user_id=1, title="Confirm", active_branch="main"
+        )
+        db.add(conversation)
+        await db.commit()
+        return conversation.id
+
+
+async def _reload_cards(factory, conversation_id: int) -> list[dict]:
+    """Load messages exactly like GET /sessions/{id}/messages does."""
+    import crabagent.core.database as database
+    from crabagent.serve.services.message import get_messages, message_to_response
+
+    async with factory() as db:
+        msgs = await get_messages(db, conversation_id, branch_id="main")
+    assert all(isinstance(m, database.Message) for m in msgs)
+    return [message_to_response(m) for m in msgs]
+
+
+@pytest.mark.asyncio
+async def test_persisted_confirmation_reloads_with_diff_preview(tmp_path, confirm_db):
+    from crabagent.serve.api.confirm import _persist_confirmation
+
+    conversation_id = await _add_conversation(confirm_db, "session-diff")
+    (tmp_path / "notes.txt").write_text("old\n", encoding="utf-8")
+    preview = build_diff_preview("write", {"path": "notes.txt", "content": "new\n"}, tmp_path)
+    assert preview is not None
+
+    await _persist_confirmation("session-diff", "confirm-abc", "write", '{"path": "notes.txt"}', preview)
+
+    cards = await _reload_cards(confirm_db, conversation_id)
+    assert len(cards) == 1
+    card = cards[0]
+    assert card["role"] == "tool_confirm"
+    assert card["tool_call_id"] == "confirm-abc"
+    assert set(card["diff_preview"]) == {"path", "unified", "added", "removed", "truncated", "new_file"}
+    assert card["diff_preview"] == preview
+    assert card["diff_preview"]["unified"] == preview["unified"]
+    assert card["diff_preview"]["added"] == 1 and card["diff_preview"]["removed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_persisted_confirmation_without_diff_has_no_key(confirm_db):
+    from crabagent.serve.api.confirm import _persist_confirmation
+
+    conversation_id = await _add_conversation(confirm_db, "session-plain")
+
+    await _persist_confirmation("session-plain", "confirm-plain", "bash", '{"command": "ls"}')
+
+    cards = await _reload_cards(confirm_db, conversation_id)
+    assert len(cards) == 1
+    assert "diff_preview" not in cards[0]
+    assert '"status": "pending"' in cards[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_reloaded_confirmation_with_null_or_invalid_diff_has_no_key(confirm_db):
+    import crabagent.core.database as database
+
+    conversation_id = await _add_conversation(confirm_db, "session-broken")
+    async with confirm_db() as db:
+        db.add_all(
+            [
+                database.Message(
+                    conversation_id=conversation_id,
+                    sequence=1,
+                    role="tool_confirm",
+                    content='{"args_summary": "{}", "status": "pending"}',
+                    name="write",
+                    tool_call_id="confirm-null",
+                    diff_preview=None,
+                ),
+                database.Message(
+                    conversation_id=conversation_id,
+                    sequence=2,
+                    role="tool_confirm",
+                    content='{"args_summary": "{}", "status": "pending"}',
+                    name="write",
+                    tool_call_id="confirm-invalid",
+                    diff_preview="{not json",
+                ),
+                database.Message(
+                    conversation_id=conversation_id,
+                    sequence=3,
+                    role="tool_confirm",
+                    content='{"args_summary": "{}", "status": "pending"}',
+                    name="write",
+                    tool_call_id="confirm-list",
+                    diff_preview="[]",
+                ),
+            ]
+        )
+        await db.commit()
+
+    cards = await _reload_cards(confirm_db, conversation_id)
+
+    assert [c["tool_call_id"] for c in cards] == ["confirm-null", "confirm-invalid", "confirm-list"]
+    for card in cards:
+        assert "diff_preview" not in card
+
+
+@pytest.mark.asyncio
+async def test_init_db_adds_diff_preview_column_to_existing_database(tmp_path, monkeypatch):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    import crabagent.core.database as database
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}")
+    # A pre-existing database whose messages table predates the column.
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE messages ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id INTEGER NOT NULL, "
+                "sequence INTEGER NOT NULL DEFAULT 0, role VARCHAR(20) NOT NULL, content TEXT, "
+                "tool_calls TEXT, tool_call_id VARCHAR(100), name VARCHAR(100), "
+                "reasoning_content TEXT, created_at DATETIME)"
+            )
+        )
+        result = await conn.execute(text("PRAGMA table_info(messages)"))
+        assert "diff_preview" not in [row[1] for row in result.fetchall()]
+
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(database, "_ensure_workspace_dirs", lambda: None)
+    monkeypatch.setattr(database, "_migrate_db_to_home", lambda: None)
+    await database.init_db()
+
+    async with engine.begin() as conn:
+        result = await conn.execute(text("PRAGMA table_info(messages)"))
+        assert "diff_preview" in [row[1] for row in result.fetchall()]
+    await engine.dispose()

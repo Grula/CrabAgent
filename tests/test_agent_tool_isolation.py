@@ -41,6 +41,7 @@ ALL_TOOLS = [
     "plan_task",
     "list_agents",
     "handoff_to",
+    "switch_agent",
     "ask_question",
     "request_help",
     "create_tool",
