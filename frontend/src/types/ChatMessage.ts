@@ -1,3 +1,20 @@
+/** The pending change of a `write`/`edit` tool call, rendered as a preview
+ *  next to the confirmation card. Built server-side by
+ *  `core/agent/tools/diff_preview.py`; the key is absent when there is
+ *  nothing honest to show. */
+export interface DiffPreview {
+  /** Workspace-relative path, POSIX separators. */
+  path: string;
+  /** Unified diff text (no timestamps). */
+  unified: string;
+  added: number;
+  removed: number;
+  /** The body was capped; its last line reads "... [diff truncated]". */
+  truncated?: boolean;
+  /** The target file does not exist yet. */
+  new_file?: boolean;
+}
+
 export interface ChatMessage {
   id: string;
   role: string;
@@ -10,6 +27,7 @@ export interface ChatMessage {
   tool_name?: string;
   tool_call_id?: string;
   args_summary?: string;
+  diff_preview?: DiffPreview;
   confirmed?: boolean;
   options?: string[];
   input_answer?: string;

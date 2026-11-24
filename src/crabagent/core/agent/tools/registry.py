@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .diff_preview import build_diff_preview
 from .schema_validation import coerce_args, validate_args
 
 
@@ -42,6 +43,34 @@ _PERMISSION_INHERITS: dict[str, str] = {"run_tests": "bash"}
 # How many argument problems the validation error tells the model about; the
 # rest are covered by a trailing ellipsis to keep the result string small.
 _MAX_REPORTED_ARG_PROBLEMS = 5
+
+
+def _confirm_accepts_diff_preview(callback: Callable) -> bool:
+    """True when a confirm callback opts into the optional ``diff_preview`` kwarg.
+
+    Existing callbacks (CLI, sub-agent forwarding) take ``(tool_name, args)``;
+    passing a third argument to them would raise, so the preview is opt-in.
+    """
+    try:
+        params = inspect.signature(callback).parameters
+    except (TypeError, ValueError):
+        return False
+    if "diff_preview" in params:
+        return True
+    return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
+async def _request_confirm(callback: Callable, tool_name: str, arguments: dict, workspace) -> bool:
+    """Ask the user to confirm a tool call, with a diff preview when supported.
+
+    The preview is only built here — at the moment a confirmation really is
+    requested — so tools that never confirm pay no file I/O.
+    """
+    if _confirm_accepts_diff_preview(callback):
+        preview = build_diff_preview(tool_name, arguments, workspace)
+        if preview is not None:
+            return await callback(tool_name, arguments, diff_preview=preview)
+    return await callback(tool_name, arguments)
 
 
 def resolve_permission(permissions: dict[str, str] | None, tool_name: str) -> str | None:
@@ -392,7 +421,12 @@ class ToolRegistry:
             if permission == "confirm":
                 if tool.name not in context.approved_tools:
                     if context.confirm_callback:
-                        approved = await context.confirm_callback(tool.name, arguments)
+                        approved = await _request_confirm(
+                            context.confirm_callback,
+                            tool.name,
+                            arguments,
+                            getattr(context, "workspace", None),
+                        )
                         if not approved:
                             return f"Tool '{tool.name}' execution denied by user."
                     context.approved_tools.add(tool.name)

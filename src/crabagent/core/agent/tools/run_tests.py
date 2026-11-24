@@ -15,7 +15,6 @@ import os
 import re
 import shlex
 import shutil
-import signal
 import subprocess
 import tempfile
 import time
@@ -32,6 +31,10 @@ from crabagent.core.agent.tools.bash import (
 from crabagent.core.agent.tools.path_utils import get_workspace_root
 from crabagent.core.agent.tools.registry import registry
 from crabagent.core.agent.tools.sandbox import validate_command
+from crabagent.core.agent.tools.subprocess_cancel import (
+    SubprocessResult,
+    run_subprocess_cancellable,
+)
 
 DEFAULT_COMMANDS = {"pytest": "python3 -m pytest", "vitest": "npx vitest run"}
 DEFAULT_TIMEOUT = 600
@@ -51,36 +54,19 @@ _LAST_FAILURES: dict[tuple[str, str], list[str]] = {}
 # ── Running ─────────────────────────────────────────────────────────────────
 
 
-async def _run(command: str, workdir: str, timeout: float) -> tuple[int | None, str]:
-    """(exit code, combined output). Exit code None means it was stopped at the timeout."""
-    proc = await asyncio.create_subprocess_shell(
+async def _run(
+    command: str, workdir: str, timeout: float, cancel_event: Any = None
+) -> SubprocessResult:
+    """Run the test command in its own process group, so a cancel or the timeout kills its tree."""
+    return await run_subprocess_cancellable(
         with_user_profile(command),
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+        timeout=timeout,
+        cancel_event=cancel_event,
         env=_get_subprocess_env(),
+        shell=True,
+        stderr=asyncio.subprocess.STDOUT,
         **_build_subprocess_kwargs(workdir),
     )
-    try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return proc.returncode, out.decode("utf-8", errors="replace")
-    except TimeoutError:
-        _kill_tree(proc)
-        try:
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        except Exception:
-            out = b""
-        return None, out.decode("utf-8", errors="replace")
-
-
-def _kill_tree(proc) -> None:
-    try:
-        if IS_WINDOWS:
-            proc.kill()
-        else:  # started in its own session, so the group holds the runner and its workers
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
-        pass
 
 
 def _q(arg: str) -> str:
@@ -380,13 +366,19 @@ async def run_tests(
                 return f"Command denied by user: {detail}"
 
         started = time.monotonic()
-        try:
-            exit_code, output = await _run(full, cwd_str, timeout)
-        except FileNotFoundError as exc:
-            return f"Error: could not start the test command: {exc}"
+        result = await _run(full, cwd_str, timeout, getattr(context, "cancel_event", None))
         seconds = time.monotonic() - started
+        output = result.stdout.decode("utf-8", errors="replace")
 
-        if exit_code is None:
+        if result.start_error:
+            return f"Error: could not start the test command: {result.start_error}"
+        if result.cancelled:
+            return (
+                "[cancelled by user — the test run and its processes were killed]\n"
+                f"Last lines of output:\n{_tail(output)}"
+            )
+        exit_code = result.returncode
+        if result.timed_out or exit_code is None:
             return (
                 f"ERROR: tests still running after {timeout}s; stopped them. Narrow the run with "
                 f"`target`/`keyword`, or raise `timeout`.\nLast lines of output:\n{_tail(output)}"

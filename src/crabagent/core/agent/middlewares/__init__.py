@@ -1,8 +1,10 @@
 """Middleware framework for the agent loop.
 
-Provides a lightweight extension protocol with four hook points:
+Provides a lightweight extension protocol with five hook points:
 - ``on_conversation_start``: fired once when an AgentContext is about to run
 - ``before_llm_call``: fired before every LLM completion (may rewrite messages)
+- ``on_before_tool``: fired before each tool call executes; may allow it
+  (return ``None``) or block it by returning a reason string
 - ``on_agent_stop``: fired when the model returns no tool calls; may allow the
   run to stop (return ``None``) or inject a message and force one more round
 - ``on_conversation_end``: fired once after the run finishes (success or error)
@@ -59,6 +61,21 @@ class Middleware(Protocol):
         """
         ...
 
+    async def on_before_tool(
+        self,
+        context: AgentContext,  # noqa: ARG002
+        tool_name: str,  # noqa: ARG002
+        args: dict,  # noqa: ARG002
+    ) -> str | None:
+        """Pre-tool guard hook (optional).
+
+        Called once per tool call, before it executes. Return ``None`` (or an
+        empty string) to allow the call; return a non-empty reason to block
+        it. A blocked call is not executed: its result becomes
+        ``Tool call blocked: <reason>`` and the run continues normally.
+        """
+        ...
+
 
 class MiddlewareChain:
     """Ordered list of middlewares; tolerates partial implementations."""
@@ -106,6 +123,31 @@ class MiddlewareChain:
                     getattr(mw, "name", type(mw).__name__),
                 )
         return current
+
+    async def run_before_tool(self, context, tool_name: str, args: dict) -> str | None:
+        """Ask middlewares whether a tool call may run.
+
+        Returns the first non-empty reason string (the call is blocked), or
+        ``None`` when every middleware allows it (the default and unchanged
+        behaviour). A middleware that raises is logged and treated as allow,
+        so a broken middleware can never wedge the loop.
+        """
+        for mw in self._middlewares:
+            try:
+                hook = getattr(mw, "on_before_tool", None)
+                if hook is None:
+                    continue
+                result = hook(context, tool_name, args)
+                if isinstance(result, Awaitable):
+                    result = await result
+                if result:
+                    return result if isinstance(result, str) else str(result)
+            except Exception:
+                logger.exception(
+                    "middleware %s.on_before_tool failed",
+                    getattr(mw, "name", type(mw).__name__),
+                )
+        return None
 
     async def run_stop(self, context, final_text: str) -> str | None:
         """Ask middlewares whether the run may stop.

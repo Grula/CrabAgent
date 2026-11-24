@@ -1064,8 +1064,15 @@ Use ordinary Markdown when a visualization is not helpful.
     # authorization cards whenever a background task was running.
     from crabagent.serve.api.confirm import request_confirmation
 
-    async def _serve_confirm(tool_name: str, args: dict) -> bool:
-        future = await request_confirmation(context.event_bus, session_id, tool_name, args, user_id=user.id)
+    async def _serve_confirm(tool_name: str, args: dict, diff_preview: dict | None = None) -> bool:
+        future = await request_confirmation(
+            context.event_bus,
+            session_id,
+            tool_name,
+            args,
+            user_id=user.id,
+            diff_preview=diff_preview,
+        )
         try:
             return await asyncio.wait_for(future, timeout=120.0)
         except TimeoutError:

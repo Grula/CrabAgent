@@ -16,6 +16,12 @@ from typing import Any
 from crabagent.core.agent.tools.path_utils import get_workspace_root
 from crabagent.core.agent.tools.registry import registry
 from crabagent.core.agent.tools.sandbox import truncate_output, validate_command
+from crabagent.core.agent.tools.subprocess_cancel import (
+    CANCELLED_NOTE,
+    spawn_cancellable,
+    subprocess_kwargs,
+    watch_cancel,
+)
 from crabagent.core.agent.tools.text_encoding import StreamDecoder, windows_output_encoding
 
 logger = logging.getLogger(__name__)
@@ -254,20 +260,9 @@ _POSIX_SHELL = None if sys.platform == "win32" else shutil.which("bash")
 
 def _build_subprocess_kwargs(workdir: str | None = None) -> dict:
     """Build platform-appropriate kwargs for subprocess creation."""
-    kwargs: dict[str, Any] = {}
+    kwargs = subprocess_kwargs()
     if workdir:
         kwargs["cwd"] = workdir
-    if IS_WINDOWS:
-        # CREATE_NEW_PROCESS_GROUP allows Ctrl-Break; CREATE_NO_WINDOW
-        # suppresses the console popup on GUI-launched processes.
-        kwargs["creationflags"] = (
-            subprocess.CREATE_NEW_PROCESS_GROUP
-            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        )
-    else:
-        kwargs["start_new_session"] = True
-        if _POSIX_SHELL:
-            kwargs["executable"] = _POSIX_SHELL
     return kwargs
 
 
@@ -395,8 +390,9 @@ async def bash_command(
     full_command = with_user_profile(command)
 
     try:
-        proc = await asyncio.create_subprocess_shell(
+        proc = await spawn_cancellable(
             full_command,
+            shell=True,
             stdin=subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -413,6 +409,16 @@ async def bash_command(
         if context and hasattr(context, "metadata"):
             tool_call_id = context.metadata.get("current_tool_call_id", "")
 
+        # A cancel kills the command's whole process group while it runs, so a
+        # long sleep, a dev server or a test run stops now instead of at the
+        # next tool boundary.
+        cancel_event = getattr(context, "cancel_event", None)
+        watcher = (
+            asyncio.ensure_future(watch_cancel(proc, cancel_event))
+            if cancel_event is not None
+            else None
+        )
+
         try:
             await asyncio.wait_for(
                 _stream_output(
@@ -424,10 +430,15 @@ async def bash_command(
                 ),
                 timeout=timeout_sec,
             )
-            # Process completed within timeout
+            # Process completed, or its group was killed by a cancel
             await proc.wait()
             full_out = "".join(collected_stdout)
             full_err = "".join(collected_stderr)
+            if watcher is not None and cancel_event.is_set():
+                await _settle_cancel(watcher)
+                return _format_result(
+                    full_out, full_err, proc.returncode, note=CANCELLED_NOTE
+                )
             return _format_result(full_out, full_err, proc.returncode)
 
         except TimeoutError:
@@ -435,6 +446,9 @@ async def bash_command(
             return await _auto_background(
                 proc, collected_stdout, collected_stderr, command, timeout_sec, context
             )
+        finally:
+            if watcher is not None and not watcher.done():
+                watcher.cancel()
 
     except Exception as e:
         return f"Error executing command: {e}"
@@ -506,6 +520,7 @@ def _format_result(
     returncode: int,
     timed_out: bool = False,
     timeout_sec: float = 0,
+    note: str = "",
 ) -> str:
     """Format command output into a string result."""
     parts: list[str] = []
@@ -517,8 +532,20 @@ def _format_result(
         parts.append(f"[exit code: {returncode}]")
     if timed_out:
         parts.append(f"[timed out after {timeout_sec:.0f}s]")
+    if note:
+        parts.append(note)
     output = "\n".join(parts) if parts else "[no output]"
     return truncate_output(output)
+
+
+async def _settle_cancel(watcher: asyncio.Task | None, limit: float = 10.0) -> None:
+    """Wait (bounded) until the cancel watcher has killed and reaped the group."""
+    if watcher is None or watcher.done():
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(watcher), timeout=limit)
+    except Exception:
+        pass
 
 
 # ── Platform-specific helpers ──────────────────────────────────────────

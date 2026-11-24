@@ -39,6 +39,8 @@ import { displayUserText } from "../lib/userMessageText";
 import ToolResultRender from "./ToolResultRender";
 import { markResultViewed, openTaskArtifact } from "../api/tasks";
 import { SubAgentCard } from "./SubAgentCard";
+import { ToolConfirmDiff } from "./ToolConfirmDiff";
+import type { DiffPreview } from "../types/ChatMessage";
 import { cn } from "../lib/cn";
 
 // ── Shared types ──────────────────────────────────────────────
@@ -55,6 +57,7 @@ export interface ChatMessage {
   tool_name?: string;
   tool_call_id?: string;
   args_summary?: string;
+  diff_preview?: DiffPreview;
   confirmed?: boolean;
   options?: string[];
   input_answer?: string;
@@ -368,6 +371,7 @@ const ToolConfirmItem = memo(function ToolConfirmItem({
             {msg.args_summary}
           </pre>
         )}
+        {msg.diff_preview && <ToolConfirmDiff diff={msg.diff_preview} />}
         {!resolved && onToolConfirm && (
           <div className="flex gap-2 mt-2">
             <button

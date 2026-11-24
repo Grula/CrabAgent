@@ -110,6 +110,7 @@ def _is_binary(filepath: str) -> bool:
     description=(
         "Search file contents using regular expressions. "
         "Returns matching lines as path:line: text. "
+        "Use this to search file contents; to find files by name or path, use glob. "
         "Set ignore_case for case-insensitive search and context_lines to see the lines around each match. "
         "Supports skipping common build/dependency directories and a "
         "configurable maximum search depth to avoid runaway traversals."
@@ -128,9 +129,10 @@ def _is_binary(filepath: str) -> bool:
             "include": {
                 "type": "string",
                 "description": (
-                    'File glob pattern to filter files (e.g. "*.py"). '
-                    "Supports brace expansion: '*.{ts,tsx,js}' matches "
-                    "all three extensions."
+                    "Glob pattern matched against file paths to limit which files are searched "
+                    '(not file content, not a regex). Examples: "*.py", "*.{ts,tsx}"; '
+                    "brace expansion is supported. The content search is pattern, which is "
+                    "always a regular expression, not a glob."
                 ),
             },
             "ignore_dirs": {

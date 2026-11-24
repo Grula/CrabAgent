@@ -20,12 +20,6 @@ class Settings(BaseSettings):
     workspace: Path = Path.cwd()
 
     max_iterations: int = 200
-    # Run-level cap on cumulative *input* (prompt) tokens across all rounds of a
-    # single run, alongside max_iterations. 0 (default) disables the budget; a
-    # positive value caps cumulative prompt tokens per run. Disabled by default
-    # because most input tokens are cache reads, so a fixed threshold trips on
-    # legitimate long runs.
-    max_run_input_tokens: int = 0
     max_tokens: int = 16384
     reasoning_effort: str = "medium"
 

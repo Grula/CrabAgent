@@ -29,7 +29,12 @@ class ToolConfirmRequest(BaseModel):
 
 
 async def request_confirmation(
-    event_bus, session_id: str, tool_name: str, args: dict, user_id: int = 1
+    event_bus,
+    session_id: str,
+    tool_name: str,
+    args: dict,
+    user_id: int = 1,
+    diff_preview: dict | None = None,
 ) -> asyncio.Future[bool]:
     from crabagent.core.event import AgentEvent, EventType
 
@@ -89,14 +94,21 @@ async def request_confirmation(
     except Exception:
         logger.debug("confirm push hook failed (non-fatal)", exc_info=True)
 
+    payload = {
+        "confirm_id": confirm_id,
+        "tool_name": tool_name,
+        "args_summary": args_summary,
+    }
+    # Optional: the pending change rendered as a unified diff (see
+    # core/agent/tools/diff_preview.py). Omitted entirely when absent so old
+    # clients that only read the keys above keep working unchanged.
+    if diff_preview:
+        payload["diff_preview"] = diff_preview
+
     await event_bus.emit(
         AgentEvent(
             type=EventType.TOOL_CONFIRM_REQUEST,
-            data={
-                "confirm_id": confirm_id,
-                "tool_name": tool_name,
-                "args_summary": args_summary,
-            },
+            data=payload,
         )
     )
 

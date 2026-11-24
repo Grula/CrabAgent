@@ -263,6 +263,11 @@ export function sseEventToMessages(event: SSEEvent, messages: ChatMessage[]): Ch
       confirm_id: event.data.confirm_id as string,
       tool_name: event.data.tool_name as string,
       args_summary: event.data.args_summary as string,
+      // Absent (not null) when the backend has nothing to preview; keep the
+      // key off the message in that case so the card renders as before.
+      ...(event.data.diff_preview
+        ? { diff_preview: event.data.diff_preview as ChatMessage["diff_preview"] }
+        : {}),
     });
     return updated;
   }

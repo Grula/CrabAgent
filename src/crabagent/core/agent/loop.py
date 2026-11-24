@@ -498,14 +498,9 @@ async def _run_agent(
     if context.system_prompt:
         context.system_prompt = build_runtime_system_prompt(context)
 
-    _token_budget_hit = False
     while not context.budget_exhausted:
-        # Cooperative cancellation and the run-level input-token budget are
-        # both checked before the next model call.
+        # Cooperative cancellation is checked before the next model call.
         if context.cancelled:
-            break
-        if context.input_tokens_exhausted:
-            _token_budget_hit = True
             break
         await _consume_user_messages(context)
         context.iteration += 1
@@ -834,17 +829,31 @@ async def _run_agent(
                     source=meta["source"],
                 )
                 try:
-                    # A tool that was not advertised in this step is loaded
-                    # instead of run; the model retries once it has the schema.
-                    result = intercept_unloaded_call(context, meta["name"])
-                    if result is None:
-                        result = await context.tool_registry.execute(meta["name"], meta["args"], context=context)
-                        if meta["source"] == "builtin":
-                            result = attach_images_from_tool_result(result, context)
+                    # Pre-tool guard: a middleware may block the call, in which
+                    # case it never reaches the handler but still gets a tool
+                    # message so the history stays valid.
+                    block_reason = None
+                    if context.middlewares:
+                        block_reason = await context.middlewares.run_before_tool(
+                            context, meta["name"], meta["args"]
+                        )
+                    if block_reason:
+                        result = f"Tool call blocked: {block_reason}"
+                        ok, reason_class = False, "blocked"
+                    else:
+                        # A tool that was not advertised in this step is loaded
+                        # instead of run; the model retries once it has the schema.
+                        result = intercept_unloaded_call(context, meta["name"])
+                        if result is None:
+                            result = await context.tool_registry.execute(
+                                meta["name"], meta["args"], context=context
+                            )
+                            if meta["source"] == "builtin":
+                                result = attach_images_from_tool_result(result, context)
+                        # Classify the full result: the preview is cut from the front
+                        # and a shell command's exit code is at the end.
+                        ok, reason_class = classify_tool_outcome(meta["name"], result)
                     preview = _preview_result(result)
-                    # Classify the full result: the preview is cut from the front
-                    # and a shell command's exit code is at the end.
-                    ok, reason_class = classify_tool_outcome(meta["name"], result)
                     end_span(
                         _tool_span,
                         summary=preview[:200] if preview else "",
@@ -1224,40 +1233,6 @@ async def _run_agent(
             )
             break
 
-    if _token_budget_hit:
-        _limit = context.token_budget
-        _used = context.accumulated_prompt
-        await context.event_bus.emit(
-            AgentEvent(
-                type=EventType.BUDGET_WARNING,
-                data={
-                    "type": "token_budget",
-                    "message": (
-                        f"⚠️ Input-token budget reached: {_used:,} of {_limit:,} tokens used "
-                        f"after {context.iteration} iterations"
-                    ),
-                    "used": _used,
-                    "limit": _limit,
-                },
-            )
-        )
-        await context.event_bus.emit(
-            AgentEvent(
-                type=EventType.BUDGET_EXHAUSTED,
-                data={
-                    "type": "token_budget",
-                    "iterations": context.iteration,
-                    "used": _used,
-                    "limit": _limit,
-                    "message": (
-                        f"Input-token budget of {_limit:,} tokens exhausted "
-                        f"({_used:,} used); wrapping up with a summary"
-                    ),
-                },
-            )
-        )
-        await _grace_call(context, llm, model, reason=_TOKEN_BUDGET_NOTE)
-
     if context.budget_exhausted:
         await context.event_bus.emit(
             AgentEvent(type=EventType.BUDGET_EXHAUSTED, data={"iterations": context.iteration})
@@ -1297,19 +1272,15 @@ _ITERATION_BUDGET_NOTE = (
     "You have exhausted your iteration budget. "
     "Please summarize what you've done and any remaining steps."
 )
-_TOKEN_BUDGET_NOTE = (
-    "You have exhausted the input-token budget for this run. "
-    "Please summarize what you've done and any remaining steps."
-)
 
 
-async def _grace_call(context: AgentContext, llm: dict, model: str, reason: str | None = None):
+async def _grace_call(context: AgentContext, llm: dict, model: str):
     try:
         _g0 = time.time()
         context.messages.append(
             {
                 "role": "user",
-                "content": reason or _ITERATION_BUDGET_NOTE,
+                "content": _ITERATION_BUDGET_NOTE,
                 "agent": context.current_agent,
             }
         )

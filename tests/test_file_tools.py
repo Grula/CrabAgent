@@ -333,3 +333,33 @@ def test_grep_files_default_output_is_unchanged(tmp_path: Path):
     target.write_text("alpha\nbeta\n", encoding="utf-8")
 
     assert grep_files("beta", path=str(target), context=context) == f"{target}:2: beta"
+
+
+# ── tool descriptions: model-facing guidance must not regress ──────────
+
+
+def _tool_def(name: str) -> dict:
+    from crabagent.core.agent.tools.registry import registry
+
+    return next(d for d in registry.tool_defs() if d["function"]["name"] == name)
+
+
+def test_grep_description_distinguishes_contents_from_file_names():
+    function = _tool_def("grep")["function"]
+
+    assert "to find files by name or path, use glob" in function["description"]
+    include = function["parameters"]["properties"]["include"]["description"]
+    # include is a path glob, not a second regex over file contents.
+    assert "Glob pattern matched against file paths" in include
+    assert "not file content, not a regex" in include
+    assert '"*.py"' in include
+    # the content search is the regex.
+    assert "always a regular expression, not a glob" in include
+
+
+def test_write_description_points_existing_files_at_edit():
+    description = _tool_def("write")["function"]["description"]
+
+    assert "prefer edit" in description
+    assert "replaces the whole file" in description
+    assert "silently discards anything not included in the new content" in description

@@ -25,10 +25,6 @@ class AgentContext:
     base_tool_registry: ToolRegistry | None = None
     iteration: int = 0
     max_iterations: int = 50
-    # Run-level input-token budget (cumulative prompt tokens). 0 = use
-    # ``settings.max_run_input_tokens`` (0 by default = budget disabled); a
-    # negative value also disables the cap.
-    max_input_tokens: int = 0
     # Cooperative cancellation: set by ``request_cancel()`` (e.g. the abort
     # endpoint); the loop checks it between steps and stops without raising.
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -87,18 +83,3 @@ class AgentContext:
     @property
     def cancelled(self) -> bool:
         return self.cancel_event.is_set()
-
-    # ── Run-level input-token budget ──
-    @property
-    def token_budget(self) -> int:
-        """Effective input-token cap; <= 0 means unlimited."""
-        if self.max_input_tokens:
-            return self.max_input_tokens
-        from crabagent.core.config import settings
-
-        return settings.max_run_input_tokens
-
-    @property
-    def input_tokens_exhausted(self) -> bool:
-        limit = self.token_budget
-        return limit > 0 and self.accumulated_prompt >= limit

@@ -7,7 +7,10 @@ from crabagent.core.agent.tools.registry import registry
     description=(
         "Write content to a file. Creates parent directories if needed. "
         "Overwrites existing files. Both file_path and content are required "
-        "and must be non-empty."
+        "and must be non-empty. For a file that already exists, prefer edit "
+        "to change part of it: write replaces the whole file and silently "
+        "discards anything not included in the new content. Use write for "
+        "new files or intentional full rewrites."
     ),
     parameters={
         "type": "object",
