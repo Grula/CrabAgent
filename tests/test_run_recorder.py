@@ -527,3 +527,170 @@ async def test_the_call_id_is_recorder_bookkeeping_not_part_of_the_saved_json(
         assert payload  # the live save of the call itself, then of its result, then the finalize
         assert not any(key.startswith("_") for key in payload[0])
     assert set(finalized["tool_calls"][0]) == expected_keys
+
+
+# ── the sub-agent event bridge forwards the call id, so sub-agent results pair by id too ──
+
+
+def _stub_bridged_sub_agent(recorder, monkeypatch: pytest.MonkeyPatch):
+    """A real spawn_sub_agent run with a stubbed loop, wired into a real RunRecorder."""
+    from pathlib import Path
+
+    from crabagent.core.agent import agents as agents_module
+    from crabagent.core.agent.context import AgentContext
+
+    agent_def = {
+        "name": "scout", "display_name": "Scout", "role": "r", "goal": "g", "backstory": "b",
+        "tool_permissions": {},
+    }
+
+    async def _ret(value):
+        return value
+
+    monkeypatch.setattr(agents_module, "get_agent", lambda *a, **k: _ret(agent_def))
+    monkeypatch.setattr(agents_module, "_load_shared_context", lambda *a, **k: _ret(""))
+    monkeypatch.setattr(agents_module, "load_sub_agent_model_map", lambda *a, **k: _ret({}))
+
+    created, finalized = [], []
+
+    async def fake_create(**kwargs):
+        created.append(kwargs)
+        return len(created)
+
+    async def fake_update(run_id, **kwargs):
+        pass
+
+    async def fake_finalize(**kwargs):
+        finalized.append(kwargs)
+
+    async def fake_flush(run_id, agent_name, buf):
+        pass
+
+    monkeypatch.setattr("crabagent.core.database.run_record_create", fake_create)
+    monkeypatch.setattr("crabagent.core.database.run_record_update", fake_update)
+    monkeypatch.setattr("crabagent.core.database.run_record_finalize", fake_finalize)
+    monkeypatch.setattr(recorder, "_flush_tool_invocations", fake_flush)
+
+    parent = AgentContext(workspace=Path("/tmp"), metadata={"user_id": 0})
+    parent.event_bus.subscribe(recorder.on_event)
+    agents_module._running_sub_agents.clear()
+    return SimpleNamespace(module=agents_module, agent_def=agent_def, parent=parent,
+                           created=created, finalized=finalized)
+
+
+async def _run_bridged_sub_agent(recorder, monkeypatch: pytest.MonkeyPatch, sub_events: list):
+    harness = _stub_bridged_sub_agent(recorder, monkeypatch)
+
+    async def stub_run_agent(sub_context, task, *args, **kwargs):
+        for event in sub_events:
+            await sub_context.event_bus.emit(event)
+        sub_context.messages.append({"role": "assistant", "content": "done"})
+        return sub_context.messages
+
+    monkeypatch.setattr(harness.module, "run_agent", stub_run_agent, raising=False)
+    monkeypatch.setattr("crabagent.core.agent.loop.run_agent", stub_run_agent)
+
+    await harness.module.spawn_sub_agent(
+        harness.parent, agent_name="scout", task="x", agent_def=harness.agent_def
+    )
+    assert len(harness.finalized) == 1
+    return harness
+
+
+def _sub_call(call_id: str | None, query: str) -> AgentEvent:
+    data = {"name": "code_search", "arguments": {"query": query}}
+    if call_id is not None:
+        data["id"] = call_id
+    return AgentEvent(type=EventType.TOOL_CALL, data=data)
+
+
+def _sub_result(call_id: str | None, result: str) -> AgentEvent:
+    data = {"name": "code_search", "result": result}
+    if call_id is not None:
+        data["id"] = call_id
+    return AgentEvent(type=EventType.TOOL_RESULT, data=data)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reversed_arrival", [True, False])
+async def test_a_sub_agents_parallel_calls_take_their_own_result_through_the_bridge(
+    recorder, monkeypatch: pytest.MonkeyPatch, reversed_arrival: bool
+):
+    results = [_sub_result("tc1", "first-query-result"), _sub_result("tc2", "second-query-result")]
+    harness = await _run_bridged_sub_agent(
+        recorder,
+        monkeypatch,
+        [_sub_call("tc1", "first"), _sub_call("tc2", "second"),
+         *(reversed(results) if reversed_arrival else results)],
+    )
+
+    steps = harness.finalized[0]["tool_calls"]
+    assert [s["result_summary"] for s in steps] == ["first-query-result", "second-query-result"]
+    assert [s["args"]["query"] for s in steps] == ["first", "second"]
+
+
+@pytest.mark.asyncio
+async def test_three_sub_agent_calls_pair_by_id_when_the_middle_one_finishes_last(
+    recorder, monkeypatch: pytest.MonkeyPatch
+):
+    harness = await _run_bridged_sub_agent(
+        recorder,
+        monkeypatch,
+        [
+            _sub_call("tc1", "one"), _sub_call("tc2", "two"), _sub_call("tc3", "three"),
+            _sub_result("tc1", "result-one"),
+            _sub_result("tc3", "result-three"),
+            _sub_result("tc2", "result-two"),
+        ],
+    )
+
+    steps = harness.finalized[0]["tool_calls"]
+    assert [s["result_summary"] for s in steps] == ["result-one", "result-two", "result-three"]
+
+
+@pytest.mark.asyncio
+async def test_a_sub_agent_result_without_an_id_still_pairs_by_name(recorder, monkeypatch: pytest.MonkeyPatch):
+    harness = await _run_bridged_sub_agent(
+        recorder,
+        monkeypatch,
+        [
+            _sub_call(None, "first"), _sub_call(None, "second"),
+            _sub_result(None, "first-arrival"), _sub_result(None, "second-arrival"),
+        ],
+    )
+
+    steps = harness.finalized[0]["tool_calls"]
+    assert [s["result_summary"] for s in steps] == ["second-arrival", "first-arrival"]
+    assert all(s["result_summary"] is not None for s in steps)
+
+
+@pytest.mark.asyncio
+async def test_each_sub_agents_results_land_in_its_own_run(recorder, monkeypatch: pytest.MonkeyPatch):
+    harness = _stub_bridged_sub_agent(recorder, monkeypatch)
+    runs = [
+        ("scout", [_sub_call("tc1", "a1"), _sub_call("tc2", "a2"),
+                   _sub_result("tc2", "a-two"), _sub_result("tc1", "a-one")]),
+        ("coder", [_sub_call("tc1", "b1"), _sub_call("tc2", "b2"),
+                   _sub_result("tc1", "b-one"), _sub_result("tc2", "b-two")]),
+    ]
+
+    for agent_name, sub_events in runs:
+        async def stub_run_agent(sub_context, task, *args, _events=sub_events, **kwargs):
+            for event in _events:
+                await sub_context.event_bus.emit(event)
+            sub_context.messages.append({"role": "assistant", "content": "done"})
+            return sub_context.messages
+
+        monkeypatch.setattr(harness.module, "run_agent", stub_run_agent, raising=False)
+        monkeypatch.setattr("crabagent.core.agent.loop.run_agent", stub_run_agent)
+        await harness.module.spawn_sub_agent(
+            harness.parent, agent_name=agent_name, task="x", agent_def=harness.agent_def
+        )
+
+    assert [c["agent_name"] for c in harness.created] == ["scout", "coder"]
+    assert [[s["result_summary"] for s in run["tool_calls"]] for run in harness.finalized] == [
+        ["a-one", "a-two"],
+        ["b-one", "b-two"],
+    ]
+    # The id stays recorder bookkeeping on the sub-agent path too.
+    assert not any(key.startswith("_") for run in harness.finalized for s in run["tool_calls"] for key in s)

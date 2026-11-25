@@ -1215,6 +1215,9 @@ async def spawn_sub_agent(
                 "agent_name": agent_name,
                 "name": tr_name,
                 "result": tr_result[:500],
+                # Lets the recorder pair this result with its own call when parallel
+                # calls of the same tool finish out of order.
+                "id": event.data.get("id", ""),
             }
             # The loop classified the full result; 500 chars would lose a command's exit code.
             for key in ("ok", "reason_class"):
