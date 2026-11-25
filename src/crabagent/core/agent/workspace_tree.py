@@ -40,9 +40,11 @@ COUNT_VISIT_CAP = 5000
 _INDENT = "  "
 
 
-def _skip(name: str, is_dir: bool) -> bool:
-    """Noise is skipped: build output, dependency and cache dirs, and every
-    hidden entry (``.git``, ``.crabagent``, ``.env``, ...)."""
+def skip_entry(name: str, is_dir: bool) -> bool:
+    """True for noise the agent never needs: hidden entries (``.git``,
+    ``.crabagent``, ``.env``, ...) and the build/dependency/cache directories in
+    :data:`SKIP_DIR_NAMES`. Public so other walkers (the code index) use the
+    same rule instead of a copy."""
     if is_dir and name in SKIP_DIR_NAMES:
         return True
     return name.startswith(".")
@@ -61,7 +63,7 @@ def _children(path: Path) -> tuple[list[str], list[str]]:
                     is_dir = entry.is_dir(follow_symlinks=False)
                 except OSError:
                     continue
-                if _skip(entry.name, is_dir):
+                if skip_entry(entry.name, is_dir):
                     continue
                 (dirs if is_dir else files).append(entry.name)
     except OSError:

@@ -35,7 +35,7 @@ Adapt, do not rebuild. CrabAgent already has the equivalent machinery: one `Tool
 | Skills via tool search | toolSearch / skills | equivalent | none |
 | MCP client | VS Code MCP client | equivalent | none |
 | Browser and vision tools | openSimpleBrowser / screenshot | equivalent | none |
-| Semantic code search | semantic search over the workspace index | **missing** | Implementation choice pending the user's decision (T3) |
+| Semantic code search | semantic search over the workspace index | **done** | Symbol + FTS index, `code_search` tool (T3) |
 | Batch multi-file edit | editFiles with multiple edits, one approval | **done** | `replacements` array on `edit` (T2) |
 | Workspace tree in context | implicit workspace listing | **done** | Size-capped tree is in the system prompt (measured cost in T1) |
 | Diff preview on approval | edit approval shows a diff | **done** | Built and persisted, verified live (T1) |
@@ -79,7 +79,7 @@ Status: **done** — optional `replacements` array on `edit`, applied in order i
 ### T3 - Semantic code search
 Deliverables: an index over the workspace and a search tool that returns ranked locations.
 Acceptance: relevant hits for natural-language queries; bounded build time and memory; incremental update on file change.
-Status: **not started**, deliberately on hold pending open question 1. The implementation choice, cost and build-time estimate are written up and awaiting the user's decision; the recommendation is a symbol/RAG-lite index over local embeddings, because no embedding runtime is installed (only numpy) while FTS5 is already in the database, a full symbol index of this repository builds in seconds against roughly 30-60 s for embeddings on CPU, and identifier-level queries are what a coding agent mostly issues.
+Status: **done** — a symbol and FTS index in its own WAL database plus the `code_search` tool; measured numbers are in section 10.
 
 ### T4 - Agent loop hardening
 Deliverables: provider-failure reporting for every failure path (pre-loop setup, mid-loop, exceptions escaping the run task); cooperative cancellation checked at iteration boundaries and between tool calls; mid-tool cancellation that kills a running tool's process group; stop/continuation hook; before-tool hook.
@@ -107,12 +107,14 @@ Status: **done** — built and browser-verified; both tab holes are closed, and 
 
 ## 9. Open questions
 
-1. **T3 implementation choice** (blocking T3): local embeddings versus a symbol/RAG-lite index. Needs cost, build time for this repository and a recommendation before any code. **Answered, pending decision** — the recommendation is a symbol/RAG-lite index over local embeddings, because no embedding runtime is installed (only numpy) while FTS5 is already in the database, a symbol index builds in seconds against roughly 30-60 s for embeddings on CPU, and identifier-level queries are what a coding agent mostly issues. Numbers: 632 files / 137k lines to index, about 3.2k chunks at 40 lines, roughly 5 MB of 384-dim vectors, versus a symbol index build under 5 s with no new dependency.
+1. **T3 implementation choice**: local embeddings versus a symbol/RAG-lite index. The user **accepted the symbol/RAG-lite recommendation**, and it is now built (section 10): a symbol/RAG-lite index over local embeddings, because no embedding runtime is installed (only numpy) while FTS5 is already in the database, a symbol index builds in seconds against roughly 30-60 s for embeddings on CPU, and identifier-level queries are what a coding agent mostly issues. Numbers: 632 files / 137k lines to index, about 3.2k chunks at 40 lines, roughly 5 MB of 384-dim vectors, versus a symbol index build under 5 s with no new dependency.
 2. **Resolved** — verified on a preview server with one real `deepseek-flash` model call: the confirm-gated `edit` showed its diff (`+1`/`-1`, correct path) and the diff was still present after a page reload.
 3. Binary and oversized files in the editor: currently read-only and truncated; decide whether any of that should be surfaced to the agent as a distinct tool result.
 4. `grep.include` now expresses directory-scoped globs: a pattern containing `**` spans directories (`src/**/*.py` matches `src/a.py`), and bare filename globs such as `*.py` behave exactly as before.
 
 ## 10. T3 design (symbol / RAG-lite index)
+
+**Status: built.** `crabagent/core/code_index` (storage and extraction) plus the `code_search` tool implement this design. Measured on this repository: cold build 1.52 s, warm `ensure_indexed` 16.8 ms, 634 files / 7549 symbols / 2956 chunks, index file 12.6 MB, query latency 26–53 ms. Tests: 25 for storage and extraction, 23 for the tool and ranking.
 
 Decision: a symbol and text index over the workspace, built from SQLite FTS5 with no new dependency. Local embeddings are deferred; `core/memory_embed.py` already shows the guarded shape such a path would take.
 
@@ -140,6 +142,8 @@ code_index_meta(key, value)  -- schema version, last full build, workspace finge
 
 No migration framework is used: new tables need only the model classes, since `create_all` builds them. The FTS5 tables and their triggers are created in `init_db()` the same way `messages_fts_cjk` already is.
 
+Where the tables live was decided by the user, overriding the original draft: the index is its **own SQLite file**, `~/.crabagent/code_index.db`, in **WAL** mode, opened and created by the index module itself and never in `crabagent.db`, because code text plus FTS per workspace would bloat the main database and a bulk build would hold its single write lock while chats and events are being saved; deleting the file simply causes a rebuild.
+
 ### How FTS5 is reused
 
 `messages_fts_cjk` already proves the pattern in this codebase: an FTS5 table with `content=` pointing at a base table plus insert/update/delete triggers, queried with `MATCH`. The code indexes copy that shape with the `unicode61` tokenizer — appropriate for identifiers because it keeps `_` and `.` out of the token stream only where desired; the query is built by escaping tokens and joining them with `OR`, then ranked with SQLite's built-in `bm25()` (which the existing message search does not currently use). Ranking blends three signals: `bm25` of the matched text, an exact or prefix match on `code_symbols.name`/`qualname`, and a path depth/segment bonus so `src/` outranks vendored trees. Results are deduplicated per file, then per symbol, and capped at 10 by default.
@@ -150,6 +154,7 @@ No migration framework is used: new tables need only the model classes, since `c
 - **Cheap staleness check per query**: `stat` every indexed file (`mtime_ms` + `size`); files whose stamp changed are re-parsed, deleted files are removed, new files are added. 632 `stat` calls are sub-10 ms, so this runs on every query without a debounce. If more than 200 files changed at once, it falls back to a full rebuild.
 - **Explicit rebuild**: `code_search(reindex=true)` forces the full path; used after large checkouts or branch switches.
 - **Never in the agent loop's critical path at startup**: the index is built on first use, not when the server boots, so a fresh workspace costs nothing until something asks.
+- **One build per workspace at a time**: builds are serialized by an `asyncio.Lock` keyed by the resolved workspace path, so parallel callers wait for the running build and never start a second one.
 
 ### Tool interface
 
@@ -160,6 +165,8 @@ code_search(query: str, path_prefix: str | None = None,
             kind: str | None = None,      # symbol kind filter: function|class|method|heading|text
             limit: int = 10, reindex: bool = False) -> str
 ```
+
+Two decisions, as implemented: `reindex` stays a **parameter, not a separate tool**, and there is no separate "find definition" parameter — `kind="symbol"` with an exact-name match ranked first is that path.
 
 Result shape, one line per hit plus a short snippet:
 
@@ -172,9 +179,15 @@ Deliberate limits: no vector search, no natural-language paraphrase matching, no
 
 Cost: roughly 300–500 lines of code plus tests, one new tool registration, five new tables, no new dependency, and a sub-5-second cold build for this repository.
 
+### Resolved: the exact tier needs a strict majority
+
+The exact-name tier used to win for any one matching token, so a multi-word query in which one word is itself a symbol name put that symbol first: the real run returned the function `workspace` for `workspace tree` and a skill script's `diff()` for `diff preview`. The tier now applies only when the query is a single token or the symbol name covers a **strict majority** of the query words — `matched / |query words| > 0.5`, not `>=`, because 1 of 2 is exactly half and must lose (that is precisely the `workspace` and `diff` case). Names are compared after splitting on dots, underscores and camelCase, so `build_workspace_tree` covers both words of `workspace tree` while `workspace` covers one. The prefix tier is gated by the same rule, otherwise it would simply take over the wrong results. Below the tiers nothing changed (negated bm25, path depth, path, line). Same run after the change: `workspace tree` -> `build_workspace_tree` in `workspace_tree.py`, `diff preview` -> `_stored_diff_preview` then `build_diff_preview`.
+
 ## 11. Changelog
 
 - 2026-11-24: document created (reconstruction). T1 partly, T4 done, T6 partly. Token budget removed. Window-fraction truncation dropped.
 - 2026-11-24: diff preview now persisted with the confirmation (backend) and restored on reload in the UI. Cancel-versus-auto-background race fixed: a cancel that lands inside `bash`'s timeout window kills the process group. `grep.include` accepts directory-scoped globs. T1 now misses only the size-capped workspace tree.
 - 2026-11-24: full Python suite 1383 passing; frontend 222 tests passing.
 - 2026-11-25: T1, T2, T5 and T6 done. Workspace tree in the system prompt (176 entries, 3951 chars, about 990 tokens here; cap 200 entries / 4000 chars). T2 batch replacements on `edit`: one write, one confirmation, one molt snapshot, per-item results. T5 `crabagent --mcp-server`: read-only stdio MCP server over `read`/`glob`/`grep`. T6 tab edge cases closed, plus the Markdown preview read fix (`isAbsolutePath(path)` and the session id); Markdown save still to do. Full Python suite 1434 passing; frontend 234 tests passing.
+- 2026-11-25: T3 built — the code index lives in its own WAL database (`~/.crabagent/code_index.db`), builds are serialized by a per-workspace lock, and the `code_search` tool ranks by exact match, then prefix, then `bm25`. Measured cold build 1.52 s, warm `ensure_indexed` 16.8 ms, query latency 26–53 ms on this repository. 48 new tests (25 storage/extraction, 23 tool/ranking); Python suite 1483 passing, frontend 238 tests passing.
+- 2026-11-25: `code_search` ranking tightened — the exact and prefix tiers now need a strict majority of the query words, which fixes the two multi-word cases above (`workspace tree` and `diff preview`). The seeded scout and coder goals route a definition, a symbol or a question of where something lives to `code_search` first (`kind="symbol"` for a definition by name), and keep `grep` for exact strings, error messages, regexes and paraphrased questions. 6 new tests (5 in `tests/test_code_search.py`, 1 in `tests/test_default_agent.py`); Python suite 1489 passing.

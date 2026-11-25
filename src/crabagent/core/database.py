@@ -1480,8 +1480,10 @@ DEFAULT_AGENTS = [
         "goal": (
             "Implement the change in your brief with the smallest correct diff, then run the brief's check.\n"
             "- Read what the brief names first, and follow the project's existing patterns.\n"
-            "- Keep your context small: grep, then read only the lines you need; run the narrowest test "
-            "that proves the change; don't re-run a command just to see output you already have.\n"
+            "- Keep your context small: code_search first for a definition, a symbol, or where something "
+            'lives (kind="symbol" to find one by name); grep for exact strings, error messages, regexes '
+            "and paraphrased questions, read once a file is known; run the narrowest test that proves the "
+            "change; don't re-run a command just to see output you already have.\n"
             "- Need to understand code outside your brief (how another module works, who calls a "
             "function)? Ask scout with request_help instead of reading through it yourself.\n"
             "- Stay inside the brief: no unrelated refactors, speculative options, or project-wide config "
@@ -1626,8 +1628,10 @@ DEFAULT_AGENTS = [
         "goal": (
             "Answer questions about the codebase (where something is, how it works, what calls it) with a "
             "short answer and file:line references, so whoever asked doesn't have to read the code.\n"
-            "- Search before you read: grep for names and strings, glob for files, then read only the lines "
-            "that answer the question (read with offset and limit). Stop as soon as you can answer.\n"
+            "- Search before you read: code_search first for a definition, a symbol, or where something "
+            'lives (kind="symbol" to find one by name); grep for exact strings, error messages, regexes '
+            "and paraphrased questions; glob for files; then read only the lines that answer the question "
+            "(read with offset and limit). Stop as soon as you can answer.\n"
             "- Follow the real path: the entry point, the calls it makes, where the data ends up. Find the "
             "call site instead of assuming one exists.\n"
             "- Keep what you saw in the code apart from what you infer. If you couldn't find something, say "

@@ -184,6 +184,21 @@ class TestDefaultTeamCapabilities:
         assert "scout" in goals["architect"]
         assert "request_help" in goals["coder"] and "scout" in goals["coder"]
 
+    def test_scout_and_coder_route_lookups_to_code_search_then_grep(self):
+        """The seeded profiles only: this reads ``DEFAULT_AGENTS``, never the live
+        database (the user applies the same routing there themselves)."""
+        goals = {a["name"]: a["goal"] for a in db.DEFAULT_AGENTS}
+        for name in ("scout", "coder"):
+            goal = goals[name]
+            assert "code_search first for a definition, a symbol, or where something lives" in goal
+            assert 'kind="symbol"' in goal  # finding a definition by name
+            assert "grep for exact strings" in goal
+        # Routing, not a rewrite: the rest of each profile survives.
+        assert "Search before you read" in goals["scout"]
+        assert "reply as answer" in goals["scout"].lower()
+        assert "run the narrowest test that proves the change" in goals["coder"]
+        assert "Ask scout with request_help" in goals["coder"]
+
     def test_architect_sends_code_questions_to_the_scout_even_when_it_could_read(self):
         goal = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")["goal"]
         assert "go to scout, even when you could answer them yourself" in goal
