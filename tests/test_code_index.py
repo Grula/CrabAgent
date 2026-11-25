@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
+import time
 from pathlib import Path
 
 import pytest
@@ -17,6 +19,7 @@ from crabagent.core.code_index import (
     ensure_indexed,
     fts_query,
     iter_matches,
+    prune_stale_workspaces,
 )
 from crabagent.core.code_index import extract as ex
 from crabagent.core.code_index import store
@@ -27,6 +30,8 @@ def index_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point the index at a throwaway file; it is the only database any test sees."""
     db = tmp_path / "state" / "code_index.db"
     monkeypatch.setattr(store, "DB_PATH", db)
+    # The stale-workspace sweep is once per process; give every test a clean run.
+    monkeypatch.setattr(store, "_PRUNE_DONE", False)
     return db
 
 
@@ -533,3 +538,127 @@ async def test_fts_symbol_entry_is_updated_when_the_symbol_changes(tmp_path, ind
     assert [match.name for match in await iter_matches(root, ["newnamezebra"]) if match.source == "symbol"] == [
         "newnamezebra"
     ]
+
+
+# ── stale workspace pruning ────────────────────────────────────────────────
+
+
+async def _fts_rowids(table: str, term: str) -> list[int]:
+    """Rowids a ``MATCH`` returns, so a stale FTS entry cannot hide."""
+    rows = await _rows(f"SELECT rowid FROM {table} WHERE {table} MATCH ?", (term,))
+    return [row["rowid"] for row in rows]
+
+
+async def test_prune_drops_a_deleted_workspace_on_another_workspaces_build(tmp_path, index_db, monkeypatch):
+    stale, live = tmp_path / "stale", tmp_path / "live"
+    _write(stale, "old.py", "def stalemarkerzebra():\n    return 1\n")
+    _write(stale, "notes.md", "# stalechunkzebra heading\n")
+    _write(live, "keep.py", "def livemarkerzebra():\n    return 2\n")
+    await ensure_indexed(stale)
+    await ensure_indexed(live)
+    stale_key = str(stale.resolve())
+    shutil.rmtree(stale)
+    monkeypatch.setattr(store, "_PRUNE_DONE", False)  # simulate the first call of a run
+
+    await ensure_indexed(live)  # nothing new for `live`: this call only sweeps
+
+    assert await _rows("SELECT id FROM code_files WHERE workspace = ?", (stale_key,)) == []
+    assert await _rows("SELECT id FROM code_symbols WHERE name = 'stalemarkerzebra'") == []
+    assert await _rows("SELECT id FROM code_chunks WHERE text LIKE '%stalechunkzebra%'") == []
+    assert await _rows("SELECT key FROM code_index_meta WHERE key = ?", (f"last_build:{stale_key}",)) == []
+    assert await _fts_rowids("code_symbols_fts", "stalemarkerzebra") == []
+    assert await _fts_rowids("code_chunks_fts", "stalechunkzebra") == []
+    assert await iter_matches(live, ["stalemarkerzebra"]) == []
+
+
+async def test_prune_leaves_a_live_workspace_untouched(tmp_path, index_db, monkeypatch):
+    stale, live = tmp_path / "stale", tmp_path / "live"
+    _write(stale, "old.py", "def staleonezebra():\n    return 1\n")
+    _write(live, "keep.py", "def liveonezebra():\n    return 2\n")
+    await ensure_indexed(stale)
+    live_stats = await ensure_indexed(live)
+    live_key = str(live.resolve())
+    sql = "SELECT id, workspace, path, mtime_ms, sha1, indexed_at FROM code_files ORDER BY id"
+    live_before = [row for row in await _rows(sql) if row["workspace"] == live_key]
+    shutil.rmtree(stale)
+    monkeypatch.setattr(store, "_PRUNE_DONE", False)  # simulate the first call of a run
+
+    await ensure_indexed(live)
+
+    live_after = [row for row in await _rows(sql) if row["workspace"] == live_key]
+    assert live_after == live_before  # no row churn, no new indexed_at
+    assert (await ensure_indexed(live)).built_at == live_stats.built_at
+
+
+async def test_prune_skips_a_workspace_with_a_build_in_flight(tmp_path, index_db, monkeypatch):
+    busy = tmp_path / "busy"
+    for i in range(3):
+        _write(busy, f"m{i}.py", f"def busyfunc_{i}():\n    return {i}\n")
+    await ensure_indexed(busy)
+    busy_key = str(busy.resolve())
+
+    started = asyncio.Event()
+    real_insert = store._insert_files
+
+    async def slow_insert(*args, **kwargs):
+        started.set()
+        await asyncio.sleep(0.5)
+        return await real_insert(*args, **kwargs)
+
+    monkeypatch.setattr(store, "_insert_files", slow_insert)
+    monkeypatch.setattr(store, "_workspace_exists", lambda path: False)  # every workspace looks stale
+
+    build = asyncio.create_task(ensure_indexed(busy, force=True))
+    await asyncio.wait_for(started.wait(), timeout=5)
+    assert store._workspace_busy(busy_key)
+
+    began = time.perf_counter()
+    pruned = await prune_stale_workspaces(force=True)
+    elapsed = time.perf_counter() - began
+
+    assert pruned == []  # the held lock wins over the stale-looking path
+    assert not build.done()  # pruning neither waited for nor disturbed the build
+    assert elapsed < 0.3
+    stats = await asyncio.wait_for(build, timeout=5)
+    assert (stats.files, stats.symbols, stats.chunks) == (3, 3, 3)
+    assert len(await _rows("SELECT id FROM code_files WHERE workspace = ?", (busy_key,))) == 3
+
+
+async def test_prune_runs_once_per_process_until_forced(tmp_path, index_db, monkeypatch):
+    gone, live = tmp_path / "gone", tmp_path / "live"
+    _write(gone, "old.py", "def oncezebra():\n    return 1\n")
+    _write(live, "keep.py", "def livezebra():\n    return 2\n")
+    await ensure_indexed(gone)
+    await ensure_indexed(live)
+    gone_key = str(gone.resolve())
+    shutil.rmtree(gone)
+    monkeypatch.setattr(store, "_PRUNE_DONE", False)  # simulate the first call of a run
+
+    await ensure_indexed(live)  # the lazy sweep of this process
+    assert await _rows("SELECT id FROM code_files WHERE workspace = ?", (gone_key,)) == []
+
+    async with store.connect() as conn:  # a row that reappears must survive the next call
+        await conn.execute("INSERT INTO code_files(workspace, path) VALUES (?, 'ghost.py')", (gone_key,))
+        await conn.commit()
+    await ensure_indexed(live)
+    assert await _rows("SELECT id FROM code_files WHERE workspace = ?", (gone_key,)) != []
+    assert await prune_stale_workspaces() == []  # already swept: no second pass
+
+    assert await prune_stale_workspaces(force=True) == [gone_key]
+    assert await _rows("SELECT id FROM code_files WHERE workspace = ?", (gone_key,)) == []
+
+
+async def test_prune_never_touches_the_workspace_being_ensured(tmp_path, index_db, monkeypatch):
+    root = tmp_path / "self"
+    _write(root, "a.py", "def selfmarkerzebra():\n    return 1\n")
+    await ensure_indexed(root)
+    key = str(root.resolve())
+    sql = "SELECT id, indexed_at FROM code_files WHERE workspace = ?"
+    rows_before = await _rows(sql, (key,))
+
+    monkeypatch.setattr(store, "_workspace_exists", lambda path: False)  # stale-looking
+    monkeypatch.setattr(store, "_PRUNE_DONE", False)
+    await ensure_indexed(root)
+
+    assert await _rows(sql, (key,)) == rows_before
+    assert await _rows("SELECT key FROM code_index_meta WHERE key = ?", (f"last_build:{key}",)) != []

@@ -5,6 +5,9 @@ deliberately small.
 
 * :func:`ensure_indexed` — lazy first build, then a cheap staleness sweep on every
   call. Returns an :class:`IndexStats`.
+* :func:`prune_stale_workspaces` — drop the rows of workspaces whose folder is
+  gone. Lazy: :func:`ensure_indexed` runs it once per process; it never waits
+  on (or prunes) a workspace that has a build in flight.
 * :func:`iter_matches` — raw FTS hits (symbols and text chunks) with their
   ``bm25`` score, for the ranking layer to blend. Call :func:`ensure_indexed`
   first; it does not build.
@@ -29,6 +32,7 @@ from .store import (
     ensure_indexed,
     fts_query,
     iter_matches,
+    prune_stale_workspaces,
 )
 
 __all__ = [
@@ -39,4 +43,5 @@ __all__ = [
     "ensure_indexed",
     "fts_query",
     "iter_matches",
+    "prune_stale_workspaces",
 ]

@@ -16,10 +16,14 @@ Design points:
 * One build per workspace at a time: an :class:`asyncio.Lock` per resolved
   workspace in a module-level registry, so two concurrent
   :func:`ensure_indexed` calls build once and both return the finished index.
+* Stale workspaces (folder deleted) are pruned lazily: the first
+  :func:`ensure_indexed` of a process removes their rows, once, skipping any
+  workspace that has a build in flight.
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -30,6 +34,8 @@ from pathlib import Path
 import aiosqlite
 
 from .extract import ScannedFile, extract, iter_files, read_source
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1"
 BUSY_TIMEOUT_MS = 30_000
@@ -200,6 +206,101 @@ async def _workspace_lock(key: str) -> asyncio.Lock:
         return lock
 
 
+# ── stale workspace pruning ────────────────────────────────────────────────
+
+# Meta keys that belong to one workspace rather than to the database.
+_LAST_BUILD_PREFIX = "last_build:"
+# Lazy maintenance: the sweep runs on the first ensure_indexed() of this
+# process and not again, so a long-lived server pays for it exactly once.
+_PRUNE_DONE = False
+
+
+def _workspace_exists(path: str) -> bool:
+    """True while ``path`` is still a directory (workspaces are stored resolved)."""
+    return Path(path).is_dir()
+
+
+def _workspace_busy(key: str) -> bool:
+    """True when a build for ``key`` holds its lock right now.
+
+    Read with a plain ``dict.get``: there is no ``await`` between the lookup and
+    ``locked()``, so the event loop cannot switch tasks in between. We never
+    *wait* for that lock — a cold build takes seconds and the agent waiting on
+    this sweep (through :func:`ensure_indexed`) would stall behind it.
+    """
+    lock = _WORKSPACE_LOCKS.get(key)
+    return lock is not None and lock.locked()
+
+
+async def _purge_workspace(workspace: str) -> None:
+    """Delete one workspace's rows in a single transaction.
+
+    Order matters, because only the ``AFTER DELETE ON code_symbols`` /
+    ``code_chunks`` triggers reset the external-content FTS index
+    (``INSERT INTO code_symbols_fts(code_symbols_fts, rowid, …) VALUES
+    ('delete', old.id, …)``). Verified: deleting only ``code_files`` leaves the
+    symbol's row in the FTS index, ``MATCH`` still returns it. So the children
+    are deleted explicitly first (firing the ``*_ad`` triggers), then the file
+    rows — same order as :func:`_delete_file_rows`.
+    """
+    async with connect() as conn:
+        try:
+            await _delete_workspace_rows(conn, workspace)
+            await conn.execute(
+                "DELETE FROM code_index_meta WHERE key = ?",
+                (f"{_LAST_BUILD_PREFIX}{workspace}",),
+            )
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
+
+
+async def prune_stale_workspaces(*, force: bool = False, skip: str | None = None) -> list[str]:
+    """Drop the index rows of workspaces whose folder no longer exists.
+
+    Lazy maintenance: called from :func:`ensure_indexed`, it sweeps at most
+    once per process unless ``force=True``. A stale workspace never blocks the
+    caller — every workspace is pruned in its own transaction, and a failure is
+    logged and skipped so one bad row set cannot stop the rest.
+
+    ``skip`` is the workspace the caller is about to build: its lock is not
+    held yet, so it has to be excluded explicitly. A workspace whose lock *is*
+    held is skipped too: waiting would stall the agent requesting this sweep and
+    deleting rows under a running build would corrupt it.
+
+    Returns the workspace paths that were pruned.
+    """
+    global _PRUNE_DONE
+    if _PRUNE_DONE and not force:
+        return []
+    skip_key = str(Path(skip).expanduser().resolve()) if skip else None
+    async with connect() as conn:
+        async with conn.execute("SELECT workspace FROM code_files GROUP BY workspace") as cur:
+            workspaces = {row["workspace"] for row in await cur.fetchall()}
+        async with conn.execute(
+            "SELECT key FROM code_index_meta WHERE key LIKE ?",
+            (f"{_LAST_BUILD_PREFIX}%",),
+        ) as cur:
+            workspaces.update(
+                row["key"][len(_LAST_BUILD_PREFIX):] for row in await cur.fetchall()
+            )
+
+    pruned: list[str] = []
+    for workspace in sorted(workspaces):
+        if workspace == skip_key or _workspace_busy(workspace) or _workspace_exists(workspace):
+            continue
+        try:
+            await _purge_workspace(workspace)
+        except Exception as exc:  # one workspace must never block the others
+            logger.warning("code_index: could not prune stale workspace %s: %s", workspace, exc)
+            continue
+        logger.info("code_index: pruned stale workspace %s", workspace)
+        pruned.append(workspace)
+    _PRUNE_DONE = True
+    return pruned
+
+
 # ── helpers ────────────────────────────────────────────────────────────────
 
 
@@ -340,6 +441,14 @@ async def ensure_indexed(workspace: Path, *, force: bool = False) -> IndexStats:
     if not root.is_dir():
         raise FileNotFoundError(f"workspace is not a directory: {root}")
     key = str(root)
+    # Lazy maintenance, once per process: the first build also drops workspaces
+    # whose folder has disappeared. This workspace is passed as ``skip`` because
+    # its lock is not held yet; a workspace with a build in flight is skipped
+    # inside the sweep. Maintenance failures must not break the requested build.
+    try:
+        await prune_stale_workspaces(skip=key)
+    except Exception as exc:
+        logger.warning("code_index: stale-workspace sweep failed: %s", exc)
     lock = await _workspace_lock(key)
     async with lock:
         async with connect() as conn:

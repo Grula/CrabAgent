@@ -107,6 +107,11 @@ class RunRecorder:
             task_summary=data.get("query", "")[:200],
         )
 
+    @staticmethod
+    def _steps_for_storage(buf: list) -> list[dict]:
+        """Copy of a buffer without the recorder's own bookkeeping keys."""
+        return [{k: v for k, v in step.items() if not k.startswith("_")} for step in buf]
+
     async def _save_live(self, run_id: int | None, buf: list) -> None:
         """Save a running agent's steps so far, so the timeline can follow it live.
 
@@ -118,7 +123,7 @@ class RunRecorder:
         from crabagent.core.database import run_record_update
 
         try:
-            await run_record_update(run_id, tool_calls=[dict(step) for step in buf])
+            await run_record_update(run_id, tool_calls=self._steps_for_storage(buf))
         except Exception:
             logger.debug("RunRecorder: live save failed for run %s", run_id, exc_info=True)
 
@@ -126,6 +131,9 @@ class RunRecorder:
         buf.append(
             {
                 "name": data.get("name", ""),
+                # Recorder-only: lets a result find its own call when parallel calls
+                # of the same tool finish out of order. Stripped before persisting.
+                "_call_id": data.get("id") or None,
                 "args": data.get("arguments") or data.get("args"),
                 "started_at": _time.time(),
                 "result_summary": None,
@@ -133,25 +141,44 @@ class RunRecorder:
             }
         )
 
+    @staticmethod
+    def _match_pending_call(buf: list, name: str, call_id: str | None) -> dict | None:
+        """The pending call an incoming result belongs to.
+
+        Matched by call id first, so two parallel calls of the same tool cannot get
+        each other's result. Falls back to the most recent pending call of the same
+        name only when a side has no id (old/replayed events, id-less results).
+        """
+        if call_id:
+            for tool in reversed(buf):
+                if tool.get("_call_id") == call_id and tool["result_summary"] is None:
+                    return tool
+        for tool in reversed(buf):
+            if tool["name"] != name or tool["result_summary"] is not None:
+                continue
+            if call_id and tool.get("_call_id"):
+                continue  # a different in-flight call that knows its own id
+            return tool
+        return None
+
     def _on_tool_result(self, data: dict, buf: list) -> dict | None:
         from crabagent.core.agent.tool_telemetry import classify_tool_outcome
 
         name = data.get("name", "")
         result = data.get("result", "")
         finished_at = _time.time()
-        for tool in reversed(buf):
-            if tool["name"] == name and tool["result_summary"] is None:
-                tool["result_summary"] = str(result)[:500]
-                tool["elapsed"] = round(finished_at - tool["started_at"], 3)
-                if "reason_class" in data:
-                    # Classified by the loop on the full result; ``result`` here is a preview.
-                    ok, reason_class = bool(data.get("ok")), str(data["reason_class"])
-                else:
-                    ok, reason_class = classify_tool_outcome(name, result)
-                tool["ok"] = ok
-                tool["reason_class"] = reason_class
-                return tool
-        return None
+        tool = self._match_pending_call(buf, name, data.get("id") or None)
+        if tool is not None:
+            tool["result_summary"] = str(result)[:500]
+            tool["elapsed"] = round(finished_at - tool["started_at"], 3)
+            if "reason_class" in data:
+                # Classified by the loop on the full result; ``result`` here is a preview.
+                ok, reason_class = bool(data.get("ok")), str(data["reason_class"])
+            else:
+                ok, reason_class = classify_tool_outcome(name, result)
+            tool["ok"] = ok
+            tool["reason_class"] = reason_class
+        return tool
 
     async def _flush_tool_invocations(self, run_id: int | None, agent_name: str, buf: list) -> None:
         if not run_id or not buf:
@@ -205,7 +232,7 @@ class RunRecorder:
             elapsed=elapsed,
             tokens_used=data.get("tokens", 0),
             iterations=data.get("iterations", 0),
-            tool_calls=self._main_tool_buf[:] if self._main_tool_buf else None,
+            tool_calls=self._steps_for_storage(self._main_tool_buf) if self._main_tool_buf else None,
             result_summary=data.get("result", "")[:1000],
         )
         await self._flush_tool_invocations(self._main_run_id, "main", self._main_tool_buf)
@@ -222,7 +249,7 @@ class RunRecorder:
             run_id=self._main_run_id,
             status="failed",
             elapsed=elapsed,
-            tool_calls=self._main_tool_buf[:] if self._main_tool_buf else None,
+            tool_calls=self._steps_for_storage(self._main_tool_buf) if self._main_tool_buf else None,
             error=str(data.get("error", ""))[:500],
         )
         self._main_run_id = None
@@ -290,7 +317,7 @@ class RunRecorder:
             elapsed=elapsed,
             tokens_used=data.get("tokens", 0),
             iterations=iterations,
-            tool_calls=entry["tool_buf"][:] if entry["tool_buf"] else None,
+            tool_calls=self._steps_for_storage(entry["tool_buf"]) if entry["tool_buf"] else None,
             result_summary=str(data.get("result", ""))[:1000],
             error=error,
         )
@@ -311,7 +338,7 @@ class RunRecorder:
             elapsed=elapsed,
             tokens_used=data.get("tokens", 0),
             iterations=data.get("iterations", 0),
-            tool_calls=entry["tool_buf"][:] if entry["tool_buf"] else None,
+            tool_calls=self._steps_for_storage(entry["tool_buf"]) if entry["tool_buf"] else None,
             error=str(data.get("error", ""))[:500],
         )
         await self._flush_tool_invocations(entry.get("run_id"), entry.get("agent_name", "unknown"), entry["tool_buf"])

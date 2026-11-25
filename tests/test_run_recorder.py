@@ -394,3 +394,136 @@ async def test_a_sub_agent_that_errors_keeps_its_token_and_step_counts(recorder,
     assert finalized["tokens_used"] == 1200
     assert finalized["iterations"] == 9
     assert flushed == [(7, "coder", ["bash"])]
+
+
+# ── a result finds its own call by id (parallel calls of one tool finish out of order) ──
+
+
+def _stub_main_run_db(recorder, monkeypatch: pytest.MonkeyPatch):
+    saved, finalized = [], {}
+
+    async def fake_update(run_id, **kwargs):
+        saved.append(kwargs["tool_calls"])
+
+    async def fake_finalize(**kwargs):
+        finalized.update(kwargs)
+
+    monkeypatch.setattr("crabagent.core.database.run_record_update", fake_update)
+    monkeypatch.setattr("crabagent.core.database.run_record_finalize", fake_finalize)
+    recorder._main_run_id = 1
+    return saved, finalized
+
+
+async def _tool_call(recorder, name: str, call_id: str | None = None, args: dict | None = None):
+    data = {"name": name, "arguments": args or {}}
+    if call_id is not None:
+        data["id"] = call_id
+    await recorder.on_event(AgentEvent(type=EventType.TOOL_CALL, data=data))
+
+
+async def _tool_result(recorder, name: str, result: str, call_id: str | None = None):
+    data = {"name": name, "result": result}
+    if call_id is not None:
+        data["id"] = call_id
+    await recorder.on_event(AgentEvent(type=EventType.TOOL_RESULT, data=data))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reversed_arrival", [True, False])
+async def test_parallel_calls_of_the_same_tool_take_their_own_result_by_id(
+    recorder, monkeypatch: pytest.MonkeyPatch, reversed_arrival: bool
+):
+    _stub_main_run_db(recorder, monkeypatch)
+
+    await _tool_call(recorder, "code_search", "tc1", {"query": "first"})
+    await _tool_call(recorder, "code_search", "tc2", {"query": "second"})
+    results = [("code_search", "first-query-result", "tc1"), ("code_search", "second-query-result", "tc2")]
+    for args in reversed(results) if reversed_arrival else results:
+        await _tool_result(recorder, *args)
+
+    buf = recorder._main_tool_buf
+    # A swapped pairing records the second call's output under the first call.
+    assert [t["result_summary"] for t in buf] == ["first-query-result", "second-query-result"]
+
+
+@pytest.mark.asyncio
+async def test_three_parallel_calls_pair_by_id_when_the_middle_one_finishes_last(
+    recorder, monkeypatch: pytest.MonkeyPatch
+):
+    _stub_main_run_db(recorder, monkeypatch)
+
+    await _tool_call(recorder, "code_search", "tc1")
+    await _tool_call(recorder, "code_search", "tc2")
+    await _tool_call(recorder, "code_search", "tc3")
+    await _tool_result(recorder, "code_search", "result-one", "tc1")
+    await _tool_result(recorder, "code_search", "result-three", "tc3")
+    await _tool_result(recorder, "code_search", "result-two", "tc2")
+
+    buf = recorder._main_tool_buf
+    assert [t["result_summary"] for t in buf] == ["result-one", "result-two", "result-three"]
+
+
+@pytest.mark.asyncio
+async def test_results_without_ids_still_pair_by_name_as_before(recorder, monkeypatch: pytest.MonkeyPatch):
+    """Old/replayed events carry no id; they keep the name + most-recent-pending pairing."""
+    _stub_main_run_db(recorder, monkeypatch)
+
+    await _tool_call(recorder, "code_search")
+    await _tool_call(recorder, "code_search")
+    await _tool_result(recorder, "code_search", "first-arrival")
+    await _tool_result(recorder, "code_search", "second-arrival")
+
+    buf = recorder._main_tool_buf
+    assert [t["result_summary"] for t in buf] == ["second-arrival", "first-arrival"]
+    assert all(t["result_summary"] is not None for t in buf)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("idless_first", [True, False])
+async def test_mixed_id_and_idless_calls_pair_out_of_order(
+    recorder, monkeypatch: pytest.MonkeyPatch, idless_first: bool
+):
+    _stub_main_run_db(recorder, monkeypatch)
+
+    await _tool_call(recorder, "code_search", "tc1")  # the call that knows its id
+    await _tool_call(recorder, "code_search")  # an older-style call with no id
+    if idless_first:
+        await _tool_result(recorder, "code_search", "no-id-result")
+        await _tool_result(recorder, "code_search", "id-result", "tc1")
+    else:
+        await _tool_result(recorder, "code_search", "id-result", "tc1")
+        await _tool_result(recorder, "code_search", "no-id-result")
+
+    buf = recorder._main_tool_buf
+    assert [t["result_summary"] for t in buf] == ["id-result", "no-id-result"]
+
+
+@pytest.mark.asyncio
+async def test_a_result_whose_id_matches_no_pending_call_attaches_to_nothing(
+    recorder, monkeypatch: pytest.MonkeyPatch
+):
+    _stub_main_run_db(recorder, monkeypatch)
+
+    await _tool_call(recorder, "code_search", "tc1")
+    await _tool_result(recorder, "code_search", "stray-result", "tc-unknown")
+
+    buf = recorder._main_tool_buf
+    assert len(buf) == 1  # no phantom entry
+    assert buf[0]["result_summary"] is None  # the pending call stays pending
+
+
+@pytest.mark.asyncio
+async def test_the_call_id_is_recorder_bookkeeping_not_part_of_the_saved_json(
+    recorder, monkeypatch: pytest.MonkeyPatch
+):
+    saved, finalized = _stub_main_run_db(recorder, monkeypatch)
+
+    await _tool_call(recorder, "code_search", "tc1", {"query": "q"})
+    await _tool_result(recorder, "code_search", "output", "tc1")
+    await recorder.on_event(AgentEvent(type=EventType.AGENT_END, data={"result": "done"}))
+
+    expected_keys = {"name", "args", "started_at", "result_summary", "elapsed", "ok", "reason_class"}
+    for payload in [*saved, finalized["tool_calls"]]:
+        assert payload  # the live save of the call itself, then of its result, then the finalize
+        assert not any(key.startswith("_") for key in payload[0])
+    assert set(finalized["tool_calls"][0]) == expected_keys
