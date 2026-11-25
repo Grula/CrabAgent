@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { readFile, saveFile } from "../api/files";
+import { isAbsolutePath } from "../lib/workspaceFiles";
 
 type ViewMode = "split" | "source" | "preview";
 
@@ -12,9 +13,16 @@ interface Props {
   filePath: string;
   className?: string;
   onClose?: () => void;
+  /** Chat session whose workspace a relative path resolves against. */
+  sessionId?: string;
 }
 
-export function MarkdownPanel({ filePath, className, onClose }: Props) {
+/** Only pass session_id when there is one, so the param is never "undefined". */
+function readOptions(sessionId?: string) {
+  return sessionId ? { sessionId } : {};
+}
+
+export function MarkdownPanel({ filePath, className, onClose, sessionId }: Props) {
   const [source, setSource] = useState("");
   const [originalSource, setOriginalSource] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("split");
@@ -31,7 +39,7 @@ export function MarkdownPanel({ filePath, className, onClose }: Props) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    readFile(filePath)
+    readFile(filePath, isAbsolutePath(filePath), readOptions(sessionId))
       .then((res) => {
         if (cancelled) return;
         setSource(res.content);
@@ -47,7 +55,7 @@ export function MarkdownPanel({ filePath, className, onClose }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [filePath]);
+  }, [filePath, sessionId]);
 
   // ── Save ───────────────────────────────────────────────────
   const handleSave = useCallback(async () => {

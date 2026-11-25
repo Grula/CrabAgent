@@ -60,6 +60,18 @@ def excluded_tool_names(context) -> set[str]:
     }
 
 
+def workspace_prompt_section(prompt: str, context) -> str:
+    """The ``## Workspace`` tree section, or ``""`` when off, empty or present."""
+    from crabagent.core.agent.workspace_tree import (
+        WORKSPACE_SECTION_HEADING,
+        build_workspace_section,
+    )
+
+    if WORKSPACE_SECTION_HEADING in prompt:
+        return ""
+    return build_workspace_section(getattr(context, "workspace", None))
+
+
 def build_runtime_system_prompt(context) -> str:
     from crabagent.core.agent.failure_modes import inject_failure_modes, known_failure_modes
 
@@ -67,6 +79,11 @@ def build_runtime_system_prompt(context) -> str:
     if not prompt:
         return ""
     prompt = inject_failure_modes(prompt, known_failure_modes())
+    # Once per run: the loop builds this before its first model call, and the
+    # section is skipped if the prompt already carries one.
+    section = workspace_prompt_section(prompt, context)
+    if section:
+        prompt = prompt.rstrip() + "\n\n" + section
     preamble = capability_preamble(
         context.execution_mode,
         unavailable_tools(context.tool_registry, context.execution_mode),

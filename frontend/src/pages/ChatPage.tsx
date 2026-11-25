@@ -87,6 +87,12 @@ import {
   needsOfficePreview,
   workspaceFileKind,
 } from "../lib/workspaceFiles";
+import {
+  buildDocTabItems,
+  editorReportUpdate,
+  fallbackAfterClose,
+  fileBaseName,
+} from "../lib/docTabModel";
 import { DiscardChangesDialog } from "../components/DiscardChangesDialog";
 
 interface Props {
@@ -113,11 +119,6 @@ const STARTER_PROMPTS = [
   { icon: <Sparkles size={14} />, label: "Brainstorm ideas", prompt: "Brainstorm ideas for " },
   { icon: <MessageSquare size={14} />, label: "Write a doc", prompt: "Write a document about " },
 ];
-
-/** Basename of a workspace path, used for the tab chip labels. */
-function fileBaseName(path: string): string {
-  return path.split("/").pop() || path;
-}
 
 export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange, onActiveSessionChange, onActiveBranchChange }: Props) {
   const mode = view;
@@ -424,12 +425,14 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   const handleEditorState = useCallback((state: CodePanelState) => {
     editorStateRef.current = state;
     // The panel owns the open documents; follow its active tab so reopening a
-    // file from the tree is a path change again and never a remount. While the
-    // panel is hidden behind a document its report must not steal the active
-    // path back, or the document would be replaced by the code editor.
-    if (!codeActiveRef.current) return;
-    if (state.openPath) setLastCodePath(state.openPath);
-    setCurrentDocPath(state.openPath);
+    // file from the tree is a path change again and never a remount. Closing
+    // its last tab takes the code chip with it (a chip with no tab behind it
+    // would open an empty editor), while a report from the panel hidden behind
+    // a document must not steal the active path back, or the document would be
+    // replaced by the code editor.
+    const update = editorReportUpdate(state, { codeActive: codeActiveRef.current });
+    if (update.lastCodePath !== undefined) setLastCodePath(update.lastCodePath);
+    if (update.activePath !== undefined) setCurrentDocPath(update.activePath);
   }, []);
 
   /**
@@ -594,18 +597,13 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   }, [openDocInPanel]);
 
   /** The tab strip: the code chip (once the editor started) then the documents. */
-  const docTabItems: DocTab[] = [];
-  if (codeStarted && lastCodePath) {
-    docTabItems.push({
-      path: lastCodePath,
-      name: fileBaseName(lastCodePath),
-      kind: "code",
-      active: codeActive,
-    });
-  }
-  for (const doc of openDocs) {
-    docTabItems.push({ path: doc.path, name: doc.name, kind: "doc", active: currentDocPath === doc.path });
-  }
+  const docTabItems: DocTab[] = buildDocTabItems({
+    codeStarted,
+    lastCodePath,
+    codeActive,
+    openDocs,
+    currentDocPath,
+  });
 
   /** Show an open document chip; an office preview reloads when another one is cached. */
   const activateDoc = useCallback((path: string, name: string) => {
@@ -641,30 +639,62 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   const handleCloseDocTab = useCallback((path: string) => {
     const index = openDocs.findIndex((doc) => doc.path === path);
     if (index < 0) return;
-    const remaining = openDocs.filter((doc) => doc.path !== path);
-    setOpenDocs(remaining);
+    setOpenDocs(openDocs.filter((doc) => doc.path !== path));
     // The cached office preview goes with its tab.
     if (docState?.filePath === path) setDocState(null);
     if (codeActive || currentDocPath !== path) return;
-    if (codeStarted && lastCodePath) {
-      setCurrentDocPath(lastCodePath);
+    const fallback = fallbackAfterClose({
+      openDocs,
+      closedPath: path,
+      codePath: codeStarted ? lastCodePath : null,
+    });
+    if (!fallback) {
+      setCurrentDocPath(null);
+      setDocState(null);
       return;
     }
-    const neighbour = remaining[Math.min(index, remaining.length - 1)];
-    if (neighbour) {
-      activateDoc(neighbour.path, neighbour.name);
+    if (fallback.kind === "code") {
+      setCurrentDocPath(fallback.path);
       return;
     }
-    setCurrentDocPath(null);
-    setDocState(null);
+    activateDoc(fallback.path, fallback.name);
   }, [openDocs, docState?.filePath, codeActive, currentDocPath, codeStarted, lastCodePath, activateDoc]);
 
-  /** A panel's own close button: drop its tab and clear the visible document. */
+  /**
+   * A panel's own close button: drop its tab and hand the area to what the
+   * strip offers next — the same chain a tab's X walks (code chip as long as
+   * CodePanel still holds a tab, then a neighbouring document, then the empty
+   * state) — instead of blanking the area while the code chip is right there.
+   */
   const closeActiveDoc = useCallback(() => {
-    if (currentDocPath) setOpenDocs((prev) => prev.filter((doc) => doc.path !== currentDocPath));
-    setDocState(null);
-    setCurrentDocPath(null);
-  }, [currentDocPath]);
+    const closing = currentDocPath;
+    // An agent-started document can have a preview but no tab yet (docState
+    // only): there is nothing to fall back to, drop the preview.
+    if (!closing) {
+      setDocState(null);
+      return;
+    }
+    setOpenDocs((prev) => prev.filter((doc) => doc.path !== closing));
+    // Only the closed document's cached preview goes; a neighbour's can be reused.
+    if (docState?.filePath === closing) setDocState(null);
+    const fallback = fallbackAfterClose({
+      openDocs,
+      closedPath: closing,
+      codePath: codeStarted ? lastCodePath : null,
+    });
+    if (!fallback) {
+      setCurrentDocPath(null);
+      setDocState(null);
+      return;
+    }
+    if (fallback.kind === "code") {
+      // The editor takes the area: no document preview belongs to it.
+      setDocState(null);
+      setCurrentDocPath(fallback.path);
+      return;
+    }
+    activateDoc(fallback.path, fallback.name);
+  }, [currentDocPath, openDocs, docState?.filePath, codeStarted, lastCodePath, activateDoc]);
 
   // Sync active session ID to parent (for NavBar language switcher reset)
   useEffect(() => {
@@ -1923,6 +1953,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                       <MarkdownPanel
                         key={currentDocPath}
                         filePath={currentDocPath}
+                        sessionId={activeSession?.session_id}
                         onClose={closeActiveDoc}
                       />
                     ) : docState ? (

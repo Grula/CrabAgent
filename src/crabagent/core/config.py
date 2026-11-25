@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # every request. Set CRAB_DEFER_TOOLS=false to always send all tools.
     defer_tools: bool = True
 
+    # A small, size-capped tree of the workspace goes into the system prompt so
+    # the model knows the project's shape without spending a tool call on glob.
+    # This is the entry cap (at most ~4k characters, ~1k tokens); 0 removes the
+    # section entirely.
+    workspace_tree_max_entries: int = 200
+
     model_token_limits: dict[str, int] = {}
     context_compression_threshold: float = 0.8
     # Also compact once the context passes this many tokens, however large the

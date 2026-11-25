@@ -29,6 +29,16 @@ export function fileExtension(name: string): string {
   return dot < 0 ? "" : name.slice(dot + 1).toLowerCase();
 }
 
+/**
+ * True when a panel was handed an absolute path (the Work file tree sends those)
+ * rather than a workspace-relative one. Reads and writes must say which it is:
+ * the server resolves a relative path against the session workspace, but treats
+ * an absolute one as outside it unless `absolute=true` is sent.
+ */
+export function isAbsolutePath(path: string): boolean {
+  return path.startsWith("/");
+}
+
 /** True for files the code editor opens (rather than the office preview). */
 export function isCodeFile(name: string): boolean {
   return CODE_EXTENSIONS.has(fileExtension(name));
