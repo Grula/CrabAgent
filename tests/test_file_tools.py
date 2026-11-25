@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from crabagent.core.agent.context import AgentContext
 from crabagent.core.agent.tools.edit import edit_file
 from crabagent.core.agent.tools.glob import _glob_to_regex, glob_files
@@ -410,3 +412,237 @@ def test_write_description_points_existing_files_at_edit():
     assert "prefer edit" in description
     assert "replaces the whole file" in description
     assert "silently discards anything not included in the new content" in description
+
+
+# ── edit: batch replacements ──────────────────────────────────────────
+
+
+def _count_writes(monkeypatch) -> list[str]:
+    """Record every batch/single file write through the edit tool's write helper."""
+    from crabagent.core.agent.tools import edit as edit_module
+
+    writes: list[str] = []
+    real_write = edit_module._write_edited
+
+    def spy(path, new_content):
+        writes.append(str(path))
+        return real_write(path, new_content)
+
+    monkeypatch.setattr(edit_module, "_write_edited", spy)
+    return writes
+
+
+def test_edit_batch_three_replacements_writes_once(tmp_path: Path, monkeypatch):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.py"
+    target.write_text("alpha = 1\nbeta = 2\ngamma = 3\n", encoding="utf-8")
+    writes = _count_writes(monkeypatch)
+
+    result = edit_file(
+        str(target),
+        replacements=[
+            {"old_string": "alpha = 1", "new_string": "alpha = 10"},
+            {"old_string": "beta = 2", "new_string": "beta = 20"},
+            {"old_string": "gamma = 3", "new_string": "gamma = 30"},
+        ],
+        context=context,
+    )
+
+    assert target.read_text(encoding="utf-8") == "alpha = 10\nbeta = 20\ngamma = 30\n"
+    assert writes == [str(target)]
+    lines = result.splitlines()
+    assert lines[:3] == ["1. ok (1 replacement)", "2. ok (1 replacement)", "3. ok (1 replacement)"]
+    assert "Applied 3 of 3 replacements to" in result
+    assert "Successfully replaced 3 occurrences" in result
+
+
+def test_edit_batch_missing_item_keeps_other_items(tmp_path: Path, monkeypatch):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.py"
+    target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    writes = _count_writes(monkeypatch)
+
+    result = edit_file(
+        str(target),
+        replacements=[
+            {"old_string": "one", "new_string": "ONE"},
+            {"old_string": "absent text here", "new_string": "x"},
+            {"old_string": "three", "new_string": "THREE"},
+        ],
+        context=context,
+    )
+
+    assert target.read_text(encoding="utf-8") == "ONE\ntwo\nTHREE\n"
+    assert len(writes) == 1
+    assert "1. ok (1 replacement)" in result
+    assert "2. not found: absent text here" in result
+    assert "3. ok (1 replacement)" in result
+    assert "Applied 2 of 3 replacements to" in result
+
+
+def test_edit_batch_ambiguous_item_reported(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.py"
+    target.write_text("dup\ndup\nkeep\n", encoding="utf-8")
+
+    result = edit_file(
+        str(target),
+        replacements=[
+            {"old_string": "dup", "new_string": "ok"},
+            {"old_string": "keep", "new_string": "KEPT"},
+        ],
+        context=context,
+    )
+
+    assert "1. ambiguous: 2 matches" in result
+    assert "2. ok (1 replacement)" in result
+    assert "Applied 1 of 2 replacements to" in result
+    assert target.read_text(encoding="utf-8") == "dup\ndup\nKEPT\n"
+
+
+def test_edit_batch_replace_all_item_replaces_every_occurrence(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "names.py"
+    target.write_text("old_name = 1\nprint(old_name)\n", encoding="utf-8")
+
+    result = edit_file(
+        str(target),
+        replacements=[
+            {"old_string": "old_name", "new_string": "new_name", "replace_all": True},
+        ],
+        context=context,
+    )
+
+    assert "1. ok (2 replacements)" in result
+    assert target.read_text(encoding="utf-8") == "new_name = 1\nprint(new_name)\n"
+
+
+def test_edit_batch_items_apply_in_order(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.py"
+    target.write_text("step1\n", encoding="utf-8")
+
+    result = edit_file(
+        str(target),
+        replacements=[
+            {"old_string": "step1", "new_string": "step2"},
+            {"old_string": "step2", "new_string": "step3"},
+        ],
+        context=context,
+    )
+
+    assert target.read_text(encoding="utf-8") == "step3\n"
+    assert "Applied 2 of 2 replacements to" in result
+
+
+def test_edit_batch_all_items_fail_leaves_file_untouched(tmp_path: Path, monkeypatch):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.py"
+    target.write_text("dup\ndup\n", encoding="utf-8")
+    before_mtime = target.stat().st_mtime_ns
+    writes = _count_writes(monkeypatch)
+
+    result = edit_file(
+        str(target),
+        replacements=[
+            {"old_string": "missing", "new_string": "x"},
+            {"old_string": "dup", "new_string": "ok"},
+        ],
+        context=context,
+    )
+
+    assert writes == []
+    assert target.read_text(encoding="utf-8") == "dup\ndup\n"
+    assert target.stat().st_mtime_ns == before_mtime
+    assert result.startswith("Error: 0 of 2 replacements applied")
+    assert "1. not found: missing" in result
+    assert "2. ambiguous: 2 matches" in result
+
+
+def test_edit_batch_rejects_single_pair_and_replacements_together(tmp_path: Path, monkeypatch):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.py"
+    target.write_text("hello\n", encoding="utf-8")
+    writes = _count_writes(monkeypatch)
+
+    result = edit_file(
+        str(target),
+        "hello",
+        "bye",
+        replacements=[{"old_string": "hello", "new_string": "bye"}],
+        context=context,
+    )
+
+    assert result.startswith("Error: provide either old_string/new_string or replacements, not both")
+    assert writes == []
+    assert target.read_text(encoding="utf-8") == "hello\n"
+
+
+def test_edit_rejects_call_without_any_replacement_argument(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.py"
+    target.write_text("hello\n", encoding="utf-8")
+
+    missing = edit_file(str(target), context=context)
+    half_pair = edit_file(str(target), old_string="hello", context=context)
+    empty = edit_file(str(target), replacements=[], context=context)
+
+    assert missing.startswith("Error: missing arguments")
+    assert "replacements" in missing
+    assert half_pair.startswith("Error: missing arguments")
+    assert empty.startswith("Error: replacements must not be empty")
+    assert target.read_text(encoding="utf-8") == "hello\n"
+
+
+def test_edit_single_pair_result_unchanged_by_batch_support(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.py"
+    target.write_text("old_name = 1\nprint(old_name)\n", encoding="utf-8")
+
+    one = edit_file(str(target), "= 1", "= 2", context=context)
+    all_ = edit_file(str(target), "old_name", "final_name", replace_all=True, context=context)
+
+    assert one == f"Successfully replaced 1 occurrence in {target} @ L1"
+    assert all_ == f"Successfully replaced 2 occurrences in {target} (first @ L1)"
+    assert target.read_text(encoding="utf-8") == "final_name = 2\nprint(final_name)\n"
+
+
+@pytest.mark.asyncio
+async def test_edit_batch_via_registry_confirms_once_and_snapshots_once(tmp_path: Path, monkeypatch):
+    from crabagent.core.agent.tools.registry import registry
+
+    target = tmp_path / "f.py"
+    target.write_text("one\ntwo\n", encoding="utf-8")
+
+    confirms: list[str] = []
+    snapshots: list[str] = []
+
+    async def fake_confirm(name, args):
+        confirms.append(name)
+        return True
+
+    real_snapshot = registry._take_molt_snapshot
+
+    async def spy_snapshot(name, args, ctx):
+        snapshots.append(name)
+        return await real_snapshot(name, args, ctx)
+
+    monkeypatch.setattr(registry, "_take_molt_snapshot", spy_snapshot)
+
+    context = AgentContext(workspace=tmp_path, confirm_callback=fake_confirm)
+    result = await registry.execute(
+        "edit",
+        {
+            "file_path": str(target),
+            "replacements": [
+                {"old_string": "one", "new_string": "ONE"},
+                {"old_string": "two", "new_string": "TWO"},
+            ],
+        },
+        context=context,
+    )
+
+    assert target.read_text(encoding="utf-8") == "ONE\nTWO\n"
+    assert "Applied 2 of 2 replacements to" in result
+    assert confirms == ["edit"]
+    assert snapshots == ["edit"]

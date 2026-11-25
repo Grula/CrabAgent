@@ -59,6 +59,11 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true", help="Show diagnostic logs")
     parser.add_argument("--show-thinking", action="store_true", help="Show streamed model reasoning")
     parser.add_argument("--mcp", action="store_true", help="Enable MCP tools for this one-off request")
+    parser.add_argument(
+        "--mcp-server",
+        action="store_true",
+        help="Run a read-only MCP server (stdio) exposing read/glob/grep",
+    )
     parser.add_argument("--no-persist", action="store_true", help="Disable conversation persistence")
     parser.add_argument("--old", action="store_true", help="Use legacy single-panel TUI")
 
@@ -76,6 +81,13 @@ def main():
     from crabagent.core import configure_litellm
 
     configure_litellm()
+
+    if args.mcp_server:
+        # Read-only MCP server on stdio: stdout carries JSON-RPC frames only.
+        # Takes precedence over --serve; the workspace defaults to the cwd.
+        from crabagent.mcp_server import run as run_mcp_server
+
+        sys.exit(run_mcp_server(args.workspace or Path.cwd()))
 
     if args.serve:
         try:

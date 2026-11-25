@@ -1,6 +1,6 @@
 # GitHub Copilot Chat to CrabAgent: parity and hardening plan
 
-Owner: System Architect. Last updated: 2026-11-24. This file is the durable copy of the approved plan; re-read it before planning any step.
+Owner: System Architect. Last updated: 2026-11-25. This file is the durable copy of the approved plan; re-read it before planning any step.
 
 Status legend: **done** | **partly** (what is missing is stated) | **not started** | **dropped** (reason stated).
 
@@ -35,15 +35,15 @@ Adapt, do not rebuild. CrabAgent already has the equivalent machinery: one `Tool
 | Skills via tool search | toolSearch / skills | equivalent | none |
 | MCP client | VS Code MCP client | equivalent | none |
 | Browser and vision tools | openSimpleBrowser / screenshot | equivalent | none |
-| Semantic code search | semantic search over the workspace index | **missing** | Build (T3, on hold) |
-| Batch multi-file edit | editFiles with multiple edits, one approval | **partial** | Add `replacements` to `edit` (T2) |
-| Workspace tree in context | implicit workspace listing | **partial** | Size-capped tree in the system prompt (T1 leftover) |
-| Diff preview on approval | edit approval shows a diff | **partial** | Built; persistence was the gap (T1) |
+| Semantic code search | semantic search over the workspace index | **missing** | Implementation choice pending the user's decision (T3) |
+| Batch multi-file edit | editFiles with multiple edits, one approval | **done** | `replacements` array on `edit` (T2) |
+| Workspace tree in context | implicit workspace listing | **done** | Size-capped tree is in the system prompt (measured cost in T1) |
+| Diff preview on approval | edit approval shows a diff | **done** | Built and persisted, verified live (T1) |
 | Per-tool argument contract | Ajv plus coercion | **done** | T1 |
 | In-loop cancellation | CancellationToken | **done** | T4, extended to running tools |
 | Stop / continuation hook | stop and subagent-stop hooks | **done** | T4 |
 | Before-tool hook | pre-tool policy hook | **done** | added during T4 follow-up |
-| MCP server surface (expose CrabAgent tools) | not offered | **missing** | Build read-only mode (T5) |
+| MCP server surface (expose CrabAgent tools) | not offered | **done** | Read-only stdio server, `--mcp-server` (T5) |
 | Code editor UI | VS Code itself | **done** (CrabAgent-specific) | T6 |
 | Result truncation by window fraction | `MAX_TOOL_RESPONSE_PCT` | **dropped** | See section 7 |
 
@@ -69,17 +69,17 @@ Never propose a tool that duplicates an existing CrabAgent capability; every tas
 ### T1 - Tool contract hardening
 Deliverables: argument repair plus JSON-Schema validation at the registry boundary; actionable error strings; two description alignments (`grep.include` is a path glob while `pattern` is always a regex; `write` steers existing files to `edit`); size-capped workspace tree in the system prompt; diff preview on write/edit confirmations.
 Acceptance: a wrong-typed argument yields one actionable message naming the argument and the handler is not called; every valid call behaves exactly as before; the confirm card shows the pending diff; the tree costs a bounded number of tokens.
-Status: **partly** — validation, coercion, both description alignments, the diff preview (including persistence, so a reloaded confirmation shows it) and directory-scoped `include` globs are built and verified; the size-capped workspace tree is the only T1 item still missing.
+Status: **done** — validation, coercion, both description alignments, the diff preview (including persistence, so a reloaded confirmation shows it), directory-scoped `include` globs and the size-capped workspace tree in the system prompt are built and verified. The tree costs a measured 176 entries, 3951 characters, about 990 tokens for this repository; the cap is 200 entries / 4000 chars, set by `workspace_tree_max_entries` (0 disables it).
 
 ### T2 - Batch multi-file edit
 Deliverables: optional `replacements` list on `edit`, applied as one unit with one permission prompt, one molt snapshot for the batch, per-item results.
 Acceptance: a batch of N edits produces one confirmation, one snapshot, N per-item outcomes, and never a partially applied file; failures are reported per item without aborting the rest.
-Status: **not started**.
+Status: **done** — optional `replacements` array on `edit`, applied in order in memory with one write, one confirmation and one molt snapshot; per-item result lines report each change; 10 tests.
 
 ### T3 - Semantic code search
 Deliverables: an index over the workspace and a search tool that returns ranked locations.
 Acceptance: relevant hits for natural-language queries; bounded build time and memory; incremental update on file change.
-Status: **not started**, deliberately on hold pending open question 1.
+Status: **not started**, deliberately on hold pending open question 1. The implementation choice, cost and build-time estimate are written up and awaiting the user's decision; the recommendation is a symbol/RAG-lite index over local embeddings, because no embedding runtime is installed (only numpy) while FTS5 is already in the database, a full symbol index of this repository builds in seconds against roughly 30-60 s for embeddings on CPU, and identifier-level queries are what a coding agent mostly issues.
 
 ### T4 - Agent loop hardening
 Deliverables: provider-failure reporting for every failure path (pre-loop setup, mid-loop, exceptions escaping the run task); cooperative cancellation checked at iteration boundaries and between tool calls; mid-tool cancellation that kills a running tool's process group; stop/continuation hook; before-tool hook.
@@ -89,12 +89,12 @@ Status: **done**. Dropped from T4: run-level token budget (see section 8) and wi
 ### T5 - MCP server mode
 Deliverables: `crabagent --mcp-server` exposing the read-only tool allowlist over MCP; mutating tools refused.
 Acceptance: a real MCP client session lists the allowlisted tools and calls one successfully; a mutating tool call is refused with a clear error; no filesystem write is possible through the server.
-Status: **not started**.
+Status: **done** — `crabagent --mcp-server`, a dependency-free stdio JSON-RPC server, exposes an allowlist of exactly `read`, `glob` and `grep`; every other tool is refused before a handler runs, and path escapes are contained. Verified with a real MCP SDK client session (handshake, list, read, refused write that wrote nothing); 21 tests.
 
 ### T6 - Editor UI and agent integration
 Deliverables: CodeMirror 6 editor in the Work tab, file tree, tabs, save, backend tree/read/write endpoints, `file_updated` sync without losing the cursor, active file injected into agent context, dirty-buffer banner (Reload / Show diff) with no auto-merge, graceful read-only state for binary and oversized files.
 Acceptance: open a file, edit, save, see it on disk; an agent edit updates the buffer without moving the cursor; a dirty buffer is never silently reloaded.
-Status: **partly** — built and browser-verified, except two tab edge cases: closing every code tab leaves a code chip that opens an empty editor, and `closeActiveDoc` shows an empty state instead of falling back to the code chip.
+Status: **done** — built and browser-verified; both tab holes are closed, and the Markdown preview 404 is fixed: `MarkdownPanel` now sends `isAbsolutePath(path)` plus the session id (4 unit tests). Known gap, tracked separately: Markdown **save** still omits `absolute`/`session_id`.
 
 ## 8. Dropped work and why
 
@@ -107,8 +107,8 @@ Status: **partly** — built and browser-verified, except two tab edge cases: cl
 
 ## 9. Open questions
 
-1. **T3 implementation choice** (blocking T3): local embeddings versus a symbol/RAG-lite index. Needs cost, build time for this repository and a recommendation before any code.
-2. Please confirm, in your own live check after a restart, that a reloaded confirmation still shows the diff. The persistence is implemented and covered by tests; the live confirm-gated edit is what remains to be seen.
+1. **T3 implementation choice** (blocking T3): local embeddings versus a symbol/RAG-lite index. Needs cost, build time for this repository and a recommendation before any code. **Answered, pending decision** — the recommendation is a symbol/RAG-lite index over local embeddings, because no embedding runtime is installed (only numpy) while FTS5 is already in the database, a symbol index builds in seconds against roughly 30-60 s for embeddings on CPU, and identifier-level queries are what a coding agent mostly issues. Numbers: 632 files / 137k lines to index, about 3.2k chunks at 40 lines, roughly 5 MB of 384-dim vectors, versus a symbol index build under 5 s with no new dependency.
+2. **Resolved** — verified on a preview server with one real `deepseek-flash` model call: the confirm-gated `edit` showed its diff (`+1`/`-1`, correct path) and the diff was still present after a page reload.
 3. Binary and oversized files in the editor: currently read-only and truncated; decide whether any of that should be surfaced to the agent as a distinct tool result.
 4. `grep.include` now expresses directory-scoped globs: a pattern containing `**` spans directories (`src/**/*.py` matches `src/a.py`), and bare filename globs such as `*.py` behave exactly as before.
 
@@ -117,3 +117,4 @@ Status: **partly** — built and browser-verified, except two tab edge cases: cl
 - 2026-11-24: document created (reconstruction). T1 partly, T4 done, T6 partly. Token budget removed. Window-fraction truncation dropped.
 - 2026-11-24: diff preview now persisted with the confirmation (backend) and restored on reload in the UI. Cancel-versus-auto-background race fixed: a cancel that lands inside `bash`'s timeout window kills the process group. `grep.include` accepts directory-scoped globs. T1 now misses only the size-capped workspace tree.
 - 2026-11-24: full Python suite 1383 passing; frontend 222 tests passing.
+- 2026-11-25: T1, T2, T5 and T6 done. Workspace tree in the system prompt (176 entries, 3951 chars, about 990 tokens here; cap 200 entries / 4000 chars). T2 batch replacements on `edit`: one write, one confirmation, one molt snapshot, per-item results. T5 `crabagent --mcp-server`: read-only stdio MCP server over `read`/`glob`/`grep`. T6 tab edge cases closed, plus the Markdown preview read fix (`isAbsolutePath(path)` and the session id); Markdown save still to do. Full Python suite 1434 passing; frontend 234 tests passing.

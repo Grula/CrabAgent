@@ -41,11 +41,10 @@ _INDENT = "  "
 
 
 def _skip(name: str, is_dir: bool) -> bool:
-    if is_dir:
-        if name in SKIP_DIR_NAMES:
-            return True
-        return name.startswith(".")
-    # Hidden files (.env, .gitignore, .DS_Store, ...) are noise here.
+    """Noise is skipped: build output, dependency and cache dirs, and every
+    hidden entry (``.git``, ``.crabagent``, ``.env``, ...)."""
+    if is_dir and name in SKIP_DIR_NAMES:
+        return True
     return name.startswith(".")
 
 
