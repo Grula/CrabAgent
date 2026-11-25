@@ -1,12 +1,12 @@
 """Read-only MCP server: exposes a small allowlist of CrabAgent tools over stdio.
 
-``crabagent --mcp-server`` speaks newline-delimited JSON-RPC 2.0 on stdin/stdout
-and implements the subset of MCP a client needs to browse and call tools:
+``crabagent --mcp-server`` speaks the Model Context Protocol on stdin/stdout,
+built on the official ``mcp`` SDK (the same dependency CrabAgent's *client*
+already uses), so the wire format, handshake and frame parsing are the SDK's
+rather than something this module maintains by hand.
 
-    initialize, notifications/initialized, ping, tools/list, tools/call
-
-Dependency-free on purpose: the binary is local-first, and the MCP python SDK is
-optional (CrabAgent's *client* uses it, the server must not require it).
+Only three things are registered with the SDK: ``tools/list`` and ``tools/call``
+handlers plus the standard ``initialize``/``ping`` machinery the SDK owns.
 
 Safety model
 ------------
@@ -23,18 +23,21 @@ Safety model
 * No handler outside the allowlist ever runs, so no network access, no
   subprocess and no file write is reachable through this server.
 
-Nothing but JSON-RPC frames is ever written to stdout; logs go to stderr.
+Nothing but MCP frames is ever written to stdout; logs go to stderr.
 """
 
 from __future__ import annotations
 
-import asyncio
-import copy
 import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
+
+import anyio
+from mcp import types
+from mcp.server.lowlevel import Server
+from mcp.server.stdio import stdio_server
 
 from crabagent import __version__
 
@@ -52,13 +55,6 @@ READ_ONLY_TOOLS: tuple[str, ...] = ("read", "glob", "grep")
 READ_ONLY_TOOL_SET = frozenset(READ_ONLY_TOOLS)
 
 SERVER_NAME = "crabagent"
-PROTOCOL_VERSION = "2024-11-05"
-
-# JSON-RPC 2.0 error codes used here.
-PARSE_ERROR = -32700
-INVALID_REQUEST = -32600
-METHOD_NOT_FOUND = -32601
-INVALID_PARAMS = -32602
 
 # Arguments that name a filesystem location and must stay inside the workspace.
 _PATH_ARGUMENTS = ("file_path", "path")
@@ -75,25 +71,13 @@ _MAX_RESULT_CHARS = 200_000
 logger = logging.getLogger(__name__)
 
 
-class Stream(Protocol):
-    def readline(self) -> str: ...
-
-    def write(self, data: str) -> Any: ...
-
-    def flush(self) -> Any: ...
+def _text_content(text: str) -> list[types.TextContent]:
+    return [types.TextContent(type="text", text=text)]
 
 
-def _error(msg_id: Any, code: int, message: str) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}}
-
-
-def _result(msg_id: Any, result: dict[str, Any]) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": msg_id, "result": result}
-
-
-def _tool_result(text: str, *, is_error: bool = False) -> dict[str, Any]:
-    """MCP CallToolResult shape."""
-    return {"content": [{"type": "text", "text": text}], "isError": is_error}
+def _tool_result(text: str, *, is_error: bool = False) -> types.CallToolResult:
+    """MCP CallToolResult carrying a single text block."""
+    return types.CallToolResult(content=_text_content(text), is_error=is_error)
 
 
 def _to_text(result: Any) -> str:
@@ -115,13 +99,6 @@ def _looks_like_error(text: str) -> bool:
     return text.lstrip().startswith("Error")
 
 
-def _negotiate_protocol_version(requested: Any) -> str:
-    """Echo the client's protocol version when it looks like a date, else ours."""
-    if isinstance(requested, str) and len(requested) == 10 and requested[4] == "-" and requested[7] == "-":
-        return requested
-    return PROTOCOL_VERSION
-
-
 class ReadOnlyMcpServer:
     """MCP server exposing only ``READ_ONLY_TOOLS`` inside one workspace."""
 
@@ -131,109 +108,71 @@ class ReadOnlyMcpServer:
         # tool_permissions means every tool stays on its own default (auto).
         self.context = AgentContext(workspace=self.workspace)
         self.registry = tool_registry or registry
+        # The SDK's low-level server: it owns initialize/ping/frame parsing, and
+        # dispatches only the two handlers below. The allowlist stays ours.
+        self.server: Server[Any] = Server(
+            SERVER_NAME,
+            version=__version__,
+            on_list_tools=self.handle_list_tools,
+            on_call_tool=self.handle_call_tool,
+        )
 
-    # ── protocol ────────────────────────────────────────────────────────
-    async def handle_line(self, line: str) -> dict[str, Any] | None:
-        """Parse one newline-delimited frame and answer it (or not)."""
-        if not line.strip():
-            return None
-        try:
-            message = json.loads(line)
-        except ValueError as exc:
-            logger.debug("malformed JSON-RPC frame: %s", exc)
-            return _error(None, PARSE_ERROR, f"Parse error: {exc}")
-        return await self.handle_message(message)
+    # ── handlers registered with the SDK ────────────────────────────────
+    async def handle_list_tools(
+        self,
+        ctx: Any = None,
+        params: Any = None,
+    ) -> types.ListToolsResult:
+        """``tools/list``: exactly the allowlist, schemas from the registry."""
+        return types.ListToolsResult(tools=self.tool_definitions())
 
-    async def handle_message(self, message: Any) -> dict[str, Any] | None:
-        if not isinstance(message, dict):
-            return _error(None, INVALID_REQUEST, "Invalid Request: expected a JSON object")
+    async def handle_call_tool(
+        self,
+        ctx: Any = None,
+        params: types.CallToolRequestParams | None = None,
+    ) -> types.CallToolResult:
+        """``tools/call``: refuse anything outside the allowlist, then run it."""
+        name = getattr(params, "name", None)
+        if not isinstance(name, str) or not name:
+            # The SDK validates params before we get here, so this is defensive.
+            return _tool_result("Error: missing tool name.", is_error=True)
 
-        method = message.get("method")
-        is_notification = "id" not in message
-        msg_id = message.get("id")
+        # The safety gate: allowlist check happens before any handler lookup or
+        # execution, so a mutating or unknown tool can never touch the machine.
+        if name not in READ_ONLY_TOOL_SET:
+            return _tool_result(self.refusal(name), is_error=True)
 
-        if not isinstance(method, str):
-            if is_notification:
-                return None
-            return _error(msg_id, INVALID_REQUEST, "Invalid Request: missing method")
+        arguments = getattr(params, "arguments", None) or {}
+        if not isinstance(arguments, dict):
+            return _tool_result("Error: 'arguments' must be an object.", is_error=True)
 
-        # Notifications (notifications/initialized, notifications/cancelled, …)
-        # never get a response.
-        if is_notification:
-            return None
+        escape = self._path_escape(arguments)
+        if escape:
+            return _tool_result(escape, is_error=True)
 
-        params = message.get("params")
-        if params is None:
-            params = {}
-
-        if method == "initialize":
-            requested = params.get("protocolVersion") if isinstance(params, dict) else None
-            return _result(
-                msg_id,
-                {
-                    "protocolVersion": _negotiate_protocol_version(requested),
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": SERVER_NAME, "version": __version__},
-                },
-            )
-        if method == "ping":
-            return _result(msg_id, {})
-        if method == "tools/list":
-            return _result(msg_id, {"tools": self.tool_definitions()})
-        if method == "tools/call":
-            return await self.call_tool(params, msg_id)
-        if method == "shutdown":
-            # Not part of the MCP spec; accepted so a client can ask us to stop.
-            return _result(msg_id, {})
-
-        return _error(msg_id, METHOD_NOT_FOUND, f"Method not found: {method}")
+        result = await self.registry.execute(name, arguments, self.context)
+        text = _to_text(result)
+        return _tool_result(text, is_error=_looks_like_error(text))
 
     # ── tools ───────────────────────────────────────────────────────────
-    def tool_definitions(self) -> list[dict[str, Any]]:
+    def tool_definitions(self) -> list[types.Tool]:
         """MCP tool entries for the allowlist, schema taken from the registry."""
-        defs: list[dict[str, Any]] = []
+        defs: list[types.Tool] = []
         for name in READ_ONLY_TOOLS:
             tool = self.registry.get(name)
             if tool is None:  # pragma: no cover - only if registration broke
                 logger.warning("allowlisted tool %r is not registered", name)
                 continue
             defs.append(
-                {
-                    "name": tool.name,
-                    "description": tool.description,
+                types.Tool(
+                    name=tool.name,
+                    description=tool.description,
                     # The registry's raw schema: tool_defs() adds CrabAgent's
                     # "summary" display parameter, which an MCP client should not see.
-                    "inputSchema": copy.deepcopy(tool.parameters),
-                }
+                    input_schema=json.loads(json.dumps(tool.parameters)),
+                )
             )
         return defs
-
-    async def call_tool(self, params: Any, msg_id: Any) -> dict[str, Any]:
-        if not isinstance(params, dict):
-            return _error(msg_id, INVALID_PARAMS, "Invalid params: 'params' must be an object")
-
-        name = params.get("name")
-        if not isinstance(name, str) or not name:
-            return _error(msg_id, INVALID_PARAMS, "Invalid params: missing tool name")
-
-        # The safety gate: allowlist check happens before any handler lookup or
-        # execution, so a mutating or unknown tool can never touch the machine.
-        if name not in READ_ONLY_TOOL_SET:
-            return _result(msg_id, _tool_result(self.refusal(name), is_error=True))
-
-        arguments = params.get("arguments")
-        if arguments is None:
-            arguments = {}
-        if not isinstance(arguments, dict):
-            return _error(msg_id, INVALID_PARAMS, "Invalid params: 'arguments' must be an object")
-
-        escape = self._path_escape(arguments)
-        if escape:
-            return _result(msg_id, _tool_result(escape, is_error=True))
-
-        result = await self.registry.execute(name, arguments, self.context)
-        text = _to_text(result)
-        return _result(msg_id, _tool_result(text, is_error=_looks_like_error(text)))
 
     def refusal(self, name: str) -> str:
         return _REFUSAL.format(name=name, allowed=", ".join(READ_ONLY_TOOLS))
@@ -257,24 +196,35 @@ class ReadOnlyMcpServer:
         return None
 
     # ── transport ───────────────────────────────────────────────────────
-    async def serve(self, stdin: Stream, stdout: Stream) -> None:
-        """Read newline-delimited frames until EOF, answering each one."""
+    def create_initialization_options(self) -> Any:
+        """Handshake options (server name/version) the SDK advertises."""
+        return self.server.create_initialization_options()
+
+    async def serve_stdio(self) -> None:
+        """Serve one stdio session until the client closes stdin."""
         logger.info("MCP server reading frames (workspace=%s)", self.workspace)
-        while True:
-            line = await asyncio.to_thread(stdin.readline)
-            if not line:
-                break
-            response = await self.handle_line(line)
-            if response is not None:
-                stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
-                stdout.flush()
+        async with stdio_server() as (read_stream, write_stream):
+            await self.server.run(read_stream, write_stream, self.create_initialization_options())
 
 
-def run(workspace: Path | str | None = None, *, stdin: Stream | None = None, stdout: Stream | None = None) -> int:
+def run_mcp_server(workspace: Path | str | None = None) -> int:
     """Entry point for ``crabagent --mcp-server``; returns the process exit code."""
     server = ReadOnlyMcpServer(workspace or Path.cwd())
     try:
-        asyncio.run(server.serve(stdin or sys.stdin, stdout or sys.stdout))
-    except KeyboardInterrupt:
+        anyio.run(server.serve_stdio)
+    except KeyboardInterrupt:  # pragma: no cover - interactive Ctrl-C
         pass
     return 0
+
+
+# Backwards-compatible alias: ``cli/__main__.py`` imports ``run``.
+run = run_mcp_server
+
+
+def _main() -> int:  # pragma: no cover - thin CLI shim
+    logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+    return run_mcp_server()
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(_main())

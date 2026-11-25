@@ -112,7 +112,67 @@ Status: **done** — built and browser-verified; both tab holes are closed, and 
 3. Binary and oversized files in the editor: currently read-only and truncated; decide whether any of that should be surfaced to the agent as a distinct tool result.
 4. `grep.include` now expresses directory-scoped globs: a pattern containing `**` spans directories (`src/**/*.py` matches `src/a.py`), and bare filename globs such as `*.py` behave exactly as before.
 
-## 10. Changelog
+## 10. T3 design (symbol / RAG-lite index)
+
+Decision: a symbol and text index over the workspace, built from SQLite FTS5 with no new dependency. Local embeddings are deferred; `core/memory_embed.py` already shows the guarded shape such a path would take.
+
+### What gets indexed
+
+- Files whose extension is in an explicit allowlist: `.py .pyi .ts .tsx .js .jsx .md .toml .yaml .yml .json .sh .sql`, under the workspace, skipping the same noise directories as the workspace tree (`.git`, `node_modules`, `dist`, `build`, `__pycache__`, virtualenvs, caches, `static/assets`).
+- Files larger than 512 KB and files with a NUL byte in the first 4 KB are skipped (binary or generated).
+- Two record kinds per file:
+  - **symbols** — Python via `ast` (functions, async functions, classes, methods, module level constants), TypeScript and JavaScript via a documented regex pass (classes, functions, exported consts, interfaces, types), Markdown via headings. Each symbol row carries its kind, name, qualified name, line range, signature line and leading docstring/comment.
+  - **text** — the file body, chunked at 60 lines with 10 lines of overlap, for full-text matching inside function bodies.
+
+Scale for this repository: 632 files, 137k lines, roughly 4k symbols and 3k text chunks.
+
+### Tables
+
+```
+code_files(id, workspace, path, lang, mtime_ms, size, sha1, indexed_at)
+  unique(workspace, path)
+code_symbols(id, file_id -> code_files.id, kind, name, qualname, start_line, end_line, signature, doc)
+code_chunks(id, file_id -> code_files.id, start_line, end_line, text)
+code_symbols_fts  -- FTS5, external content over code_symbols(name, qualname, signature, doc)
+code_chunks_fts   -- FTS5, external content over code_chunks(text)
+code_index_meta(key, value)  -- schema version, last full build, workspace fingerprint
+```
+
+No migration framework is used: new tables need only the model classes, since `create_all` builds them. The FTS5 tables and their triggers are created in `init_db()` the same way `messages_fts_cjk` already is.
+
+### How FTS5 is reused
+
+`messages_fts_cjk` already proves the pattern in this codebase: an FTS5 table with `content=` pointing at a base table plus insert/update/delete triggers, queried with `MATCH`. The code indexes copy that shape with the `unicode61` tokenizer — appropriate for identifiers because it keeps `_` and `.` out of the token stream only where desired; the query is built by escaping tokens and joining them with `OR`, then ranked with SQLite's built-in `bm25()` (which the existing message search does not currently use). Ranking blends three signals: `bm25` of the matched text, an exact or prefix match on `code_symbols.name`/`qualname`, and a path depth/segment bonus so `src/` outranks vendored trees. Results are deduplicated per file, then per symbol, and capped at 10 by default.
+
+### When it rebuilds
+
+- **Lazy first build**: on the first `code_search` call for a workspace with no rows (or a schema-version mismatch), the full index builds before answering. Measured cost for this repository is under 5 seconds (ast over 56k Python lines is 1–2 s, the regex pass over 35k TypeScript lines about 1 s, the rest is I/O and FTS inserts).
+- **Cheap staleness check per query**: `stat` every indexed file (`mtime_ms` + `size`); files whose stamp changed are re-parsed, deleted files are removed, new files are added. 632 `stat` calls are sub-10 ms, so this runs on every query without a debounce. If more than 200 files changed at once, it falls back to a full rebuild.
+- **Explicit rebuild**: `code_search(reindex=true)` forces the full path; used after large checkouts or branch switches.
+- **Never in the agent loop's critical path at startup**: the index is built on first use, not when the server boots, so a fresh workspace costs nothing until something asks.
+
+### Tool interface
+
+One tool, `code_search`, returning compact ranked locations (never whole files, so a result costs tens of tokens, not thousands):
+
+```
+code_search(query: str, path_prefix: str | None = None,
+            kind: str | None = None,      # symbol kind filter: function|class|method|heading|text
+            limit: int = 10, reindex: bool = False) -> str
+```
+
+Result shape, one line per hit plus a short snippet:
+
+```
+src/crabagent/core/agent/tools/registry.py:352-448  method ToolRegistry.execute  — "Return the permission-filtered..."
+  def execute(self, name, arguments, context=None):
+```
+
+Deliberate limits: no vector search, no natural-language paraphrase matching, no cross-workspace search, and no caching of embeddings. If a query is paraphrastic the model should fall back to `grep`, which the tool description says explicitly so the model does not over-trust it.
+
+Cost: roughly 300–500 lines of code plus tests, one new tool registration, five new tables, no new dependency, and a sub-5-second cold build for this repository.
+
+## 11. Changelog
 
 - 2026-11-24: document created (reconstruction). T1 partly, T4 done, T6 partly. Token budget removed. Window-fraction truncation dropped.
 - 2026-11-24: diff preview now persisted with the confirmation (backend) and restored on reload in the UI. Cancel-versus-auto-background race fixed: a cancel that lands inside `bash`'s timeout window kills the process group. `grep.include` accepts directory-scoped globs. T1 now misses only the size-capped workspace tree.

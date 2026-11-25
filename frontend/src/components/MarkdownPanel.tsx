@@ -18,7 +18,7 @@ interface Props {
 }
 
 /** Only pass session_id when there is one, so the param is never "undefined". */
-function readOptions(sessionId?: string) {
+function sessionOptions(sessionId?: string) {
   return sessionId ? { sessionId } : {};
 }
 
@@ -39,7 +39,7 @@ export function MarkdownPanel({ filePath, className, onClose, sessionId }: Props
     let cancelled = false;
     setLoading(true);
     setError(null);
-    readFile(filePath, isAbsolutePath(filePath), readOptions(sessionId))
+    readFile(filePath, isAbsolutePath(filePath), sessionOptions(sessionId))
       .then((res) => {
         if (cancelled) return;
         setSource(res.content);
@@ -62,7 +62,7 @@ export function MarkdownPanel({ filePath, className, onClose, sessionId }: Props
     if (!dirty) return;
     setSaving(true);
     try {
-      await saveFile(filePath, source);
+      await saveFile(filePath, source, isAbsolutePath(filePath), sessionOptions(sessionId));
       setOriginalSource(source);
       setDirty(false);
       setError(null);
@@ -71,7 +71,7 @@ export function MarkdownPanel({ filePath, className, onClose, sessionId }: Props
     } finally {
       setSaving(false);
     }
-  }, [dirty, filePath, source]);
+  }, [dirty, filePath, sessionId, source]);
 
   // ── Keyboard shortcuts (Cmd/Ctrl+S) ────────────────────────
   useEffect(() => {

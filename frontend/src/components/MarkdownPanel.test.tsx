@@ -4,12 +4,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MarkdownPanel } from "./MarkdownPanel";
 
-const { readFileMock } = vi.hoisted(() => ({ readFileMock: vi.fn() }));
+const { readFileMock, saveFileMock } = vi.hoisted(() => ({
+  readFileMock: vi.fn(),
+  saveFileMock: vi.fn(),
+}));
 
 // Keep the real module (isImageFile etc. are pure) and stub only the network call.
 vi.mock("../api/files", async () => {
   const actual = await vi.importActual<typeof import("../api/files")>("../api/files");
-  return { ...actual, readFile: readFileMock, saveFile: vi.fn() };
+  return { ...actual, readFile: readFileMock, saveFile: saveFileMock };
 });
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -87,5 +90,85 @@ describe("MarkdownPanel file reads", () => {
     // and the editor stays empty instead of holding stale content.
     expect(host.textContent).toContain("File not found");
     expect((host.querySelector("textarea") as HTMLTextAreaElement).value).toBe("");
+  });
+});
+
+/** Type into the textarea the way a user would, so React's onChange fires. */
+async function type(value: string) {
+  const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+  await act(async () => {
+    setter?.call(textarea, value);
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+/** The Save button only exists while the buffer is dirty. */
+function saveButton() {
+  const btn = Array.from(host.querySelectorAll("button")).find(
+    (b) => (b.textContent || "").trim() === "Save",
+  );
+  expect(btn).toBeTruthy();
+  return btn as HTMLButtonElement;
+}
+
+async function save() {
+  await act(async () => { saveButton().click(); });
+  await flush();
+}
+
+/** The only saveFile call of this render. */
+function saveCall() {
+  expect(saveFileMock).toHaveBeenCalledTimes(1);
+  return saveFileMock.mock.calls[0];
+}
+
+describe("MarkdownPanel file saves", () => {
+  beforeEach(() => {
+    saveFileMock.mockResolvedValue({ status: "ok", path: "notes.md", size: 10 });
+  });
+
+  it("saves an absolute path with absolute=true and the session id", async () => {
+    await render({ filePath: "/tmp/x/notes.md", sessionId: "42" });
+    await type("# Hello\n\nbody edited");
+    await save();
+    const [path, content, absolute, options] = saveCall();
+    expect(path).toBe("/tmp/x/notes.md");
+    expect(content).toBe("# Hello\n\nbody edited");
+    expect(absolute).toBe(true);
+    expect(options).toEqual({ sessionId: "42" });
+    // The status bar leaves the modified state once the save lands.
+    expect(host.textContent).not.toContain("Modified");
+  });
+
+  it("saves a relative path with absolute=false and the session id", async () => {
+    await render({ filePath: "notes.md", sessionId: "42" });
+    await type("# Hello\n\nbody edited");
+    await save();
+    const [path, , absolute, options] = saveCall();
+    expect(path).toBe("notes.md");
+    expect(absolute).toBe(false);
+    expect(options).toEqual({ sessionId: "42" });
+  });
+
+  it("omits the session id when the caller passes none", async () => {
+    await render({ filePath: "notes.md" });
+    await type("# Hello\n\nbody edited");
+    await save();
+    const [, , absolute, options] = saveCall();
+    expect(absolute).toBe(false);
+    // Nothing that would serialize as session_id=undefined.
+    expect(options?.sessionId).toBeUndefined();
+    expect(Object.values(options ?? {})).not.toContain("undefined");
+  });
+
+  it("shows the error state when saveFile rejects", async () => {
+    saveFileMock.mockRejectedValue(new Error("Disk full"));
+    await render({ filePath: "notes.md", sessionId: "42" });
+    await type("# Hello\n\nbody edited");
+    await save();
+    expect(host.textContent).toContain("Disk full");
+    // Still dirty, so the user can retry.
+    expect(host.textContent).toContain("Modified");
   });
 });
