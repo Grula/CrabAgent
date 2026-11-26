@@ -155,7 +155,8 @@ def _prepare_workspace(task: Path, out: Path, spec: dict | None = None) -> Path:
     for step in spec.get("setup_commands") or []:
         done = subprocess.run(step["command"], cwd=workspace / step.get("cwd", ""), capture_output=True, text=True)
         if done.returncode != 0:
-            raise SystemExit(f"setup error: {step.get('label', step['command'])}: {(done.stderr or done.stdout)[-800:]}")
+            detail = (done.stderr or done.stdout)[-800:]
+            raise SystemExit(f"setup error: {step.get('label', step['command'])}: {detail}")
     ignore = workspace / ".gitignore"
     extra = "__pycache__/\n.pytest_cache/\n.eval_acceptance/\n"
     if spec.get("project") != "repo":
