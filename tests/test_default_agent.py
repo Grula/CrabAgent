@@ -324,3 +324,12 @@ def test_architect_compacts_early_and_others_use_the_global_cap():
     caps = {a["name"]: a.get("compaction_max_tokens") for a in db.DEFAULT_AGENTS}
     assert caps["architect"] == 200_000
     assert all(cap is None for name, cap in caps.items() if name != "architect")
+
+
+def test_defects_the_change_introduced_are_fixed_not_offered():
+    # Eval run 1: the reviewer found a raw traceback the new CLI code caused, passed it as
+    # "outside the spec", and the architect offered the fix instead of making it.
+    goals = {a["name"]: a["goal"] for a in db.DEFAULT_AGENTS}
+    assert "A defect the batch itself introduced" in goals["architect"]
+    assert "don't offer it to the user" in goals["architect"]
+    assert "raw traceback or data loss that the change introduces is such a bug" in goals["the_reviewer"]

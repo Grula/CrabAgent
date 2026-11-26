@@ -1,0 +1,6 @@
+{
+  "agent": "architect",
+  "timeout_minutes": 60,
+  "acceptance_dir": "acceptance",
+  "project_test_command": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+}

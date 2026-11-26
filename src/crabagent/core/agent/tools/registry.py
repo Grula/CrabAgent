@@ -313,6 +313,9 @@ class ToolRegistry:
         mid = _molt_id()
         md = ws / ".crabagent" / "molts" / mid
         try:
+            from crabagent.core.molt.store import ensure_molt_root
+
+            ensure_molt_root(md.parent)
             md.mkdir(parents=True, exist_ok=True)
 
             method = "copy"

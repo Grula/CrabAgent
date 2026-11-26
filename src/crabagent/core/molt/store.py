@@ -23,6 +23,24 @@ _STAGING_STALE_SECONDS = 3600
 _STAGING_MARKER = ".staging_owner.json"
 
 
+_SELF_IGNORE = "# Created by CrabAgent: edit snapshots (molts), never part of the project.\n*\n"
+
+
+def ensure_molt_root(molts: Path) -> None:
+    """Make ``<workspace>/.crabagent/molts`` ignore itself in git (like .pytest_cache).
+
+    Snapshots live inside the user's workspace; without this they show up in
+    ``git status`` and in every agent's diff and scope check as new files.
+    """
+    try:
+        molts.mkdir(parents=True, exist_ok=True)
+        marker = molts / ".gitignore"
+        if not marker.exists():
+            marker.write_text(_SELF_IGNORE, encoding="utf-8")
+    except OSError:
+        logger.debug("Could not write %s/.gitignore", molts, exc_info=True)
+
+
 def mark_staging_owner(staging: Path) -> None:
     """Record the owning process inside a staging batch directory."""
     import json
@@ -30,6 +48,7 @@ def mark_staging_owner(staging: Path) -> None:
     import time
 
     try:
+        ensure_molt_root(staging.parent.parent)
         staging.mkdir(parents=True, exist_ok=True)
         (staging / _STAGING_MARKER).write_text(
             json.dumps({"pid": os.getpid(), "created_at": time.time()}), encoding="utf-8"

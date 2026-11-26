@@ -175,3 +175,58 @@ async def test_prune_keeps_staging_and_drops_orphan_molts(tmp_path: Path, monkey
     assert not orphan.exists()
     assert batch.is_dir(), "the orphan scan must never treat _staging as an orphan"
     assert (batch / "staged.py").exists()
+
+
+def test_ensure_molt_root_makes_the_folder_ignore_itself(tmp_path: Path):
+    from crabagent.core.molt.store import ensure_molt_root
+
+    molts = tmp_path / ".crabagent" / "molts"
+    ensure_molt_root(molts)
+    assert (molts / ".gitignore").read_text().splitlines()[-1] == "*"
+    (molts / ".gitignore").write_text("custom\n")
+    ensure_molt_root(molts)  # never overwrites
+    assert (molts / ".gitignore").read_text() == "custom\n"
+
+
+async def test_an_agent_edit_leaves_only_the_edited_file_in_git_status(tmp_path: Path, monkeypatch):
+    import shutil
+    import subprocess
+
+    import pytest
+
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    from crabagent.core.agent.context import AgentContext
+    from crabagent.core.agent.tools.registry import registry
+
+    import contextlib
+
+    async def no_db(*_args, **_kwargs):
+        return None
+
+    @contextlib.asynccontextmanager
+    async def fake_session():
+        yield None
+
+    # The molt row goes to the database (imported inside the flush); this test
+    # is only about the files, which are deleted again if that write fails.
+    monkeypatch.setattr("crabagent.core.molt.store.create_molt", no_db)
+    monkeypatch.setattr("crabagent.core.molt.store.prune_molts", no_db)
+    monkeypatch.setattr("crabagent.core.database.async_session_factory", fake_session)
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+    subprocess.run([*git, "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "a.py").write_text("x = 1\n")
+    subprocess.run([*git, "add", "."], cwd=tmp_path, check=True)
+    subprocess.run([*git, "commit", "-qm", "init"], cwd=tmp_path, check=True)
+
+    context = AgentContext(workspace=tmp_path)
+    await registry.execute("read", {"file_path": "a.py"}, context=context)
+    result = await registry.execute("edit", {"file_path": "a.py", "old_string": "x = 1", "new_string": "x = 2"},
+                                    context=context)
+
+    assert result.startswith("Successfully")
+    snapshots = [p for p in (tmp_path / ".crabagent" / "molts").rglob("*") if p.is_file() and p.name != ".gitignore"]
+    assert snapshots  # a snapshot with files was really written
+    status = subprocess.run(["git", "status", "--short", "--untracked-files=all"], cwd=tmp_path,
+                            capture_output=True, text=True, check=True).stdout
+    assert status.splitlines() == [" M a.py"]

@@ -24,6 +24,9 @@ async def take_snapshot(context, filepaths: list[str], description: str = "") ->
     mid = _molt_id()
     md = workspace / ".crabagent" / "molts" / mid
     try:
+        from crabagent.core.molt.store import ensure_molt_root
+
+        ensure_molt_root(md.parent)
         md.mkdir(parents=True, exist_ok=True)
     except OSError:
         logger.warning("Cannot create molt directory %s (read-only filesystem)", md)
