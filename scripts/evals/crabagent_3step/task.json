@@ -1,0 +1,90 @@
+{
+  "agent": "architect",
+  "timeout_minutes": 90,
+  "project": "repo",
+  "symlinks": {
+    "frontend/node_modules": "frontend/node_modules"
+  },
+  "checks": [
+    {
+      "label": "acceptance (python)",
+      "copy": [
+        "acceptance/py",
+        "tests/eval_acceptance"
+      ],
+      "command": [
+        "python3",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tests/eval_acceptance"
+      ],
+      "env": {
+        "PYTHONPATH": "src"
+      }
+    },
+    {
+      "label": "acceptance (frontend)",
+      "copy": [
+        "acceptance/ts",
+        "frontend/src/lib/eval_acceptance"
+      ],
+      "command": [
+        "npx",
+        "vitest",
+        "run",
+        "--reporter=dot",
+        "src/lib/eval_acceptance"
+      ],
+      "cwd": "frontend"
+    },
+    {
+      "label": "python suite",
+      "command": [
+        "python3",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "-n",
+        "auto",
+        "--deselect",
+        "tests/test_semantic_summary_real_provider.py"
+      ],
+      "env": {
+        "PYTHONPATH": "src"
+      },
+      "timeout": 900
+    },
+    {
+      "label": "tsc",
+      "command": [
+        "npx",
+        "tsc",
+        "-b"
+      ],
+      "cwd": "frontend"
+    },
+    {
+      "label": "vitest",
+      "command": [
+        "npx",
+        "vitest",
+        "run",
+        "--reporter=dot"
+      ],
+      "cwd": "frontend"
+    },
+    {
+      "label": "served UI rebuilt (AGENTS.md build step)",
+      "command": [
+        "bash",
+        "-c",
+        "! git diff --cached --quiet -- src/crabagent/static"
+      ]
+    }
+  ]
+}

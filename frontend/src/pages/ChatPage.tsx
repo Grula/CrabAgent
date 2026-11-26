@@ -2022,6 +2022,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                       toolbar={renderComposerControls(sidebarAgentRef, sidebarEffortRef)}
                       attachments={composerAttachments}
                       canSendEmpty={hasAttachments}
+                      draftKey={activeSession.session_id}
                     />
                   </div>
                 </>
@@ -2425,6 +2426,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                 attachments={composerAttachments}
                 canSendEmpty={hasAttachments}
                 seed={chatSeed}
+                draftKey={activeSession.session_id}
               />
               </div>
             </div>
@@ -2452,6 +2454,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                   placeholder={"How can I help you today?"}
                   autoFocus
                   seed={starterSeed}
+                  draftKey="new-chat"
                 />
               </div>
               <div className="mt-4 flex flex-wrap justify-center gap-2">

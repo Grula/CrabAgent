@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from crabagent.core import database as db
@@ -17,8 +17,16 @@ from crabagent.core.agent.tools.registry import ToolRegistry
 
 @pytest.fixture
 async def session_factory(tmp_path, monkeypatch):
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+    # Configured like the real database (timeout=30, WAL; see database.py): a bare
+    # engine's 5 s busy timeout and rollback journal raised "database is locked"
+    # under pytest -n auto (the same fix as test_background_group.py). Shared by
+    # test_background_outbox.py and test_semantic_summary.py.
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
     async with engine.begin() as conn:
+        await conn.execute(text("PRAGMA journal_mode=WAL"))
         await conn.run_sync(db.Base.metadata.create_all)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(db, "async_session_factory", factory)

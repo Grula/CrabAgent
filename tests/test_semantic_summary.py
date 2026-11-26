@@ -400,7 +400,7 @@ asyncio.run(main())
             await asyncio.sleep(0.05)
 
         from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-        engine2 = create_async_engine(f"sqlite+aiosqlite:///{database}")
+        engine2 = create_async_engine(f"sqlite+aiosqlite:///{database}", connect_args={"timeout": 30})
         factory2 = async_sessionmaker(engine2, expire_on_commit=False)
         monkeypatch.setattr(db, "async_session_factory", factory2)
         async with factory2() as session:

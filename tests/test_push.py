@@ -255,10 +255,13 @@ async def test_notify_task_event_pushes_done(monkeypatch):
     monkeypatch.setattr(PushNotification, "send", staticmethod(_fake_send))
     push_mod._recent.clear()
     notify_task_event("task_updated", {"task_id": "t1", "status": "done", "title": "X"})
-    # let the scheduled task run
+    # let the scheduled task run (waits for it rather than a fixed 50 ms: load-safe)
     import asyncio
 
-    await asyncio.sleep(0.05)
+    for _ in range(200):
+        if pushed:
+            break
+        await asyncio.sleep(0.01)
     assert pushed and pushed[0][1] == "task_done"
 
 
@@ -276,7 +279,13 @@ async def test_notify_task_event_dedup(monkeypatch):
     notify_task_event("task_updated", {"task_id": "t2", "status": "waiting_user", "title": "Y"})
     import asyncio
 
-    await asyncio.sleep(0.05)
+    # The send is fire-and-forget: wait for the first one (a fixed 50 ms sleep
+    # failed under pytest -n auto load), then give a second one time to show up.
+    for _ in range(200):
+        if calls:
+            break
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.1)
     assert len(calls) == 1  # second within window dropped
 
 

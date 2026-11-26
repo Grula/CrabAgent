@@ -49,6 +49,28 @@ describe("chat composer behaviour", () => {
     expect(send).toHaveBeenCalledWith("Brainstorm ideas for");
   });
 
+  it("keeps each chat's unsent text with that chat", async () => {
+    const send = vi.fn();
+    const render = (key: string, seed?: { text: string; key: number }) =>
+      act(async () => root.render(<ChatInput {...props} sending={false} onSend={send} draftKey={key} seed={seed} />));
+    const box = () => container.querySelector("textarea")!;
+
+    await render("chat-a", { text: "half-written for A", key: 1 });
+    await render("chat-b");
+    expect(box().value).toBe("");  // A's draft didn't follow to B
+    await render("chat-b", { text: "B's own", key: 2 });
+    await render("chat-a");
+    expect(box().value).toBe("half-written for A");
+    await render("chat-b");
+    expect(box().value).toBe("B's own");
+
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Send"]')!.click());
+    expect(send).toHaveBeenCalledWith("B's own");
+    await render("chat-a");
+    await render("chat-b");
+    expect(box().value).toBe("");  // sent: the draft is gone
+  });
+
   it("allows sending attachments without text only when asked to", async () => {
     const send = vi.fn();
     await act(async () => root.render(<ChatInput {...props} sending={false} onSend={send} />));

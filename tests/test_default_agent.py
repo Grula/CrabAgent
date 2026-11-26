@@ -333,3 +333,17 @@ def test_defects_the_change_introduced_are_fixed_not_offered():
     assert "A defect the batch itself introduced" in goals["architect"]
     assert "don't offer it to the user" in goals["architect"]
     assert "raw traceback or data loss that the change introduces is such a bug" in goals["the_reviewer"]
+
+
+def test_test_only_follow_ups_skip_the_second_review():
+    # Eval run 2: a re-review after a test-only follow-up cost ~250k tokens and found nothing.
+    architect = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")
+    assert "the reviewer passed the final code" in architect["goal"]
+    assert "only changes tests after a PASS" in architect["goal"]
+
+
+def test_build_steps_are_part_of_done():
+    # Eval run 5: the frontend change was left unbuilt with "say the word and I'll rebuild".
+    architect = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")
+    assert "every build or copy step the project's rules" in architect["goal"]
+    assert "never leave it as an offer" in architect["goal"]

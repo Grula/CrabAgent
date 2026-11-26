@@ -234,6 +234,9 @@ def _start_server(tmp: Path, port: int) -> subprocess.Popen:
     user_site = subprocess.run(
         [sys.executable, "-m", "site", "--user-site"], capture_output=True, text=True, check=False
     ).stdout.strip()
+    user_base = subprocess.run(
+        [sys.executable, "-m", "site", "--user-base"], capture_output=True, text=True, check=False
+    ).stdout.strip()
     env = dict(os.environ)
     env.update(
         {
@@ -246,6 +249,11 @@ def _start_server(tmp: Path, port: int) -> subprocess.Popen:
             "PYTHONPATH": os.pathsep.join(p for p in (str(REPO / "src"), user_site) if p),
         }
     )
+    if user_base:
+        # The fake HOME would also hide the user's site-packages from every
+        # command the agents run (e.g. `PYTHONPATH=src pytest` then can't import
+        # litellm's yaml). PYTHONUSERBASE keeps them visible with any PYTHONPATH.
+        env["PYTHONUSERBASE"] = user_base
     if KEY_FILE.exists():
         # Without the real key the copy can't decrypt saved provider keys (401s).
         env["CRAB_ENCRYPTION_KEY"] = KEY_FILE.read_text().strip()

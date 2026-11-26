@@ -5,10 +5,16 @@ Usage (from the repository root):
     PYTHONPATH=src python3 scripts/agent_eval.py scripts/evals/inventory_3step [--out DIR] [--model M]
 
 A task folder holds:
-  project/       the starting code, copied into a fresh git workspace (never this repo)
+  project/       the starting code, copied into a fresh git workspace (never this repo);
+                 or "project": "repo" in task.json: a copy of this repository's working tree
+                 (tracked and untracked, not ignored files), for tasks on a large real codebase
   request.md     the feature request, sent as the first chat message
   acceptance/    hidden tests, copied in only after the agents finish
-  task.json      {"agent": "architect", "timeout_minutes": 60, "project_test_command": [...]}
+  task.json      {"agent": "architect", "timeout_minutes": 60, "project_test_command": [...]}, or
+                 "checks": [{"label", "command", "cwd"?, "env"?, "timeout"?, "copy"?: [from, to]}]
+                 run in order; "copy" puts hidden tests in place for that check only.
+                 "symlinks": {"in/workspace": "in/repo"} links large read-only folders
+                 (node_modules) instead of copying them.
 
 What happens:
 1. a preview server starts on a copy of ~/.crabagent/crabagent.db (scripts/ui_check.py
@@ -81,13 +87,63 @@ def _git(workspace: Path, *args: str) -> str:
     ).stdout
 
 
-def _prepare_workspace(task: Path, out: Path) -> Path:
+# Agent instructions a repository may keep out of git (this one ignores AGENTS.md
+# and .crabagent/): copied anyway, since the agents read them in the real workspace.
+AGENT_FILES = ("AGENTS.md", "CLAUDE.md", ".crabagent/skills")
+# The eval tasks themselves: their hidden acceptance tests must not be in the
+# workspace (a run found and ran them before this).
+EXCLUDED_FROM_COPY = ("scripts/evals/",)
+
+
+def _copy_repo(workspace: Path) -> None:
+    """This repository's working tree (tracked + untracked, not ignored) into ``workspace``,
+    plus :data:`AGENT_FILES`."""
+    repo = ui_check.REPO
+    listed = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        cwd=repo, capture_output=True, check=True,
+    ).stdout.decode().split("\0")
+    workspace.mkdir(parents=True)
+    for rel in filter(None, listed):
+        if rel.startswith(EXCLUDED_FROM_COPY):
+            continue
+        source = repo / rel
+        if not source.is_file():
+            continue  # deleted in the working tree
+        target = workspace / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    for rel in AGENT_FILES:
+        source, target = repo / rel, workspace / rel
+        if source.is_dir():
+            shutil.copytree(source, target, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
+        elif source.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+
+
+def _prepare_workspace(task: Path, out: Path, spec: dict | None = None) -> Path:
+    spec = spec or {}
     workspace = out / "workspace"
     if workspace.exists():
         shutil.rmtree(workspace)
-    shutil.copytree(task / "project", workspace)
+    if spec.get("project") == "repo":
+        _copy_repo(workspace)
+    else:
+        shutil.copytree(task / "project", workspace)
+    for link, target in (spec.get("symlinks") or {}).items():
+        source = (ui_check.REPO / target).resolve()
+        if source.exists() and not (workspace / link).exists():
+            (workspace / link).parent.mkdir(parents=True, exist_ok=True)
+            (workspace / link).symlink_to(source)
     _git(workspace, "init", "-q", "-b", "main")
-    (workspace / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n*.json\n.eval_acceptance/\n")
+    ignore = workspace / ".gitignore"
+    extra = "__pycache__/\n.pytest_cache/\n.eval_acceptance/\n"
+    if spec.get("project") != "repo":
+        extra += "*.json\n"  # data files the fixture's tests write
+    ignore.write_text((ignore.read_text() if ignore.exists() else "") + "\n" + extra)
+    for link in spec.get("symlinks") or {}:
+        ignore.write_text(ignore.read_text() + f"/{link}\n")
     _git(workspace, "add", "-A")
     _git(workspace, "commit", "-q", "-m", "starting point")
     return workspace
@@ -132,9 +188,14 @@ def _main_run_finished(con: sqlite3.Connection, session_id: str) -> tuple[bool, 
     return (last != "running" and running == 0), last
 
 
-def _run_tests(workspace: Path, command: list[str], label: str, timeout: int = 600) -> dict:
+def _run_tests(workspace: Path, command: list[str], label: str, timeout: int = 600,
+               cwd: str = "", env: dict | None = None) -> dict:
+    import os
+
+    full_env = {**os.environ, **(env or {})}
     try:
-        proc = subprocess.run(command, cwd=workspace, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(command, cwd=workspace / cwd, capture_output=True, text=True, timeout=timeout,
+                              env=full_env)
         output = proc.stdout + proc.stderr
         code = proc.returncode
     except subprocess.TimeoutExpired:
@@ -148,9 +209,41 @@ def _run_tests(workspace: Path, command: list[str], label: str, timeout: int = 6
             "failures": failed[:30], "output_tail": output[-4000:]}
 
 
+def _score(task: Path, spec: dict, workspace: Path, report: dict) -> None:
+    """Run every check; hidden tests are in place only while their own check runs."""
+    for check in _checks(spec):
+        copied = None
+        if check.get("copy"):
+            source, dest = check["copy"]
+            copied = workspace / dest
+            shutil.copytree(task / source, copied, dirs_exist_ok=True)
+        try:
+            report["tests"].append(_run_tests(
+                workspace, check["command"], check["label"], timeout=check.get("timeout", 600),
+                cwd=check.get("cwd", ""), env=check.get("env")))
+        finally:
+            if copied is not None:
+                shutil.rmtree(copied, ignore_errors=True)
+
+
+def _checks(spec: dict) -> list[dict]:
+    """The task's checks; the older acceptance_dir/project_test_command form maps onto them."""
+    if spec.get("checks"):
+        return spec["checks"]
+    checks = [{
+        "label": "acceptance",
+        "copy": [spec.get("acceptance_dir", "acceptance"), ".eval_acceptance"],
+        "command": [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", ".eval_acceptance"],
+    }]
+    if spec.get("project_test_command"):
+        checks.append({"label": "project tests", "command": spec["project_test_command"]})
+    return checks
+
+
 def _collect(con: sqlite3.Connection, session_id: str) -> dict:
     runs = [dict(r) for r in con.execute(
         "select id, parent_run_id, agent_name, model, status, iterations, tokens_used, tool_calls, elapsed, "
+        "started_at, finished_at, "
         "substr(task_summary, 1, 300) as task, substr(result_summary, 1, 600) as result, error "
         "from agent_runs where session_id = ? order by id", (session_id,))]
     usage = con.execute(
@@ -170,6 +263,18 @@ def _collect(con: sqlite3.Connection, session_id: str) -> dict:
     }
 
 
+def _clock(value) -> str:
+    """HH:MM:SS of a run timestamp, stored as epoch seconds or an ISO string."""
+    if value in (None, ""):
+        return ""
+    try:
+        import datetime
+
+        return datetime.datetime.fromtimestamp(float(value)).strftime("%H:%M:%S")
+    except (TypeError, ValueError):
+        return str(value)[11:19]
+
+
 def _report_md(report: dict) -> str:
     lines = [f"# Eval {report['task']}: {report['verdict']}", ""]
     lines.append(f"- status: {report['run_status']} after {report['elapsed_s']} s; interventions: "
@@ -180,11 +285,13 @@ def _report_md(report: dict) -> str:
     for test in report["tests"]:
         lines.append(f"- {test['label']}: {'PASS' if test['passed'] else 'FAIL'} ({test['summary']})")
         lines += [f"  - {f}" for f in test["failures"][:15]]
-    lines += ["", "## Runs", "", "| id | agent | status | steps | tokens | task |", "|---|---|---|---|---|---|"]
+    lines += ["", "## Runs", "", "| id | agent | status | steps | tokens | started | finished | task |",
+              "|---|---|---|---|---|---|---|---|"]
     for run in report["metrics"].get("runs", []):
         task = (run["task"] or "").replace("\n", " ").replace("|", "/")[:90]
+        start, end = (_clock(run.get(k)) for k in ("started_at", "finished_at"))
         lines.append(f"| {run['id']} | {run['agent_name']} | {run['status']} | {run['iterations']} | "
-                     f"{run['tokens_used']} | {task} |")
+                     f"{run['tokens_used']} | {start} | {end} | {task} |")
     if report["interventions"]:
         lines += ["", "## Interventions (auto-answered)", ""]
         lines += [f"- {i['type']}: {i['question'][:200]!r} -> {i['answer'][:120]!r}" for i in report["interventions"]]
@@ -208,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
     out = (args.out or Path(tempfile.mkdtemp(prefix=f"agent-eval-{task.name}-"))).resolve()
     out.mkdir(parents=True, exist_ok=True)
     timeout_s = 60 * (args.timeout_minutes or spec.get("timeout_minutes", 60))
-    workspace = _prepare_workspace(task, out)
+    workspace = _prepare_workspace(task, out, spec)
 
     for signum in (ui_check.signal.SIGTERM, ui_check.signal.SIGHUP):
         ui_check.signal.signal(signum, ui_check._exit_on_signal)
@@ -291,14 +398,7 @@ def main(argv: list[str] | None = None) -> int:
     _git(workspace, "add", "-A")
     report["diff_stat"] = _git(workspace, "diff", "--cached", "--stat")
     (out / "changes.diff").write_text(_git(workspace, "diff", "--cached"))
-    acceptance = workspace / ".eval_acceptance"
-    shutil.copytree(task / spec.get("acceptance_dir", "acceptance"), acceptance, dirs_exist_ok=True)
-    report["tests"].append(_run_tests(
-        workspace, [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(acceptance)], "acceptance"))
-    command = spec.get("project_test_command")
-    if command:
-        report["tests"].append(_run_tests(workspace, command, "project tests"))
-    shutil.rmtree(acceptance, ignore_errors=True)
+    _score(task, spec, workspace, report)
 
     passed = report["run_status"] == "completed" and all(t["passed"] for t in report["tests"])
     report["verdict"] = "PASS" if passed else "FAIL"

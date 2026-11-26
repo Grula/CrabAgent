@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, type ReactNode } from "react";
 import { ArrowUp, Square, Paperclip, Bot, Target } from "lucide-react";
 import { cn } from "../lib/cn";
+import { loadDraft, saveDraft } from "../lib/composerDrafts";
 
 interface Props {
   sending: boolean;
@@ -23,6 +24,8 @@ interface Props {
   seed?: { text: string; key: number };
   /** Allow sending with an empty text box (e.g. only attachments) */
   canSendEmpty?: boolean;
+  /** Keeps unsent text per key (a chat's session id): each chat gets its own draft back */
+  draftKey?: string;
 }
 
 const MAX_INPUT_HEIGHT = 240;
@@ -50,8 +53,20 @@ export default function ChatInput({
   autoFocus,
   seed,
   canSendEmpty,
+  draftKey,
 }: Props) {
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(() => (draftKey ? loadDraft(draftKey) : ""));
+  // Whose draft `input` holds right now. Switching chats first swaps the text,
+  // so one chat's text is never saved under another chat's key.
+  const draftOwner = useRef(draftKey);
+  useEffect(() => {
+    if (draftOwner.current === draftKey) return;
+    draftOwner.current = draftKey;
+    setInput(draftKey ? loadDraft(draftKey) : "");
+  }, [draftKey]);
+  useEffect(() => {
+    if (draftOwner.current) saveDraft(draftOwner.current, input);
+  }, [input]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isComposingRef = useRef(false);
 

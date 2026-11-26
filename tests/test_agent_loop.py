@@ -897,7 +897,11 @@ async def test_a_stop_during_streaming_ends_the_round_at_once(monkeypatch):
     messages = await asyncio.wait_for(loop.run_agent(context, "hello"), timeout=10)
     elapsed = time.monotonic() - started
 
-    assert elapsed < 1.0, elapsed  # not the 5 s abort fallback
+    # Stopped at the next chunk, not drained (300 chunks): a count, so a loaded
+    # machine (pytest -n auto) can't fail it. The time bound only rules out the
+    # 3 s drain and the 5 s abort fallback.
+    assert stream.sent <= stream.cancel_after + 1, stream.sent
+    assert elapsed < 2.5, elapsed
     assert stream.closed  # closed, not drained
     assert context.metadata["_run_cancelled"] is True
     ends = [event for event in events if event.type == EventType.AGENT_END]

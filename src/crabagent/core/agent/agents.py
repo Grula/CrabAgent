@@ -9,6 +9,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from crabagent.core.agent.recent_failures import failures_block, note_check_result
 from crabagent.core.agent.reflect import (
     classify_task as _classify_task,
 )
@@ -1136,6 +1137,12 @@ async def spawn_sub_agent(
 
     shared_context = await _load_shared_context(session_id)
 
+    # An agent that changes code gets the latest failing checks verbatim
+    # (recent_failures.py), so a follow-up brief can't lose the exact output.
+    brief = task
+    if "edit" in sub_registry._tools or "write" in sub_registry._tools:
+        brief = task + failures_block(parent_context, task)
+
     if include_history and parent_context.messages:
         recent = parent_context.messages[-20:]
         history_lines = ["## Previous Conversation Context", ""]
@@ -1150,11 +1157,11 @@ async def spawn_sub_agent(
         prompt_parts = [history_text]
         if shared_context:
             prompt_parts.append(shared_context)
-        prompt_parts.append(f"## Your Task\n{task}")
+        prompt_parts.append(f"## Your Task\n{brief}")
         sub_context.messages = [{"role": "user", "content": "\n\n".join(prompt_parts)}]
     else:
         if shared_context:
-            sub_context.messages = [{"role": "user", "content": f"{shared_context}\n\n## Your Task\n{task}"}]
+            sub_context.messages = [{"role": "user", "content": f"{shared_context}\n\n## Your Task\n{brief}"}]
 
     import uuid as _uuid
 
@@ -1232,6 +1239,7 @@ async def spawn_sub_agent(
         elif event.type in (EventType.TOOL_RESULT,):
             tr_name = event.data.get("name", "")
             tr_result = str(event.data.get("result", ""))
+            note_check_result(parent_context, agent_name, tr_name, tr_result)
             _detail_lines.append(f"← {tr_name}: {tr_result[:200]}{'...' if len(tr_result) > 200 else ''}")
             tr_data = {
                 "sub_agent_id": sub_id,
@@ -1304,7 +1312,7 @@ async def spawn_sub_agent(
 
     try:
         t0 = time.time()
-        await run_agent(sub_context, task)
+        await run_agent(sub_context, brief)
         elapsed = round(time.time() - t0, 1)
         if _run_errors:
             raise RuntimeError(_run_errors[-1])

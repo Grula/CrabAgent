@@ -23,6 +23,7 @@ def con(tmp_path):
         """
         create table agent_runs (id integer primary key, session_id text, parent_run_id int, agent_name text,
             model text, status text, iterations int, tokens_used int, tool_calls int, elapsed real,
+            started_at text, finished_at text,
             task_summary text, result_summary text, error text);
         create table task_requests (request_key text, session_id text, request_type text, question text,
             options text, status text);
@@ -125,3 +126,67 @@ def test_workspace_is_a_fresh_git_repo_outside_the_task(tmp_path):
     assert (workspace / ".git").is_dir()
     assert agent_eval._git(workspace, "status", "--short") == ""
     assert not (task / "project" / ".git").exists()
+
+
+def test_old_task_format_maps_onto_checks():
+    checks = agent_eval._checks({"project_test_command": ["python3", "-m", "pytest", "tests"]})
+    assert [c["label"] for c in checks] == ["acceptance", "project tests"]
+    assert checks[0]["copy"] == ["acceptance", ".eval_acceptance"]
+    explicit = [{"label": "x", "command": ["true"]}]
+    assert agent_eval._checks({"checks": explicit}) is explicit
+
+
+def test_repo_task_copies_the_working_tree_and_links_node_modules(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / "frontend" / "node_modules" / "pkg").mkdir(parents=True)
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("x = 1\n")
+    (repo / "notes.txt").write_text("untracked but not ignored\n")
+    (repo / "secret.env").write_text("TOKEN=1\n")
+    (repo / ".crabagent" / "skills" / "run-app").mkdir(parents=True)
+    (repo / ".crabagent" / "skills" / "run-app" / "SKILL.md").write_text("how to run\n")
+    (repo / "AGENTS.md").write_text("rules\n")
+    (repo / "scripts" / "evals" / "t" / "acceptance").mkdir(parents=True)
+    (repo / "scripts" / "evals" / "t" / "acceptance" / "test_hidden.py").write_text("x\n")
+    (repo / "scripts" / "keep.py").write_text("y\n")
+    (repo / ".gitignore").write_text("node_modules/\nsecret.env\nAGENTS.md\n.crabagent/\n")
+    agent_eval._git(repo, "init", "-q")
+    agent_eval._git(repo, "add", "src", ".gitignore")
+    agent_eval._git(repo, "commit", "-qm", "init")
+    monkeypatch.setattr(agent_eval.ui_check, "REPO", repo)
+
+    spec = {"project": "repo", "symlinks": {"frontend/node_modules": "frontend/node_modules"}}
+    workspace = agent_eval._prepare_workspace(tmp_path / "task", tmp_path / "out", spec)
+
+    assert (workspace / "src" / "a.py").read_text() == "x = 1\n"
+    assert (workspace / "notes.txt").exists()          # untracked files come along
+    assert not (workspace / "secret.env").exists()     # ignored files don't
+    assert (workspace / "AGENTS.md").read_text() == "rules\n"  # ...except agent instructions
+    assert (workspace / ".crabagent" / "skills" / "run-app" / "SKILL.md").exists()
+    assert not (workspace / "scripts" / "evals").exists()  # the hidden tests never leak
+    assert (workspace / "scripts" / "keep.py").exists()
+    assert (workspace / "frontend" / "node_modules").is_symlink()
+    assert agent_eval._git(workspace, "status", "--short") == ""  # the link is ignored too
+
+
+def test_hidden_tests_are_removed_after_their_check(tmp_path):
+    task = tmp_path / "task"
+    (task / "hidden").mkdir(parents=True)
+    (task / "hidden" / "test_h.py").write_text("def test_h():\n    pass\n")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec = {"checks": [{"label": "hidden", "copy": ["hidden", "tests/eval"],
+                        "command": [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/eval"]}]}
+    report = {"tests": []}
+    agent_eval._score(task, spec, workspace, report)
+    assert report["tests"][0]["passed"]
+    assert not (workspace / "tests" / "eval").exists()
+
+
+def test_clock_formats_epoch_and_iso():
+    import datetime
+
+    epoch = datetime.datetime(2026, 11, 26, 14, 5, 9).timestamp()
+    assert agent_eval._clock(epoch) == "14:05:09"
+    assert agent_eval._clock("2026-11-26 14:05:09.123") == "14:05:09"
+    assert agent_eval._clock(None) == ""
