@@ -34,7 +34,7 @@ def test_relative_path_resolution_blocks_workspace_escape(tmp_path: Path, monkey
 
 
 def _user(user_id: int = 7) -> SimpleNamespace:
-    return SimpleNamespace(id=user_id)
+    return SimpleNamespace(id=user_id, enabled=True)
 
 
 def _fake_request(session_id: str | None) -> tuple[SimpleNamespace, asyncio.Queue]:
@@ -69,15 +69,23 @@ def _patch_conversation(monkeypatch: pytest.MonkeyPatch, conv: SimpleNamespace |
 
 @pytest.fixture
 def backends(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Server CWD workspace and a separate chat workspace."""
+    """Server CWD workspace, a separate chat workspace and the simulated home.
+
+    ``tmp_path/home`` plays ``Path.home()``: the /files routes only serve paths
+    under home (or the server workspace), and in production a chat workspace is
+    an ordinary folder under the user's home.
+    """
     from crabagent.core.config import settings
 
-    server_ws = tmp_path / "server-workspace"
-    chat_ws = tmp_path / "chat-workspace"
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    server_ws = home / "server-workspace"
+    chat_ws = home / "chat-workspace"
     server_ws.mkdir()
     chat_ws.mkdir()
     monkeypatch.setattr(settings, "workspace", server_ws)
-    return SimpleNamespace(server=server_ws, chat=chat_ws, tmp=tmp_path)
+    return SimpleNamespace(server=server_ws, chat=chat_ws, home=home, tmp=tmp_path)
 
 
 @pytest.fixture
@@ -400,8 +408,422 @@ async def test_ui_write_emits_one_file_updated_event(backends, monkeypatch):
     assert updates[0].data["mtime_ms"] > 0
 
 
-# ── 4. FILE_UPDATED from agent tools ─────────────────────────────────
+# ── 3b. path confinement (audit batch 1, items 2-5) ──────────────────
 
+
+@pytest.mark.asyncio
+async def test_absolute_read_outside_home_is_forbidden(backends, monkeypatch):
+    from crabagent.serve.api import files
+
+    home = backends.home
+    outside = backends.tmp / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("top secret\n", encoding="utf-8")
+    (home / ".ssh").mkdir()
+    (home / ".ssh" / "id_rsa").write_text("PRIVATE KEY\n", encoding="utf-8")
+    (home / ".crabagent").mkdir()
+    (home / ".crabagent" / "encryption_key").write_text("k3y\n", encoding="utf-8")
+    user = _user()
+
+    for path in (
+        str(outside / "secret.txt"),
+        str(home / ".ssh" / "id_rsa"),
+        str(home / ".crabagent" / "encryption_key"),
+        "/etc/passwd",
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await files.read_file(
+                path=path,
+                absolute=True,
+                start_line=None,
+                end_line=None,
+                session_id=None,
+                user=user,
+                db=None,
+            )
+        assert exc.value.status_code == 403, path
+
+
+@pytest.mark.asyncio
+async def test_absolute_tree_and_search_outside_home_are_forbidden(backends, monkeypatch):
+    from crabagent.serve.api import files
+
+    home = backends.home
+    (home / ".ssh").mkdir()
+    user = _user()
+
+    with pytest.raises(HTTPException) as exc:
+        await files.list_tree(path="/etc", depth=1, absolute=True, session_id=None, user=user, db=None)
+    assert exc.value.status_code == 403
+    with pytest.raises(HTTPException) as exc:
+        await files.list_tree(
+            path=str(home / ".ssh"), depth=1, absolute=True, session_id=None, user=user, db=None
+        )
+    assert exc.value.status_code == 403
+    with pytest.raises(HTTPException) as exc:
+        await files.search_files(q="passwd", path="/etc", absolute=True, limit=10, user=user, db=None)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_absolute_tree_without_path_lists_home(backends, monkeypatch):
+    """The workspace picker starts at home: no path means home, not the filesystem root."""
+    from crabagent.serve.api import files
+
+    home = backends.home
+    (home / "projects").mkdir()
+    (home / "notes.md").write_text("home\n", encoding="utf-8")
+    user = _user()
+
+    tree = await files.list_tree(
+        path="", depth=1, absolute=True, include_root=False, session_id=None, user=user, db=None
+    )
+    expected = sorted(child.name for child in home.iterdir() if not child.name.startswith("."))
+    assert [entry["name"] for entry in tree] == expected
+    assert all(entry["path"].startswith(str(home) + "/") for entry in tree)
+
+    # The picker asks for the root it was given instead of hard-coding one.
+    listing = await files.list_tree(
+        path="", depth=1, absolute=True, include_root=True, session_id=None, user=user, db=None
+    )
+    assert listing["path"] == str(home)
+    assert [entry["name"] for entry in listing["entries"]] == expected
+
+    inside = await files.list_tree(
+        path=str(home / "projects"),
+        depth=1, absolute=True, include_root=False, session_id=None, user=user, db=None,
+    )
+    assert inside == []
+
+    # An explicit "/" is still refused; only the implicit default is home.
+    with pytest.raises(HTTPException) as exc:
+        await files.list_tree(
+            path="/", depth=1, absolute=True, include_root=False, session_id=None, user=user, db=None
+        )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_absolute_guard_is_not_a_string_prefix_check(backends, monkeypatch):
+    from crabagent.serve.api import files
+
+    home = backends.home  # tmp_path/home
+    evil = backends.tmp / "home-evil" / "secret.txt"  # string-prefix sibling
+    evil.parent.mkdir()
+    evil.write_text("evil\n", encoding="utf-8")
+    assert str(evil).startswith(str(home))  # the trap the old check fell into
+
+    with pytest.raises(HTTPException) as exc:
+        files._resolve_file_path(str(evil), absolute=True)
+    assert exc.value.status_code == 400
+    assert "under home" in str(exc.value.detail)
+
+    request, _queue = _fake_request(None)
+    with pytest.raises(HTTPException) as exc:
+        await files.write_file(
+            files.WriteFileRequest(path=str(evil), content="pwned\n", absolute=True),
+            request,
+            user=_user(),
+            db=None,
+        )
+    assert exc.value.status_code == 400
+    assert evil.read_text(encoding="utf-8") == "evil\n"
+
+
+@pytest.mark.asyncio
+async def test_session_workspace_at_root_cannot_write_outside_home(backends, monkeypatch):
+    from crabagent.serve.api import files
+
+    home = backends.home
+    escaped = backends.tmp / "escaped.txt"  # outside the fake home
+    _patch_conversation(monkeypatch, SimpleNamespace(user_id=7, workspace="/"))
+    request, _queue = _fake_request("sess-1")
+
+    with pytest.raises(HTTPException) as exc:
+        await files.write_file(
+            files.WriteFileRequest(
+                path=str(escaped).lstrip("/"), content="pwned\n", session_id="sess-1"
+            ),
+            request,
+            user=_user(),
+            db=None,
+        )
+    assert exc.value.status_code == 403
+    assert not escaped.exists()
+    assert not (home / "escaped.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_foreign_session_id_on_write_gets_no_broadcast_and_no_molt(
+    backends, molt_factory, monkeypatch
+):
+    from crabagent.core.database import Molt
+    from crabagent.core.event import EventType
+    from crabagent.serve.api import files
+    from sqlalchemy import func, select
+
+    _patch_conversation(
+        monkeypatch, SimpleNamespace(user_id=999, workspace=str(backends.chat))
+    )
+    request, stream = _fake_request("sess-foreign")
+    critical = request.app.state.event_queues["q"][1]
+
+    result = await files.write_file(
+        files.WriteFileRequest(path="plain.txt", content="mine\n", session_id="sess-foreign"),
+        request,
+        user=_user(),
+        db=None,
+    )
+
+    # The write itself still succeeds — it just no longer pretends to be that chat.
+    assert result["status"] == "ok"
+    assert (backends.server / "plain.txt").read_text(encoding="utf-8") == "mine\n"
+    assert [e for e in _drain(critical, stream) if e.type == EventType.FILE_UPDATED] == []
+    async with molt_factory() as db:
+        total = (await db.execute(select(func.count()).select_from(Molt))).scalar_one()
+    assert total == 0
+
+
+@pytest.mark.asyncio
+async def test_image_and_download_reject_paths_outside_home(backends, monkeypatch):
+    import crabagent.serve.services.auth as auth_svc
+    from crabagent.serve.api import files
+
+    home = backends.home
+    outside = backends.tmp / "outside"
+    outside.mkdir()
+    (outside / "logo.png").write_bytes(b"\x89PNG\x00\x01")
+
+    monkeypatch.setattr(auth_svc, "decode_access_token", lambda token: {"sub": "7"})
+
+    async def _get_user_by_id(db, user_id):
+        return _user(int(user_id))
+
+    monkeypatch.setattr(auth_svc, "get_user_by_id", _get_user_by_id)
+
+    with pytest.raises(HTTPException) as exc:
+        await files.get_image(path=str(outside / "logo.png"), absolute=True, token="t", db=None)
+    assert exc.value.status_code == 403
+    with pytest.raises(HTTPException) as exc:
+        await files.download_file(path=str(outside / "logo.png"), absolute=True, token="t", db=None)
+    assert exc.value.status_code == 400
+    (home / ".ssh").mkdir()
+    (home / ".ssh" / "id_rsa").write_text("PRIVATE KEY\n", encoding="utf-8")
+    with pytest.raises(HTTPException) as exc:
+        await files.download_file(
+            path=str(home / ".ssh" / "id_rsa"), absolute=True, token="t", db=None
+        )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_absolute_and_session_relative_paths_inside_home_still_work(backends, monkeypatch):
+    from crabagent.serve.api import files
+
+    home = backends.home
+    (home / "notes.md").write_text("hello home\n", encoding="utf-8")
+    (backends.chat / "chat.md").write_text("hello chat\n", encoding="utf-8")
+    _patch_conversation(monkeypatch, SimpleNamespace(user_id=7, workspace=str(backends.chat)))
+    user = _user()
+    request, _queue = _fake_request("sess-1")
+
+    read = await files.read_file(
+        path=str(home / "notes.md"),
+        absolute=True,
+        start_line=None,
+        end_line=None,
+        session_id=None,
+        user=user,
+        db=None,
+    )
+    assert read["content"] == "hello home\n"
+
+    written = await files.write_file(
+        files.WriteFileRequest(path=str(home / "notes.md"), content="updated\n", absolute=True),
+        request,
+        user=user,
+        db=None,
+    )
+    assert written["status"] == "ok"
+    assert (home / "notes.md").read_text(encoding="utf-8") == "updated\n"
+
+    chat_read = await files.read_file(
+        path="chat.md",
+        absolute=False,
+        start_line=None,
+        end_line=None,
+        session_id="sess-1",
+        user=user,
+        db=None,
+    )
+    assert chat_read["content"] == "hello chat\n"
+
+    chat_written = await files.write_file(
+        files.WriteFileRequest(path="chat.md", content="changed\n", session_id="sess-1"),
+        request,
+        user=user,
+        db=None,
+    )
+    assert chat_written["status"] == "ok"
+    assert (backends.chat / "chat.md").read_text(encoding="utf-8") == "changed\n"
+
+
+@pytest.mark.asyncio
+async def test_owned_session_without_a_workspace_keeps_its_event_and_molt(
+    backends, molt_factory, monkeypatch
+):
+    """A fresh chat has Conversation.workspace == "": it still owns its chat.
+
+    Ownership must not be inferred from "a workspace directory exists" — doing
+    so silently drops the file_updated event and files the molt row under ''.
+    """
+    from sqlalchemy import select
+
+    from crabagent.core.database import Molt
+    from crabagent.core.event import EventType
+    from crabagent.serve.api import files
+
+    _patch_conversation(monkeypatch, SimpleNamespace(user_id=7, workspace=""))
+    request, stream = _fake_request("sess-new")
+    critical = request.app.state.event_queues["q"][1]
+    # A new file has nothing to snapshot, so start from an existing one.
+    (backends.server / "fresh.py").write_text("before\n", encoding="utf-8")
+
+    result = await files.write_file(
+        files.WriteFileRequest(path="fresh.py", content="x = 1\n", session_id="sess-new"),
+        request,
+        user=_user(),
+        db=None,
+    )
+
+    assert result["status"] == "ok"
+    # No workspace yet: the save lands in the server workspace ...
+    assert (backends.server / "fresh.py").read_text(encoding="utf-8") == "x = 1\n"
+    # ... but the session still gets its event and its undo history.
+    updates = [e for e in _drain(critical, stream) if e.type == EventType.FILE_UPDATED]
+    assert len(updates) == 1
+    assert updates[0].data["path"] == "fresh.py"
+    assert stream.empty()
+
+    async with molt_factory() as db:
+        rows = (await db.execute(select(Molt))).scalars().all()
+    assert [row.session_id for row in rows] == ["sess-new"]
+
+
+@pytest.mark.asyncio
+async def test_denied_roots_are_refused_through_relative_paths_from_home(
+    backends, monkeypatch
+):
+    """The default workspace is Path.cwd(), so starting from ~ makes it $HOME.
+
+    The relative branch of _resolve_file_path must apply the deny list, not just
+    the absolute branch, or ".ssh/id_rsa" is reachable via download/delete.
+    """
+    import crabagent.serve.services.auth as auth_svc
+    from crabagent.core.config import settings
+    from crabagent.serve.api import files
+
+    home = backends.home
+    monkeypatch.setattr(settings, "workspace", home)
+    (home / ".ssh").mkdir()
+    key = home / ".ssh" / "id_rsa"
+    key.write_text("PRIVATE KEY\n", encoding="utf-8")
+    (home / ".crabagent").mkdir()
+    (home / ".crabagent" / "encryption_key").write_text("k\n", encoding="utf-8")
+
+    monkeypatch.setattr(auth_svc, "decode_access_token", lambda token: {"sub": "7"})
+
+    async def _get_user_by_id(db, user_id):
+        return _user(int(user_id))
+
+    monkeypatch.setattr(auth_svc, "get_user_by_id", _get_user_by_id)
+
+    for relative in (".ssh/id_rsa", ".crabagent/encryption_key"):
+        with pytest.raises(HTTPException) as exc:
+            await files.download_file(path=relative, absolute=False, token="t", db=None)
+        assert exc.value.status_code == 403
+
+    with pytest.raises(HTTPException) as exc:
+        await files.delete_entry(files.DeleteRequest(path=".crabagent"), user=_user())
+    assert exc.value.status_code == 403
+
+    assert key.read_text(encoding="utf-8") == "PRIVATE KEY\n"
+    assert (home / ".crabagent" / "encryption_key").exists()
+
+
+@pytest.mark.asyncio
+async def test_serve_dir_pins_only_an_allowed_directory(backends, monkeypatch):
+    """The preview token is self-authenticating, so its root must be validated."""
+    from pathlib import Path as _Path
+
+    from crabagent.serve.api import files
+
+    home = backends.home
+    (home / ".ssh").mkdir()
+    (home / ".ssh" / "id_rsa").write_text("PRIVATE KEY\n", encoding="utf-8")
+    (home / ".crabagent").mkdir()
+    (home / ".crabagent" / "encryption_key").write_text("k\n", encoding="utf-8")
+    known_tokens = dict(files._html_servers)
+
+    for blocked in ("/etc", str(home / ".ssh"), str(home / ".crabagent")):
+        with pytest.raises(HTTPException) as exc:
+            await files.start_preview_session(path=blocked, user=_user())
+        assert exc.value.status_code == 403
+    # No token was issued, so there is no servable root either.
+    assert files._html_servers == known_tokens
+
+    # A directory the /files routes already allow still previews its files.
+    site = home / "site"
+    site.mkdir()
+    (site / "index.html").write_text("<h1>hi</h1>", encoding="utf-8")
+    session = await files.start_preview_session(path=str(site), user=_user())
+    try:
+        assert session["token"]
+        response = await files.serve_preview_file(
+            preview_token=session["token"], file_path="index.html"
+        )
+        assert _Path(response.path).read_text(encoding="utf-8") == "<h1>hi</h1>"
+    finally:
+        await files.stop_preview_session(token=session["token"], user=_user())
+
+
+@pytest.mark.asyncio
+async def test_git_endpoints_refuse_a_workspace_outside_the_allowed_roots(backends):
+    from crabagent.serve.api import files
+
+    outside = backends.tmp / "someone-elses-repo"
+    (outside / ".git").mkdir(parents=True)
+    (outside / "secret.py").write_text("token = 'x'\n", encoding="utf-8")
+
+    with pytest.raises(HTTPException) as exc:
+        await files.git_status(workspace=str(outside), user=_user())
+    assert exc.value.status_code == 403
+    with pytest.raises(HTTPException) as exc:
+        await files.git_diff(path=None, cached=False, workspace=str(outside), user=_user())
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_home_tree_does_not_offer_denied_directories(backends):
+    from crabagent.serve.api import files
+
+    home = backends.home
+    (home / ".crabagent").mkdir()
+    (home / ".ssh").mkdir()
+    (home / "visible").mkdir()
+
+    tree = await files.list_tree(
+        path="", depth=1, absolute=True, include_root=False, session_id=None,
+        user=_user(), db=None,
+    )
+    names = {entry["name"] for entry in tree}
+    assert "visible" in names
+    # Both would 403 on click, so the tree must not advertise them.
+    assert ".crabagent" not in names
+    assert ".ssh" not in names
+
+
+# ── 4. FILE_UPDATED from agent tools ─────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_agent_edit_emits_exactly_one_file_updated(tmp_path: Path):

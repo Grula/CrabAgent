@@ -7,8 +7,9 @@ settings field). It never touches ``crabagent.db``.
 Design points:
 
 * WAL mode plus ``busy_timeout`` so a reader in another process never sees a
-  locked database, and :mod:`aiosqlite` throughout so the build never blocks the
-  event loop.
+  locked database, :mod:`aiosqlite` for every statement, and the walk, file
+  reads and parsing pushed into a worker thread (:func:`asyncio.to_thread`) so
+  a build never blocks the event loop — every SSE stream shares it.
 * Every ``CREATE`` uses ``IF NOT EXISTS``, so deleting the file simply means the
   next :func:`ensure_indexed` builds from scratch — there is no error path.
 * One file holds several workspaces: every row is keyed by a ``workspace``
@@ -23,6 +24,7 @@ Design points:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import AsyncIterator, Sequence
@@ -33,7 +35,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from .extract import ScannedFile, extract, iter_files, read_source
+from .extract import Extracted, ScannedFile, SourceFile, extract, iter_files, read_source
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,10 @@ SCHEMA_VERSION = "1"
 BUSY_TIMEOUT_MS = 30_000
 # Design limit: more changed files than this in one sweep is cheaper to rebuild.
 MAX_INCREMENTAL_CHANGES = 200
+# Files read and parsed per hop into a worker thread: large enough that the
+# thread switch is noise, small enough that a huge workspace is never held in
+# memory all at once.
+PARSE_BATCH_SIZE = 32
 
 
 def default_db_path() -> Path:
@@ -210,6 +216,12 @@ async def _workspace_lock(key: str) -> asyncio.Lock:
 
 # Meta keys that belong to one workspace rather than to the database.
 _LAST_BUILD_PREFIX = "last_build:"
+# Files the last sweep found but could not index (binary, oversized, unreadable):
+# ``{"<relpath>": [mtime_ms, size], ...}``. They never get a row, so without
+# this they would look new on every sweep — re-read each time, and enough of
+# them would push a sweep over MAX_INCREMENTAL_CHANGES into a full rebuild.
+# Persisted rather than kept in memory: the process restarts, the index does not.
+_SKIPPED_PREFIX = "skipped:"
 # Lazy maintenance: the sweep runs on the first ensure_indexed() of this
 # process and not again, so a long-lived server pays for it exactly once.
 _PRUNE_DONE = False
@@ -247,8 +259,8 @@ async def _purge_workspace(workspace: str) -> None:
         try:
             await _delete_workspace_rows(conn, workspace)
             await conn.execute(
-                "DELETE FROM code_index_meta WHERE key = ?",
-                (f"{_LAST_BUILD_PREFIX}{workspace}",),
+                "DELETE FROM code_index_meta WHERE key IN (?, ?)",
+                (f"{_LAST_BUILD_PREFIX}{workspace}", f"{_SKIPPED_PREFIX}{workspace}"),
             )
             await conn.commit()
         except Exception:
@@ -325,6 +337,25 @@ async def _set_meta(conn: aiosqlite.Connection, key: str, value: str) -> None:
     )
 
 
+def _remembered_skips(meta: dict[str, str], workspace: str) -> dict[str, list[int]]:
+    """Files ``workspace`` could not index last time: ``{path: [mtime_ms, size]}``.
+
+    Best effort: a corrupt or hand-edited value just means "nothing remembered",
+    which costs one re-read per unindexable file and never an exception.
+    """
+    try:
+        raw = json.loads(meta.get(f"{_SKIPPED_PREFIX}{workspace}") or "{}")
+    except ValueError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    remembered: dict[str, list[int]] = {}
+    for path, value in raw.items():
+        if isinstance(path, str) and isinstance(value, list) and len(value) == 2:
+            remembered[path] = value
+    return remembered
+
+
 async def _existing_files(conn: aiosqlite.Connection, workspace: str) -> dict[str, aiosqlite.Row]:
     async with conn.execute(
         "SELECT id, path, mtime_ms, size, sha1, indexed_at FROM code_files WHERE workspace = ?",
@@ -353,52 +384,96 @@ async def _delete_workspace_rows(conn: aiosqlite.Connection, workspace: str) -> 
     await conn.execute("DELETE FROM code_files WHERE workspace = ?", (workspace,))
 
 
+def _scan_files(root: Path) -> list[ScannedFile]:
+    """Walk the workspace. Runs in a worker thread (see :func:`ensure_indexed`)."""
+    return list(iter_files(root))
+
+
+def _read_and_parse(
+    root: Path, files: Sequence[ScannedFile]
+) -> list[tuple[ScannedFile, SourceFile | None, Extracted | None]]:
+    """Read and parse ``files``; ``None, None`` marks a file that cannot be indexed.
+
+    Pure blocking I/O plus CPU work, so it is only ever called through
+    :func:`asyncio.to_thread` — a workspace build must not stall the event loop
+    (every SSE stream shares it).
+    """
+    prepared: list[tuple[ScannedFile, SourceFile | None, Extracted | None]] = []
+    for scanned in files:
+        source = read_source(root / scanned.path)
+        if source is None:
+            prepared.append((scanned, None, None))
+            continue
+        prepared.append((scanned, source, extract(scanned.lang, source.text)))
+    return prepared
+
+
 async def _insert_files(
     conn: aiosqlite.Connection,
     workspace: str,
     root: Path,
     files: Sequence[ScannedFile],
     indexed_at: int,
-) -> None:
+) -> set[str]:
     """Index ``files``: read, parse, insert the file row plus its symbols/chunks.
 
-    A file that cannot be decoded as text (NUL byte, unreadable) is skipped
-    without a row, so the next sweep retries it.
+    Reading and parsing happen in a worker thread, :data:`PARSE_BATCH_SIZE`
+    files at a time (see :func:`_read_and_parse`); only the row writes run
+    here.
+
+    Returns the paths that could not be indexed (binary, oversized, unreadable)
+    so the caller can remember them: they never get a row, so without that
+    memory every sweep would treat them as brand-new files.
     """
-    for scanned in files:
-        source = read_source(root / scanned.path)
-        if source is None:
-            continue
-        cursor = await conn.execute(
-            "INSERT INTO code_files(workspace, path, lang, mtime_ms, size, sha1, indexed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                workspace,
-                scanned.path,
-                scanned.lang,
-                scanned.mtime_ms,
-                scanned.size,
-                source.sha1,
-                indexed_at,
-            ),
+    skipped: set[str] = set()
+    for start in range(0, len(files), PARSE_BATCH_SIZE):
+        batch = files[start : start + PARSE_BATCH_SIZE]
+        for scanned, source, parsed in await asyncio.to_thread(_read_and_parse, root, batch):
+            if source is None or parsed is None:
+                skipped.add(scanned.path)
+                continue
+            await _insert_one(conn, workspace, scanned, source, parsed, indexed_at)
+    return skipped
+
+
+async def _insert_one(
+    conn: aiosqlite.Connection,
+    workspace: str,
+    scanned: ScannedFile,
+    source: SourceFile,
+    parsed: Extracted,
+    indexed_at: int,
+) -> None:
+    """Write one already-parsed file and its symbols/chunks."""
+    cursor = await conn.execute(
+        "INSERT INTO code_files(workspace, path, lang, mtime_ms, size, sha1, indexed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            workspace,
+            scanned.path,
+            scanned.lang,
+            scanned.mtime_ms,
+            scanned.size,
+            source.sha1,
+            indexed_at,
+        ),
+    )
+    file_id = cursor.lastrowid
+    await cursor.close()
+    if parsed.symbols:
+        await conn.executemany(
+            "INSERT INTO code_symbols(file_id, kind, name, qualname, start_line, end_line, signature, doc) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (file_id, s.kind, s.name, s.qualname, s.start_line, s.end_line, s.signature, s.doc)
+                for s in parsed.symbols
+            ],
         )
-        file_id = cursor.lastrowid
-        await cursor.close()
-        parsed = extract(scanned.lang, source.text)
-        if parsed.symbols:
-            await conn.executemany(
-                "INSERT INTO code_symbols(file_id, kind, name, qualname, start_line, end_line, signature, doc) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    (file_id, s.kind, s.name, s.qualname, s.start_line, s.end_line, s.signature, s.doc)
-                    for s in parsed.symbols
-                ],
-            )
-        if parsed.chunks:
-            await conn.executemany(
-                "INSERT INTO code_chunks(file_id, start_line, end_line, text) VALUES (?, ?, ?, ?)",
-                [(file_id, c.start_line, c.end_line, c.text) for c in parsed.chunks],
-            )
+    if parsed.chunks:
+        await conn.executemany(
+            "INSERT INTO code_chunks(file_id, start_line, end_line, text) VALUES (?, ?, ?, ?)",
+            [(file_id, c.start_line, c.end_line, c.text) for c in parsed.chunks],
+        )
 
 
 async def _counts(conn: aiosqlite.Connection, workspace: str) -> tuple[int, int, int]:
@@ -456,30 +531,55 @@ async def ensure_indexed(workspace: Path, *, force: bool = False) -> IndexStats:
             last_build = meta.get(f"last_build:{key}")
             full = force or not last_build or meta.get("schema_version") != SCHEMA_VERSION
 
-            scanned = list(iter_files(root))
+            scanned = await asyncio.to_thread(_scan_files, root)
             existing = await _existing_files(conn, key)
+            skipped_before = _remembered_skips(meta, key)
             changed: list[ScannedFile] = []
             vanished: list[str] = []
             if not full:
                 for scanned_file in scanned:
                     row = existing.get(scanned_file.path)
-                    if row is None or row["mtime_ms"] != scanned_file.mtime_ms or row["size"] != scanned_file.size:
-                        changed.append(scanned_file)
+                    if row is not None:
+                        if row["mtime_ms"] == scanned_file.mtime_ms and row["size"] == scanned_file.size:
+                            continue
+                    elif skipped_before.get(scanned_file.path) == [scanned_file.mtime_ms, scanned_file.size]:
+                        # Unindexable last time and untouched since: not a change.
+                        continue
+                    changed.append(scanned_file)
                 seen = {scanned_file.path for scanned_file in scanned}
                 vanished = [path for path in existing if path not in seen]
                 if len(changed) > MAX_INCREMENTAL_CHANGES:
                     full = True
 
+            by_path = {scanned_file.path: [scanned_file.mtime_ms, scanned_file.size] for scanned_file in scanned}
             indexed_at = _now_ns()
             if full:
                 await _delete_workspace_rows(conn, key)
-                await _insert_files(conn, key, root, scanned, indexed_at)
+                skipped = await _insert_files(conn, key, root, scanned, indexed_at)
             else:
                 for path in vanished:
                     await _delete_file_rows(conn, existing[path]["id"])
+                changed_paths = {scanned_file.path for scanned_file in changed}
                 for scanned_file in changed:
-                    await _delete_file_rows(conn, existing[scanned_file.path]["id"])
-                await _insert_files(conn, key, root, changed, indexed_at)
+                    # A brand-new file has no rows yet: only re-indexed files do.
+                    row = existing.get(scanned_file.path)
+                    if row is not None:
+                        await _delete_file_rows(conn, row["id"])
+                skipped = await _insert_files(conn, key, root, changed, indexed_at)
+                # Remember every unindexable file: the ones skipped just now and
+                # the ones already known and not re-read this sweep. A file that
+                # is gone, or that now indexes, is forgotten.
+                skipped |= {
+                    path for path in skipped_before if path in by_path and path not in changed_paths
+                }
+
+            remembered = {path: by_path[path] for path in skipped if path in by_path}
+            if remembered:
+                await _set_meta(conn, f"{_SKIPPED_PREFIX}{key}", json.dumps(remembered, sort_keys=True))
+            else:
+                await conn.execute(
+                    "DELETE FROM code_index_meta WHERE key = ?", (f"{_SKIPPED_PREFIX}{key}",)
+                )
 
             if full or changed or vanished:
                 built_at = _now_iso()

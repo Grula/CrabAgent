@@ -73,6 +73,31 @@ export async function getTree(
   return api.get<FileEntry[]>(`/files/tree?${params}`);
 }
 
+/** One directory listing plus the directory the server actually listed. */
+export interface TreeListing {
+  path: string;
+  entries: FileEntry[];
+}
+
+/**
+ * List an absolute directory and learn which directory that was.
+ *
+ * With no `path` the server lists the user's home directory and returns it as
+ * `path`, so callers can tell when they are at the root instead of guessing.
+ */
+export async function getTreeWithRoot(
+  path: string = "",
+  depth: number = 1,
+  absolute: boolean = true,
+): Promise<TreeListing> {
+  const params = new URLSearchParams();
+  if (path) params.set("path", path);
+  params.set("depth", String(depth));
+  if (absolute) params.set("absolute", "true");
+  params.set("include_root", "true");
+  return api.get<TreeListing>(`/files/tree?${params}`);
+}
+
 export async function searchFiles(query: string, absolute: boolean = false, limit: number = 200, path?: string, signal?: AbortSignal): Promise<FileEntry[]> {
   const params: Record<string, string> = { q: query, limit: String(limit) };
   if (absolute) params.absolute = "true";

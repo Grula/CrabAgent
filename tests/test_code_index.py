@@ -7,6 +7,7 @@ module-level ``DB_PATH`` is monkeypatched, so nothing touches
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 import time
@@ -379,6 +380,26 @@ async def test_noise_directories_are_not_indexed(tmp_path, index_db):
     assert stats.symbols == 1
 
 
+async def test_symlinks_pointing_outside_the_workspace_are_not_indexed(tmp_path, index_db):
+    root = tmp_path / "ws"
+    _write(root, "keep.json", '{"keep": "insidezebramarker"}\n')
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.json").write_text('{"secret": "outsidezebrasecret"}\n', encoding="utf-8")
+    (root / "link.json").symlink_to(outside / "secret.json")
+    (root / "alias.json").symlink_to(root / "keep.json")
+
+    stats = await ensure_indexed(root)
+
+    assert stats.files == 2
+    paths = {row["path"] for row in await _rows("SELECT path FROM code_files")}
+    assert paths == {"keep.json", "alias.json"}
+    # the escaping symlink's content never becomes a search hit
+    assert await iter_matches(root, ["outsidezebrasecret"]) == []
+    # a link that stays inside the workspace is indexed like its target
+    assert {m.path for m in await iter_matches(root, ["insidezebramarker"])} == {"keep.json", "alias.json"}
+
+
 # ── incremental behaviour ──────────────────────────────────────────────────
 
 
@@ -443,6 +464,149 @@ async def test_deleted_file_rows_and_fts_entries_are_gone(tmp_path, index_db):
     assert [row["path"] for row in await _rows("SELECT path FROM code_files")] == ["keep.py"]
     assert await _rows("SELECT id FROM code_symbols WHERE name = 'vanishingzebra'") == []
     assert await iter_matches(root, ["vanishingzebra"]) == []
+
+
+async def test_a_new_file_is_indexed_and_searchable_on_the_next_sweep(tmp_path, index_db):
+    """A path with no row yet must not be handed to ``_delete_file_rows``."""
+    root = tmp_path / "ws"
+    _write(root, "a.py", "def alphazebra():\n    return 1\n")
+    assert (await ensure_indexed(root)).rebuilt is True
+
+    _write(root, "b.py", "def betazebra():\n    return 2\n")
+    second = await ensure_indexed(root)  # used to raise KeyError on the new path
+
+    assert second.rebuilt is False
+    assert (second.files, second.symbols) == (2, 2)
+    assert {match.path for match in await iter_matches(root, ["betazebra"])} == {"b.py"}
+    assert {match.path for match in await iter_matches(root, ["alphazebra"])} == {"a.py"}
+
+
+async def test_unindexable_files_are_remembered_and_never_force_a_rebuild(
+    tmp_path, index_db, monkeypatch
+):
+    """Binary/oversized files get no row, so they must not look new every sweep."""
+    root = tmp_path / "ws"
+    _write(root, "ok.py", "def goodzebra():\n    return 1\n")
+    for i in range(3):
+        _write(root, f"blob{i}.py", b"\x00\x01binary\x00\x02")
+    _write(root, "big.py", "x = 1\n" * 90_000)  # over the 512 KB cap: never scanned
+    # Any file counted as changed tips this: three "new" binaries would rebuild.
+    monkeypatch.setattr(store, "MAX_INCREMENTAL_CHANGES", 1)
+
+    first = await ensure_indexed(root)
+    assert (first.rebuilt, first.files, first.symbols) == (True, 1, 1)
+
+    for sweep in (2, 3):
+        stats = await ensure_indexed(root)  # used to raise KeyError on sweep 2
+        assert stats.rebuilt is False, f"sweep {sweep} fell back to a full rebuild"
+        assert (stats.files, stats.symbols) == (1, 1)
+
+
+async def test_a_deleted_and_a_new_file_in_the_same_sweep(tmp_path, index_db):
+    root = tmp_path / "ws"
+    _write(root, "keep.py", "def keeperzebra():\n    return 1\n")
+    gone = _write(root, "gone.py", "def gonezebra():\n    return 2\n")
+    await ensure_indexed(root)
+
+    gone.unlink()
+    _write(root, "fresh.py", "def freshzebra():\n    return 3\n")
+    stats = await ensure_indexed(root)
+
+    assert stats.rebuilt is False
+    assert stats.files == 2
+    assert {row["path"] for row in await _rows("SELECT path FROM code_files")} == {"keep.py", "fresh.py"}
+    assert await _rows("SELECT id FROM code_symbols WHERE name = 'gonezebra'") == []
+    assert {match.path for match in await iter_matches(root, ["freshzebra"])} == {"fresh.py"}
+    assert await iter_matches(root, ["gonezebra"]) == []
+
+
+async def test_a_sixty_four_kilobyte_line_is_not_scanned(tmp_path, index_db):
+    """A minified one-liner is skipped, not scanned (64k of spaces took seconds)."""
+    source = "  minifiedMethod(): void" + " " * 65_500 + "{}\n"
+    started = time.perf_counter()
+    symbols = ex.parse_typescript(source)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 2.0, f"scanning one 64k line took {elapsed:.1f}s"
+    assert symbols == [], "a line over MAX_SCAN_LINE_CHARS must not be symbol-scanned"
+
+    root = tmp_path / "ws"
+    _write(root, "bundle.ts", source)
+    stats = await ensure_indexed(root)  # the whole build completes too
+    assert (stats.files, stats.chunks) == (1, 1)
+
+
+def test_long_but_scannable_lines_stay_linear():
+    """Under the cap the regex must be linear: it used to backtrack quadratically."""
+    source = "".join("  method()" + " " * 3_900 + "\n" for _ in range(100))  # 100 x 3.9k lines
+    started = time.perf_counter()
+    symbols = ex.parse_typescript(source)
+    elapsed = time.perf_counter() - started
+    assert symbols == []
+    assert elapsed < 0.5, f"scanning 100 lines of 3.9k chars took {elapsed:.2f}s"
+
+
+def test_typescript_method_shapes_survive_the_linear_regex():
+    """The possessive method pattern must still read real declarations."""
+    source = (
+        "class Store {\n"
+        "  constructor(db: Db) {\n"
+        "    this.db = db;\n"
+        "  }\n"
+        "\n"
+        "  async load(id: string): Promise<Item> {\n"
+        "    return this.db.get(id);\n"
+        "  }\n"
+        "\n"
+        "  static async run(a, b)  :  Promise<void>   {\n"
+        "    return;\n"
+        "  }\n"
+        "}\n"
+    )
+    methods = {s.qualname: s for s in ex.parse_typescript(source) if s.kind == "method"}
+    assert set(methods) == {"Store.constructor", "Store.load", "Store.run"}
+
+
+async def test_ensure_indexed_reads_files_off_the_event_loop(tmp_path, index_db, monkeypatch):
+    """Walk, reads and parsing run in worker threads, so the loop keeps ticking.
+
+    Every read is slowed to 60 ms — a large file, a cold cache or a slow mount.
+    On the event loop each one is an uninterrupted stall; in a worker thread the
+    loop is free while it runs. (An ordinary-sized workspace does not show this:
+    the per-file ``await`` on the database writes already yields on its own.)
+    """
+    root = tmp_path / "ws"
+    for i in range(20):
+        _write(root, f"mod{i}.py", "def f():\n    return 1\n")
+
+    real_read = store.read_source
+    read_delay = 0.06
+
+    def slow_read(path):
+        time.sleep(read_delay)
+        return real_read(path)
+
+    monkeypatch.setattr(store, "read_source", slow_read)
+
+    stamps: list[float] = []
+
+    async def ticker() -> None:
+        while True:
+            await asyncio.sleep(0.01)
+            stamps.append(time.perf_counter())
+
+    task = asyncio.create_task(ticker())
+    try:
+        await asyncio.sleep(0.05)
+        stats = await ensure_indexed(root)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert stats.files == 20
+    gaps = [later - earlier for earlier, later in zip(stamps, stamps[1:])]
+    assert len(stamps) >= 5, f"only {len(stamps)} ticks: the build blocked the loop"
+    assert max(gaps) < read_delay / 2, f"event loop stalled for {max(gaps):.3f}s during a read"
 
 
 # ── workspaces ─────────────────────────────────────────────────────────────

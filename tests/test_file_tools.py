@@ -255,6 +255,47 @@ def test_grep_files_directory_mode(tmp_path: Path):
     assert "import os" in result
 
 
+def test_grep_files_skips_symlinks_that_escape_the_search_root(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("outside-secret-token\n", encoding="utf-8")
+    (workspace / "notes.txt").symlink_to(outside / "secret.txt")
+    inner = workspace / "inner.txt"
+    inner.write_text("inside-secret-token\n", encoding="utf-8")
+    (workspace / "alias.txt").symlink_to(inner)
+    context = AgentContext(workspace=workspace)
+
+    result = grep_files("secret-token", path=".", context=context)
+
+    assert "outside-secret-token" not in result
+    assert "inside-secret-token" in result
+    # the inside-pointing link resolves to a file inside the root: it is searched
+    assert result.count("inside-secret-token") == 2
+
+
+def test_grep_explicit_symlink_path_does_not_escape_the_workspace(tmp_path: Path):
+    """An explicit path that is a symlink gets the same rule as the walk."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("outside-secret-token\n", encoding="utf-8")
+    link = workspace / "notes.txt"
+    link.symlink_to(outside / "secret.txt")
+    inner = workspace / "inner.txt"
+    inner.write_text("inside-secret-token\n", encoding="utf-8")
+    (workspace / "alias.txt").symlink_to(inner)
+    context = AgentContext(workspace=workspace)
+
+    assert "outside-secret-token" not in grep_files("secret-token", path="notes.txt", context=context)
+    # The absolute form of the same link is refused as well.
+    assert "outside-secret-token" not in grep_files("secret-token", path=str(link), context=context)
+    # A link that stays inside the workspace is still searched, as in walk mode.
+    assert "inside-secret-token" in grep_files("secret-token", path="alias.txt", context=context)
+
+
 def test_grep_files_nonexistent_path(tmp_path: Path):
     context = AgentContext(workspace=tmp_path)
     result = grep_files("x", path="./nonexistent", context=context)

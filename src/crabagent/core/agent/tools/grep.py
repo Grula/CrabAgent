@@ -3,9 +3,11 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+import stat
+from pathlib import Path
 from typing import Any
 
-from crabagent.core.agent.tools.path_utils import resolve_tool_path
+from crabagent.core.agent.tools.path_utils import get_workspace_root, resolve_tool_path
 from crabagent.core.agent.tools.registry import registry
 
 # ── Default directories to skip when searching ──────────────────────────
@@ -163,6 +165,23 @@ def _is_binary(filepath: str) -> bool:
         return True  # if we can't even read it, treat as binary/skip
 
 
+def _is_escaping_symlink(path: str, real_root: str) -> bool:
+    """True when *path* is a symlink resolving outside ``real_root``.
+
+    ``os.walk(followlinks=False)`` never descends a symlinked directory but it
+    still lists symlinked *files*, and opening one reads its target. A search
+    rooted at a workspace must never read outside it (a repository can ship
+    ``notes.txt -> ../secret``), so those links are skipped. A link that stays
+    inside the root resolves to a file the user could open anyway and is kept.
+    """
+    try:
+        if not stat.S_ISLNK(os.lstat(path).st_mode):
+            return False
+    except OSError:
+        return False
+    return not Path(os.path.realpath(path)).is_relative_to(real_root)
+
+
 @registry.register(
     name="grep",
     description=(
@@ -249,6 +268,18 @@ def grep_files(
     # ── Single-file mode: if *path* is a file, grep it directly ────────
     resolved = os.path.abspath(str(resolved_path))
     if os.path.isfile(resolved):
+        # The same rule as the directory walk: an explicit path that is itself a
+        # symlink resolving outside the workspace must not be read either, or
+        # ``grep path=notes.txt`` (a link to ../secret) would read past the root.
+        workspace_root = get_workspace_root(context)
+        if workspace_root is not None:
+            requested = os.path.abspath(
+                os.path.expanduser(path)
+                if os.path.isabs(os.path.expanduser(path))
+                else os.path.join(str(workspace_root), os.path.expanduser(path))
+            )
+            if _is_escaping_symlink(requested, os.path.realpath(str(workspace_root))):
+                return "No matches found."
         try:
             regex_inner = re.compile(pattern, flags)
         except re.error as e:
@@ -299,6 +330,7 @@ def grep_files(
     # ── os.walk with pruning, depth tracking & size limit ───────────────
     # Compute the depth of root_path so we can measure relative depth.
     root_depth = root_path.rstrip(os.sep).count(os.sep)
+    real_root = os.path.realpath(root_path)
 
     for current_root, dirs, files in os.walk(root_path, topdown=True, followlinks=False):
         # --- Depth guard ---
@@ -316,6 +348,10 @@ def grep_files(
         # --- Process files ---
         for fname in files:
             fpath = os.path.join(current_root, fname)
+            # A symlinked file is opened even though its directory is not
+            # followed; skip it when it resolves outside the search root.
+            if _is_escaping_symlink(fpath, real_root):
+                continue
             if matcher is not None:
                 rel_path = os.path.relpath(fpath, root_path).replace(os.sep, "/")
                 if not matcher.match(fname, rel_path):

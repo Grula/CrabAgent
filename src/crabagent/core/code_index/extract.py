@@ -117,23 +117,47 @@ def _skip_dir(rel_dir: Path, name: str) -> bool:
     return rel.endswith(EXTRA_SKIP_RELATIVE_DIRS)
 
 
+def _is_escaping_symlink(path: Path, real_root: str) -> bool:
+    """True when *path* is a symlink resolving outside ``real_root``.
+
+    ``os.walk(followlinks=False)`` never descends a symlinked directory, but a
+    symlinked *file* is still listed and read by :func:`read_source`, so
+    ``link.json -> ~/secret.json`` would be indexed and its content returned in
+    ``code_search`` snippets. Such links are skipped. A link that stays inside
+    the root resolves to a file the user could open anyway and is kept.
+    """
+    try:
+        if not stat_module.S_ISLNK(path.lstat().st_mode):
+            return False
+    except OSError:
+        return False
+    return not Path(os.path.realpath(path)).is_relative_to(real_root)
+
+
 def iter_files(workspace: Path) -> Iterator[ScannedFile]:
     """Yield every indexable file under ``workspace``, sorted and deterministic.
 
     Hidden directories, the workspace tree's noise directories and
     ``static/assets`` are pruned; files outside :data:`ALLOWED_EXTENSIONS` and
-    files over :data:`MAX_FILE_BYTES` are dropped. Unreadable entries are
-    skipped without raising.
+    files over :data:`MAX_FILE_BYTES` are dropped. Symlinks resolving outside
+    the workspace are skipped. Unreadable entries are skipped without raising.
     """
     root = Path(workspace)
+    real_root = os.path.realpath(root)
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = Path(dirpath).relative_to(root)
-        dirnames[:] = sorted(name for name in dirnames if not _skip_dir(rel_dir, name))
+        dirnames[:] = sorted(
+            name
+            for name in dirnames
+            if not _skip_dir(rel_dir, name) and not _is_escaping_symlink(Path(dirpath) / name, real_root)
+        )
         for name in sorted(filenames):
             lang = LANG_BY_EXT.get(os.path.splitext(name)[1].lower())
             if lang is None:
                 continue
             full = Path(dirpath) / name
+            if _is_escaping_symlink(full, real_root):
+                continue
             try:
                 st = full.stat()
             except OSError:
@@ -318,8 +342,13 @@ _TS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         rf"^\s*{_TS_MODIFIERS}(?:const|let|var)\s+(?P<name>{_IDENT})\s*(?::[^=]+)?=\s*(?:async\s+)?function\b"
     ), "function"),
     # Indented "name(args) {" / "name(args): ReturnType {" inside a class body.
+    # Possessive quantifiers and an unambiguous return-type group keep this
+    # linear: ``\s*\s*\{`` over a long run of spaces used to backtrack
+    # quadratically, and ``[^;{}]+?`` grew one character at a time from the
+    # same position. The behaviour on real declarations is unchanged.
     (re.compile(
-        rf"^\s+{_TS_MODIFIERS}(?P<name>{_IDENT})\s*\([^()]*\)\s*(?::[^;{{}}]+?)?\s*\{{(?:\}}\s*)?$"
+        rf"^\s+{_TS_MODIFIERS}(?P<name>{_IDENT})\s*\([^()]*\)\s*+"
+        r"(?:\s*+:[^;{}]*?[^\s;{}])?\s*+\{(?:\}\s*)?$"
     ), "method"),
 )
 
@@ -327,6 +356,11 @@ _TS_NOT_METHODS = frozenset({
     "if", "for", "while", "switch", "catch", "return", "function", "do", "else", "try", "with", "typeof",
 })
 _TS_MAX_BLOCK_SCAN = 200
+# Per-line cap for the regex scanner. A generated or minified bundle is one
+# enormous line that never holds a declaration worth a symbol, and scanning it
+# character by character is pure cost (a 64k one-liner took seconds). Such a
+# line is left to the text chunks, which are built independently of this scan.
+MAX_SCAN_LINE_CHARS = 4_000
 
 
 def _block_end(lines: list[str], start_idx: int) -> int:
@@ -362,12 +396,16 @@ def parse_typescript(text: str) -> list[Symbol]:
     the end line by naive brace matching. It will miss shapes the regexes do not
     cover — notably an arrow function whose parameters span several lines, and a
     function passed as an object property. Those gaps are pinned by tests so
-    they cannot change silently.
+    they cannot change silently. Lines longer than
+    :data:`MAX_SCAN_LINE_CHARS` (minified bundles) are not scanned at all.
     """
     lines = text.splitlines()
     out: list[Symbol] = []
     for idx, line in enumerate(lines):
         if not line.strip():
+            continue
+        if len(line) > MAX_SCAN_LINE_CHARS:
+            # Minified/generated one-liner: never scanned (see the constant).
             continue
         for pattern, kind in _TS_PATTERNS:
             match = pattern.match(line)

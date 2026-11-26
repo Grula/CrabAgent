@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { ChevronRight, Folder, FolderOpen, X, Check, ArrowUp, Home } from "lucide-react";
-import { FileEntry, getTree } from "../api/files";
+import { FileEntry, getTreeWithRoot } from "../api/files";
 import { cn } from "../lib/cn";
 
 interface Props {
@@ -10,28 +10,45 @@ interface Props {
 }
 
 export default function DirectoryPicker({ open, onClose, onSelect }: Props) {
-  const [currentPath, setCurrentPath] = useState("/");
+  // "" means the picker's root (the user's home): the first listing names it.
+  const [currentPath, setCurrentPath] = useState("");
+  const [rootPath, setRootPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedDir, setSelectedDir] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
     setLoading(true);
-    getTree(currentPath, 1, true)
+    getTreeWithRoot(currentPath)
       .then((result) => {
-        setEntries(result.filter((e) => e.type === "directory"));
+        if (cancelled) return;
+        setEntries(result.entries.filter((e) => e.type === "directory"));
+        // The response says which directory it listed, so home is never guessed.
+        setRootPath((root) => root ?? result.path);
       })
-      .catch(() => setEntries([]))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!cancelled) setEntries([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [currentPath, open]);
 
   useEffect(() => {
-    if (open) {
-      setCurrentPath("/");
-      setSelectedDir(null);
-    }
+    if (open) return;
+    setCurrentPath("");
+    setRootPath(null);
+    setSelectedDir(null);
+    setEntries([]);
   }, [open]);
+
+  // Nothing above home is listable, so "up" stops there.
+  const atRoot = rootPath === null || currentPath === "" || currentPath === rootPath;
 
   const navigateTo = (path: string) => {
     setCurrentPath(path);
@@ -39,24 +56,24 @@ export default function DirectoryPicker({ open, onClose, onSelect }: Props) {
   };
 
   const goUp = () => {
-    if (currentPath === "/") return;
-    const parent = currentPath.replace(/\/[^/]+$/, "") || "/";
-    navigateTo(parent);
+    if (atRoot) return;
+    const parent = currentPath.replace(/\/[^/]+$/, "");
+    navigateTo(parent.startsWith(rootPath!) ? parent : rootPath!);
   };
 
-  const breadcrumbs = currentPath === "/"
-    ? [{ name: "/", path: "/" }]
-    : currentPath.split("/").filter(Boolean).map((seg, i, arr) => ({
+  const breadcrumbs = rootPath && currentPath.startsWith(rootPath + "/")
+    ? currentPath.slice(rootPath.length + 1).split("/").filter(Boolean).map((seg, i, arr) => ({
         name: seg,
-        path: "/" + arr.slice(0, i + 1).join("/"),
-      }));
+        path: `${rootPath}/${arr.slice(0, i + 1).join("/")}`,
+      }))
+    : [];
 
   const handleSelectDir = (path: string) => {
     setSelectedDir(path === selectedDir ? null : path);
   };
 
   const handleConfirm = () => {
-    const path = selectedDir || currentPath;
+    const path = selectedDir || currentPath || rootPath;
     if (path) {
       onSelect(path);
       onClose();
@@ -102,9 +119,9 @@ export default function DirectoryPicker({ open, onClose, onSelect }: Props) {
         {/* Breadcrumbs */}
         <div className="flex items-center gap-0.5 px-3 py-2 border-b border-[var(--border)] overflow-x-auto">
           <button
-            onClick={() => navigateTo("/")}
+            onClick={() => navigateTo("")}
             className="shrink-0 p-0.5 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]"
-            title={"Root"}
+            title={"Home"}
           >
             <Home size={13} />
           </button>
@@ -129,7 +146,7 @@ export default function DirectoryPicker({ open, onClose, onSelect }: Props) {
           ))}
           <button
             onClick={goUp}
-            disabled={currentPath === "/"}
+            disabled={atRoot}
             className="ml-auto shrink-0 p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] disabled:opacity-30 disabled:hover:bg-transparent"
             title={"Parent directory"}
           >
@@ -184,7 +201,7 @@ export default function DirectoryPicker({ open, onClose, onSelect }: Props) {
         {/* Selected path + Actions */}
         <div className="flex items-center justify-between px-4 py-3 border-t border-[var(--border)]">
           <span className="text-[11px] text-[var(--text-tertiary)] truncate max-w-[320px] font-mono">
-            {selectedDir || currentPath}
+            {selectedDir || currentPath || rootPath || ""}
           </span>
           <div className="flex items-center gap-2">
             <button

@@ -219,6 +219,16 @@ def test_coder_proves_fixes_keeps_the_loop_free_and_checks_paths_properly():
     assert "is_relative_to(base), never with a string prefix" in goal
 
 
+def test_the_full_suite_runs_once_per_batch_in_parallel():
+    goals = {a["name"]: a["goal"] for a in db.DEFAULT_AGENTS}
+    assert "The full suite runs once per batch of related changes" in goals["architect"]
+    assert "full test suite when shared code" not in goals["architect"]
+    assert "Run the full test suite only when your brief asks for it" in goals["coder"]
+    assert "Re-run the coder's targeted tests" in goals["the_reviewer"]
+    for name in ("architect", "coder", "the_reviewer"):
+        assert "pytest -n auto" in goals[name]
+
+
 def test_switch_footer_allows_handing_work_to_a_teammate():
     msg = agents.build_agent_switch_msg({"name": "x", "display_name": "X", "goal": "g"})["content"]
     assert "hand it to a teammate" in msg

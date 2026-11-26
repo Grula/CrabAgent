@@ -277,6 +277,27 @@ async def test_symlink_escape_is_refused(tmp_path):
     assert "outside the workspace" in result.content[0].text
 
 
+async def test_grep_does_not_follow_symlinks_outside_the_workspace(tmp_path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("outside-secret-token\n", encoding="utf-8")
+    (workspace / "notes.txt").symlink_to(outside / "secret.txt")
+    inner = workspace / "inner.txt"
+    inner.write_text("inside-secret-token\n", encoding="utf-8")
+    (workspace / "alias.txt").symlink_to(inner)
+
+    async with _session(workspace) as session:
+        result = await session.call_tool("grep", {"pattern": "secret-token"})
+
+    assert result.is_error is False
+    text = result.content[0].text
+    assert "outside-secret-token" not in text
+    # a link that stays inside the workspace is still searched
+    assert "inside-secret-token" in text
+
+
 # ── protocol robustness (SDK-owned transport) ───────────────────────────
 def test_malformed_json_does_not_kill_the_session(tmp_path):
     (tmp_path / "notes.txt").write_text("alpha\n", encoding="utf-8")

@@ -44,6 +44,106 @@ def _resolve_path(base: Path, raw: str) -> Path | None:
     return resolved
 
 
+# Never served through /files, even though both live inside home: the app's own
+# database/encryption key/uploads and the user's SSH material. Taken relative to
+# Path.home() so the deny list and the home check always agree.
+_ALWAYS_DENIED = (".crabagent", ".ssh")
+_PATH_FORBIDDEN = "Path is not accessible"
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    """True when ``path`` is ``root`` or below it (no string-prefix tricks)."""
+    return path.is_relative_to(root)
+
+
+def _denied_roots() -> list[Path]:
+    home = Path.home().resolve()
+    return [(home / name).resolve() for name in _ALWAYS_DENIED]
+
+
+def _allowed_roots(own_workspace: Path | None = None) -> list[Path]:
+    """Directories a /files request may touch: home and the server's workspace.
+
+    ``own_workspace`` is the caller's chat workspace, which is user-settable via
+    ``POST /sessions``; it only counts as a root when it does not widen the
+    surface, i.e. it is already inside home or the server workspace. A chat
+    pointed at ``/`` or ``/etc`` must not turn that directory into a root.
+    """
+    from crabagent.core.config import settings
+
+    roots = [Path.home().resolve(), settings.workspace.resolve()]
+    if own_workspace is not None and any(
+        _is_within(own_workspace, root) for root in roots
+    ):
+        roots.append(own_workspace)
+    return roots
+
+
+def _is_denied_path(target: Path) -> bool:
+    """True when ``target`` is (or sits inside) an always-denied directory."""
+    return any(_is_within(target, denied) for denied in _denied_roots())
+
+
+def _require_allowed_path(target: Path, own_workspace: Path | None = None) -> Path:
+    """403 unless ``target`` sits under home, the server workspace or the chat's."""
+    if _is_denied_path(target):
+        raise HTTPException(status_code=403, detail=_PATH_FORBIDDEN)
+    if any(_is_within(target, root) for root in _allowed_roots(own_workspace)):
+        return target
+    raise HTTPException(status_code=403, detail=_PATH_FORBIDDEN)
+
+
+async def _request_base(
+    db: AsyncSession, session_id: str | None, user: User
+) -> tuple[Path, Path | None]:
+    """Base directory for a ``/files`` request, plus the caller's own chat workspace.
+
+    The second item is ``None`` whenever the base is the server workspace, so
+    callers can tell a user-controlled base from an admin-configured one.
+    """
+    from crabagent.core.config import settings
+
+    own = await _session_workspace(db, session_id, user)
+    if own is not None:
+        return own, own
+    return settings.workspace.resolve(), None
+
+
+def _conversation_workspace(conv: object | None) -> Path | None:
+    """The conversation's existing workspace directory, or None when it has none."""
+    raw = getattr(conv, "workspace", None)
+    if not raw:
+        return None
+    try:
+        path = Path(raw).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+    return path if path.is_dir() else None
+
+
+async def _owned_conversation(
+    db: AsyncSession, session_id: str | None, user: User
+) -> object | None:
+    """The caller's own conversation, or None for unknown/foreign/invalid ids.
+
+    Ownership is independent of ``Conversation.workspace``: a new chat has
+    ``workspace == ""`` and still owns its event stream and undo history, so
+    "is this session mine" must never be asked as "does it have a directory".
+    """
+    if not session_id:
+        return None
+    try:
+        from crabagent.serve.services import conversation as conv_svc
+
+        conv = await conv_svc.get_conversation(db, session_id)
+    except Exception:
+        logger.debug("Session lookup failed for %s", session_id, exc_info=True)
+        return None
+    if conv is None or getattr(conv, "user_id", None) != getattr(user, "id", None):
+        return None
+    return conv
+
+
 async def _session_workspace(
     db: AsyncSession, session_id: str | None, user: User
 ) -> Path | None:
@@ -55,32 +155,12 @@ async def _session_workspace(
     foreign session, missing/invalid directory) falls back to the server
     workspace so existing callers keep their behaviour.
     """
-    if not session_id:
-        return None
-    try:
-        from crabagent.serve.services import conversation as conv_svc
-
-        conv = await conv_svc.get_conversation(db, session_id)
-    except Exception:
-        logger.debug("Session workspace lookup failed for %s", session_id, exc_info=True)
-        return None
-    if conv is None or getattr(conv, "user_id", None) != getattr(user, "id", None):
-        return None
-    raw = getattr(conv, "workspace", None)
-    if not raw:
-        return None
-    try:
-        path = Path(raw).expanduser().resolve()
-    except (OSError, RuntimeError):
-        return None
-    return path if path.is_dir() else None
+    return _conversation_workspace(await _owned_conversation(db, session_id, user))
 
 
 async def _workspace_base(db: AsyncSession, session_id: str | None, user: User) -> Path:
     """Base directory for a ``/files`` request: the chat's workspace or the server CWD."""
-    from crabagent.core.config import settings
-
-    return await _session_workspace(db, session_id, user) or settings.workspace.resolve()
+    return (await _request_base(db, session_id, user))[0]
 
 
 def _emit_file_updated(request: Request | None, session_id: str | None, data: dict) -> None:
@@ -113,22 +193,33 @@ async def list_tree(
     path: str = Query("", description="Path relative to workspace, or absolute path when absolute=true"),
     depth: int = Query(1, ge=1, le=5),
     absolute: bool = Query(False, description="Treat path as absolute filesystem path"),
+    include_root: bool = Query(
+        False,
+        description="Return {path, entries} instead of a bare list, naming the directory listed",
+    ),
     session_id: str | None = Query(None, description="Chat session whose workspace to use"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     if absolute:
-        target = Path(path).resolve() if path else Path("/")
+        # No path means "the user's home": the only absolute root every /files
+        # caller may list, and where the workspace picker starts.
+        target = Path(path).resolve() if path else Path.home().resolve()
+        _require_allowed_path(target)
         if not target.exists():
             raise HTTPException(status_code=404, detail="Path not found")
         if not target.is_dir():
             raise HTTPException(status_code=400, detail="Not a directory")
-        return _build_tree(target, target, depth=depth, absolute=True)
+        entries = _build_tree(target, target, depth=depth, absolute=True)
+        if include_root:
+            return {"path": str(target), "entries": entries}
+        return entries
 
-    workspace = await _workspace_base(db, session_id, user)
+    workspace, own_workspace = await _request_base(db, session_id, user)
     target = _resolve_path(workspace, path.lstrip("/"))
     if not target:
         raise HTTPException(status_code=400, detail="Path outside workspace")
+    _require_allowed_path(target, own_workspace)
     if not target.exists():
         raise HTTPException(status_code=404, detail="Path not found")
     if not target.is_dir():
@@ -144,6 +235,9 @@ def _build_tree(dir_path: Path, base: Path, depth: int, absolute: bool = False) 
         for child in sorted(dir_path.iterdir()):
             name = child.name
             if name.startswith(".") and name != ".crabagent":
+                continue
+            # Never offer a directory that /files itself refuses to open.
+            if name in _ALWAYS_DENIED and _is_denied_path(child.resolve()):
                 continue
             rel = str(child.resolve()) if absolute else str(child.relative_to(base))
             is_dir = child.is_dir()
@@ -192,6 +286,9 @@ def _build_file_index(root: Path, base: Path, absolute: bool) -> list[dict]:
                         continue
                     # Compute relative path once
                     full = os.path.join(str(dir_path), name)
+                    # Same rule as _build_tree: never offer a denied directory.
+                    if name in _ALWAYS_DENIED and _is_denied_path(Path(full).resolve()):
+                        continue
                     if absolute:
                         rel = os.path.abspath(full)
                     else:
@@ -222,6 +319,7 @@ async def search_files(
 
     if absolute:
         root = Path(path).resolve() if path else Path("/")
+        _require_allowed_path(root)
     else:
         workspace = settings.workspace.resolve()
         root = _resolve_path(workspace, path.lstrip("/"))
@@ -498,12 +596,14 @@ async def read_file(
 ):
     if absolute:
         target = Path(path).resolve()
+        _require_allowed_path(target)
     else:
-        workspace = await _workspace_base(db, session_id, user)
+        workspace, own_workspace = await _request_base(db, session_id, user)
         t = _resolve_path(workspace, path.lstrip("/"))
         if not t:
             raise HTTPException(status_code=400, detail="Path outside workspace")
         target = t
+        _require_allowed_path(target, own_workspace)
 
     if not target.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -522,17 +622,31 @@ async def write_file(
 ):
     from crabagent.core.agent.tools.path_utils import file_lock
 
-    base = await _workspace_base(db, req.session_id, user)
+    # Only a session whose conversation belongs to the caller may drive the
+    # file_updated broadcast and the molt row (item 5): a foreign id would pop a
+    # false conflict in someone else's editor, so treat it as absent. Ownership
+    # is not the same as "the chat already has a workspace directory" — a fresh
+    # chat (workspace == "") still gets its event and its undo row.
+    from crabagent.core.config import settings
+
+    owned = await _owned_conversation(db, req.session_id, user)
+    own_workspace = _conversation_workspace(owned)
+    base = own_workspace if own_workspace is not None else settings.workspace.resolve()
+    session_id = req.session_id if owned is not None else None
 
     if req.absolute:
         target = Path(req.path).resolve()
-        if not str(target).startswith(str(Path.home())):
+        if not target.is_relative_to(Path.home().resolve()):
             raise HTTPException(status_code=400, detail="Absolute path must be under home directory")
     else:
         t = _resolve_path(base, req.path.lstrip("/"))
         if not t:
             raise HTTPException(status_code=400, detail="Path outside workspace")
         target = t
+
+    # The chat workspace is user-settable (POST /sessions), so a relative path
+    # must not escape home/ownership through it (item 4).
+    _require_allowed_path(target, own_workspace)
 
     try:
         rel = str(target.relative_to(base))
@@ -562,7 +676,7 @@ async def write_file(
             )
         # Undo history: snapshot the pre-save content through the tool registry's
         # existing molt path, so /sessions/{id}/molts/{molt_id}/rollback restores it.
-        await _snapshot_before_ui_write(base, target, req.session_id)
+        await _snapshot_before_ui_write(base, target, session_id)
         target.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(target.write_bytes, data)
         st = target.stat()
@@ -577,7 +691,7 @@ async def write_file(
 
     _emit_file_updated(
         request,
-        req.session_id,
+        session_id,
         {
             "path": rel,
             "abs_path": str(target),
@@ -645,6 +759,8 @@ async def get_image(
             raise HTTPException(status_code=400, detail="Path outside workspace")
         target = t
 
+    _require_allowed_path(target)
+
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -662,6 +778,10 @@ async def start_preview_session(
 ):
     """Create a tokenized same-origin preview route for a directory."""
     target = Path(path).resolve()
+    # The token is self-authenticating and the preview route has no auth of its
+    # own, so the directory it pins must pass the same allow/deny rules as
+    # every other /files route (audit item 2, via the preview door).
+    _require_allowed_path(target)
     if not target.is_dir():
         raise HTTPException(status_code=400, detail="Not a directory or does not exist")
 
@@ -685,6 +805,9 @@ async def serve_preview_file(
     target = _resolve_path(base_dir, file_path)
     if not target or not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
+    # Defence in depth: the pinned root was validated when the token was issued,
+    # and the served file must stay under what every other route allows.
+    _require_allowed_path(target)
 
     media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
     return FileResponse(str(target), media_type=media_type)
@@ -711,6 +834,8 @@ async def git_status(
     from crabagent.core.config import settings as _settings
 
     ws = Path(workspace).resolve() if workspace else _settings.workspace.resolve()
+    # A caller-supplied workspace must not read another user's repo.
+    _require_allowed_path(ws)
     if not ws.is_dir() or not (ws / ".git").exists():
         return {"is_git": False, "changes": []}
 
@@ -770,6 +895,8 @@ async def git_diff(
     from crabagent.core.config import settings as _settings
 
     ws = Path(workspace).resolve() if workspace else _settings.workspace.resolve()
+    # A caller-supplied workspace must not read another user's repo.
+    _require_allowed_path(ws)
     if not ws.is_dir() or not (ws / ".git").exists():
         return {"is_git": False, "diff": ""}
 
@@ -847,7 +974,9 @@ def _resolve_file_path(raw_path: str, absolute: bool = False) -> Path:
     """Resolve a file path safely, preventing path traversal."""
     if absolute:
         target = Path(raw_path).resolve()
-        if not str(target).startswith(str(Path.home())):
+        if any(_is_within(target, denied) for denied in _denied_roots()):
+            raise HTTPException(status_code=403, detail=_PATH_FORBIDDEN)
+        if not target.is_relative_to(Path.home().resolve()):
             raise HTTPException(status_code=400, detail="Absolute path must be under home directory")
         return target
     else:
@@ -857,6 +986,11 @@ def _resolve_file_path(raw_path: str, absolute: bool = False) -> Path:
         t = _resolve_path(workspace, raw_path.lstrip("/"))
         if not t:
             raise HTTPException(status_code=400, detail="Path outside workspace")
+        # The server workspace may be $HOME itself (the default is Path.cwd()),
+        # so the relative branch needs the same deny list as the absolute one:
+        # otherwise ".ssh/id_rsa" or ".crabagent" is reachable by download/delete.
+        if _is_denied_path(t):
+            raise HTTPException(status_code=403, detail=_PATH_FORBIDDEN)
         return t
 
 

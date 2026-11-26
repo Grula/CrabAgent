@@ -67,7 +67,7 @@ async def _request_confirm(callback: Callable, tool_name: str, arguments: dict, 
     requested — so tools that never confirm pay no file I/O.
     """
     if _confirm_accepts_diff_preview(callback):
-        preview = build_diff_preview(tool_name, arguments, workspace)
+        preview = await build_diff_preview(tool_name, arguments, workspace)
         if preview is not None:
             return await callback(tool_name, arguments, diff_preview=preview)
     return await callback(tool_name, arguments)

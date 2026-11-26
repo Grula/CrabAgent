@@ -5,11 +5,11 @@ only the tool name and its arguments. For ``write``/``edit`` that is not enough
 to judge the call, so this module renders the pending change as a unified diff
 that the UI can display next to the confirm buttons.
 
-The public entry point is :func:`build_diff_preview`. It is deliberately
-tolerant: it never raises, it returns ``None`` whenever a preview cannot be
-produced honestly (unknown tool, unreadable/binary/oversized file, an ``edit``
-whose ``old_string`` is not in the file), and it never touches the disk for
-tools that do not preview a change.
+The public entry point is :func:`build_diff_preview`. It is a coroutine and is
+deliberately tolerant: it never raises, it returns ``None`` whenever a preview
+cannot be produced honestly (unknown tool, unreadable/binary/oversized file, an
+``edit`` whose ``old_string`` is not in the file, input too large to diff in
+time), and it never touches the disk for tools that do not preview a change.
 
 Payload shape (stable contract, consumed by the web UI)::
 
@@ -28,6 +28,7 @@ True the text ends with the marker line ``... [diff truncated]``.
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import logging
 from pathlib import Path
@@ -42,6 +43,21 @@ _PREVIEW_TOOLS = frozenset({"write", "edit"})
 # Input caps: a diff of a huge or binary blob is useless (and slow) in a card.
 _MAX_FILE_BYTES = 1_000_000  # 1 MB
 _BINARY_PROBE_BYTES = 4096
+
+# Skip before computing. ``difflib`` is quadratic in the worst case: an
+# interleaved rewrite of 10k lines took 11 s here (4.4 s in the audit) while the
+# card shows at most _MAX_DIFF_LINES lines. 4000 lines is ten times what the
+# card displays and already far above any file a human reviews in it, so above
+# that the confirmation gets no preview rather than a slow one. The character
+# cap covers the other shape: a few very long lines keep the line count small
+# but cost the same.
+_MAX_DIFF_INPUT_LINES = 4000
+_MAX_DIFF_INPUT_CHARS = 1_000_000
+
+# Hard wall-clock bound for the diff itself. It runs in a worker thread, so a
+# timeout cannot stop the computation, but it does stop the confirmation from
+# waiting on it: over budget means no preview, never an error.
+_DIFF_TIME_BUDGET_SECONDS = 2.0
 
 # Output caps: keep the card (and the event payload) small.
 _MAX_DIFF_LINES = 400
@@ -114,22 +130,65 @@ def _make_diff(old_text: str, new_text: str, rel: str) -> tuple[str, int, int, b
     return unified, added, removed, truncated
 
 
-def build_diff_preview(
+async def build_diff_preview(
     tool_name: str, args: dict[str, Any] | None, workspace: Path | str | None
 ) -> dict[str, Any] | None:
     """Render the pending change of a ``write``/``edit`` call as a unified diff.
 
     Returns the payload described in the module docstring, or ``None`` when no
     honest preview exists. Never raises.
+
+    The diff itself is quadratic in the worst case, so it runs in a worker
+    thread under a wall-clock budget: a confirmation must never freeze the
+    event loop (and with it every SSE stream) for seconds.
     """
     try:
-        return _build(tool_name, args or {}, workspace)
+        prepared = _prepare(tool_name, args or {}, workspace)
+        if prepared is None:
+            return None
+        old_text, new_text, rel, exists = prepared
+        unified, added, removed, truncated = await asyncio.wait_for(
+            asyncio.to_thread(_make_diff, old_text, new_text, rel),
+            timeout=_DIFF_TIME_BUDGET_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.debug(
+            "diff preview for %s exceeded the %.1fs budget; no preview",
+            tool_name,
+            _DIFF_TIME_BUDGET_SECONDS,
+        )
+        return None
     except Exception:
         logger.debug("diff preview failed for %s", tool_name, exc_info=True)
         return None
 
+    if not unified:
+        return None
+    return {
+        "path": rel,
+        "unified": unified,
+        "added": added,
+        "removed": removed,
+        "truncated": truncated,
+        "new_file": not exists,
+    }
 
-def _build(tool_name: str, args: dict[str, Any], workspace: Path | str | None) -> dict[str, Any] | None:
+
+def _too_large_to_diff(old_text: str, new_text: str) -> bool:
+    """True when computing the diff would cost more than the card is worth."""
+    if max(len(old_text.splitlines()), len(new_text.splitlines())) > _MAX_DIFF_INPUT_LINES:
+        return True
+    return len(old_text) + len(new_text) > _MAX_DIFF_INPUT_CHARS
+
+
+def _prepare(
+    tool_name: str, args: dict[str, Any], workspace: Path | str | None
+) -> tuple[str, str, str, bool] | None:
+    """Cheap part of the preview: ``(old_text, new_text, rel_path, exists)``.
+
+    Runs on the caller's thread; it only reads a file of at most
+    _MAX_FILE_BYTES. Returns None when the call cannot be previewed.
+    """
     if tool_name not in _PREVIEW_TOOLS:
         return None
     raw_path = args.get("path") or args.get("file_path")
@@ -168,15 +227,7 @@ def _build(tool_name: str, args: dict[str, Any], workspace: Path | str | None) -
 
     if old_text == new_text:
         return None
-
-    unified, added, removed, truncated = _make_diff(old_text, new_text, rel)
-    if not unified:
+    if _too_large_to_diff(old_text, new_text):
+        # No preview rather than a slow one.
         return None
-    return {
-        "path": rel,
-        "unified": unified,
-        "added": added,
-        "removed": removed,
-        "truncated": truncated,
-        "new_file": not exists,
-    }
+    return old_text, new_text, rel, exists

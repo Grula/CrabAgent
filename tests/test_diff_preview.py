@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
+
 import pytest
 
 from crabagent.core.agent.context import AgentContext
@@ -13,8 +16,21 @@ from crabagent.core.event import EventBus, EventType
 # ── build_diff_preview ────────────────────────────────────────────────
 
 
-def test_write_new_file_is_all_added(tmp_path):
-    preview = build_diff_preview("write", {"path": "notes.txt", "content": "a\nb\n"}, tmp_path)
+def _interleaved_pair(count: int) -> tuple[str, str]:
+    """Old/new text whose diff is worst-case for ``difflib``.
+
+    Every old line survives and a new line is inserted after it, so the matcher
+    has the most blocks to weigh: 1000 lines take ~0.1 s, 10k lines ~11 s (the
+    audit measured 4.4 s for 10k lines).
+    """
+    old = "\n".join(f"line {i}" for i in range(count)) + "\n"
+    new = "\n".join(line for i in range(count) for line in (f"line {i}", f"extra {i}")) + "\n"
+    return old, new
+
+
+@pytest.mark.asyncio
+async def test_write_new_file_is_all_added(tmp_path):
+    preview = await build_diff_preview("write", {"path": "notes.txt", "content": "a\nb\n"}, tmp_path)
 
     assert preview is not None
     assert set(preview) == {"path", "unified", "added", "removed", "truncated", "new_file"}
@@ -27,10 +43,13 @@ def test_write_new_file_is_all_added(tmp_path):
     assert "+a" in preview["unified"] and "+b" in preview["unified"]
 
 
-def test_write_modification_counts(tmp_path):
+@pytest.mark.asyncio
+async def test_write_modification_counts(tmp_path):
     (tmp_path / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
 
-    preview = build_diff_preview("write", {"file_path": "app.py", "content": "one\nTWO\nthree\n"}, tmp_path)
+    preview = await build_diff_preview(
+        "write", {"file_path": "app.py", "content": "one\nTWO\nthree\n"}, tmp_path
+    )
 
     assert preview is not None
     assert preview["path"] == "app.py"
@@ -41,10 +60,11 @@ def test_write_modification_counts(tmp_path):
     assert "+TWO" in preview["unified"]
 
 
-def test_edit_replace_all(tmp_path):
+@pytest.mark.asyncio
+async def test_edit_replace_all(tmp_path):
     (tmp_path / "dup.txt").write_text("x\nx\n", encoding="utf-8")
 
-    preview = build_diff_preview(
+    preview = await build_diff_preview(
         "edit",
         {"path": "dup.txt", "old_string": "x", "new_string": "y", "replace_all": True},
         tmp_path,
@@ -56,38 +76,49 @@ def test_edit_replace_all(tmp_path):
     assert preview["new_file"] is False
 
 
-def test_edit_replaces_first_occurrence_only(tmp_path):
+@pytest.mark.asyncio
+async def test_edit_replaces_first_occurrence_only(tmp_path):
     (tmp_path / "dup.txt").write_text("x\nx\n", encoding="utf-8")
 
-    preview = build_diff_preview("edit", {"path": "dup.txt", "old_string": "x", "new_string": "y"}, tmp_path)
+    preview = await build_diff_preview(
+        "edit", {"path": "dup.txt", "old_string": "x", "new_string": "y"}, tmp_path
+    )
 
     assert preview is not None
     assert preview["added"] == 1
     assert preview["removed"] == 1
 
 
-def test_edit_with_missing_old_string_returns_none(tmp_path):
+@pytest.mark.asyncio
+async def test_edit_with_missing_old_string_returns_none(tmp_path):
     (tmp_path / "app.py").write_text("hello\n", encoding="utf-8")
 
-    assert build_diff_preview("edit", {"path": "app.py", "old_string": "absent", "new_string": "x"}, tmp_path) is None
+    preview = await build_diff_preview(
+        "edit", {"path": "app.py", "old_string": "absent", "new_string": "x"}, tmp_path
+    )
+
+    assert preview is None
 
 
-def test_binary_file_returns_none(tmp_path):
+@pytest.mark.asyncio
+async def test_binary_file_returns_none(tmp_path):
     (tmp_path / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
 
-    assert build_diff_preview("write", {"path": "logo.png", "content": "text\n"}, tmp_path) is None
+    assert await build_diff_preview("write", {"path": "logo.png", "content": "text\n"}, tmp_path) is None
 
 
-def test_file_over_one_megabyte_returns_none(tmp_path):
+@pytest.mark.asyncio
+async def test_file_over_one_megabyte_returns_none(tmp_path):
     (tmp_path / "huge.txt").write_bytes(b"a" * 1_000_001)
 
-    assert build_diff_preview("write", {"path": "huge.txt", "content": "small\n"}, tmp_path) is None
+    assert await build_diff_preview("write", {"path": "huge.txt", "content": "small\n"}, tmp_path) is None
 
 
-def test_large_diff_is_truncated(tmp_path):
+@pytest.mark.asyncio
+async def test_large_diff_is_truncated(tmp_path):
     content = "\n".join(f"line {i}" for i in range(500)) + "\n"
 
-    preview = build_diff_preview("write", {"path": "big.txt", "content": content}, tmp_path)
+    preview = await build_diff_preview("write", {"path": "big.txt", "content": content}, tmp_path)
 
     assert preview is not None
     assert preview["truncated"] is True
@@ -98,10 +129,15 @@ def test_large_diff_is_truncated(tmp_path):
     assert preview["removed"] == 0
 
 
-def test_bash_call_returns_none(tmp_path):
+@pytest.mark.asyncio
+async def test_bash_call_returns_none(tmp_path):
     (tmp_path / "f.txt").write_text("a\n", encoding="utf-8")
 
-    assert build_diff_preview("bash", {"command": "echo hi", "path": "f.txt", "content": "b\n"}, tmp_path) is None
+    preview = await build_diff_preview(
+        "bash", {"command": "echo hi", "path": "f.txt", "content": "b\n"}, tmp_path
+    )
+
+    assert preview is None
 
 
 # ── confirmation payload ──────────────────────────────────────────────
@@ -209,7 +245,7 @@ async def test_confirm_event_includes_diff_preview_only_when_present(tmp_path, m
     events = []
     bus.subscribe(lambda event: events.append(event))
 
-    preview = build_diff_preview("write", {"path": "notes.txt", "content": "new\n"}, tmp_path)
+    preview = await build_diff_preview("write", {"path": "notes.txt", "content": "new\n"}, tmp_path)
     assert preview is not None
 
     future = await confirm_mod.request_confirmation(
@@ -280,7 +316,7 @@ async def test_persisted_confirmation_reloads_with_diff_preview(tmp_path, confir
 
     conversation_id = await _add_conversation(confirm_db, "session-diff")
     (tmp_path / "notes.txt").write_text("old\n", encoding="utf-8")
-    preview = build_diff_preview("write", {"path": "notes.txt", "content": "new\n"}, tmp_path)
+    preview = await build_diff_preview("write", {"path": "notes.txt", "content": "new\n"}, tmp_path)
     assert preview is not None
 
     await _persist_confirmation("session-diff", "confirm-abc", "write", '{"path": "notes.txt"}', preview)
@@ -387,3 +423,95 @@ async def test_init_db_adds_diff_preview_column_to_existing_database(tmp_path, m
         result = await conn.execute(text("PRAGMA table_info(messages)"))
         assert "diff_preview" in [row[1] for row in result.fetchall()]
     await engine.dispose()
+
+
+# ── a slow diff must not freeze the server (event loop) ───────────────
+
+
+@pytest.mark.asyncio
+async def test_ten_thousand_line_write_skips_the_preview(tmp_path):
+    old, new = _interleaved_pair(10_000)
+    (tmp_path / "big.py").write_text(old, encoding="utf-8")
+
+    started = time.perf_counter()
+    preview = await build_diff_preview("write", {"path": "big.py", "content": new}, tmp_path)
+    elapsed = time.perf_counter() - started
+
+    assert preview is None
+    assert elapsed < 1.0, f"10k-line preview took {elapsed:.2f}s"
+
+
+@pytest.mark.asyncio
+async def test_one_megabyte_payload_skips_the_preview(tmp_path):
+    # Few lines, so only the character cap can stop this one.
+    content = "".join("x" * 3999 + "\n" for _ in range(275))
+    assert len(content) > 1_000_000 and content.count("\n") < 1000
+    (tmp_path / "small.py").write_text("old\n", encoding="utf-8")
+
+    started = time.perf_counter()
+    preview = await build_diff_preview("write", {"path": "small.py", "content": content}, tmp_path)
+    elapsed = time.perf_counter() - started
+
+    assert preview is None
+    assert elapsed < 1.0, f"1 MB preview took {elapsed:.2f}s"
+
+
+@pytest.mark.asyncio
+async def test_diff_does_not_block_the_event_loop(tmp_path):
+    old, new = _interleaved_pair(2000)  # ~0.4 s of difflib, under both caps
+    (tmp_path / "big.py").write_text(old, encoding="utf-8")
+
+    ticks = 0
+
+    async def ticker():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    task = asyncio.create_task(ticker())
+    preview = await build_diff_preview("write", {"path": "big.py", "content": new}, tmp_path)
+    ticks_during = ticks
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert preview is not None
+    assert preview["truncated"] is True
+    # A synchronous implementation never yields, so the ticker stays at 0.
+    assert ticks_during >= 5, f"event loop ticked only {ticks_during} times during the diff"
+
+
+@pytest.mark.asyncio
+async def test_preview_gives_up_when_the_time_budget_is_exceeded(tmp_path, monkeypatch):
+    from crabagent.core.agent.tools import diff_preview as diff_mod
+
+    old, new = _interleaved_pair(2000)  # 2000/4000 lines: just under the caps, ~0.4 s
+    (tmp_path / "big.py").write_text(old, encoding="utf-8")
+    monkeypatch.setattr(diff_mod, "_DIFF_TIME_BUDGET_SECONDS", 0.01)
+
+    started = time.perf_counter()
+    preview = await build_diff_preview("write", {"path": "big.py", "content": new}, tmp_path)
+    elapsed = time.perf_counter() - started
+
+    assert preview is None
+    assert elapsed < 0.25, f"budget overrun took {elapsed:.2f}s"
+
+
+@pytest.mark.asyncio
+async def test_confirmation_without_a_preview_omits_the_argument(tmp_path):
+    old, new = _interleaved_pair(10_000)
+    (tmp_path / "big.py").write_text(old, encoding="utf-8")
+    seen: list[dict] = []
+
+    async def confirm(tool_name: str, args: dict, **kwargs) -> bool:
+        seen.append(kwargs)
+        return True
+
+    registry, context = _confirming_context(tmp_path, confirm)
+
+    result = await registry.execute("write", {"path": "big.py", "content": new}, context=context)
+
+    # A missing preview leaves the confirm payload without the key.
+    assert seen == [{}]
+    assert result == "wrote big.py"
