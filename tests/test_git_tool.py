@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from crabagent.core.agent.context import AgentContext
-from crabagent.core.agent.tools.git import git_diff
+from crabagent.core.agent.tools.git import git_diff, git_status
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 
@@ -140,3 +140,24 @@ async def test_long_diffs_are_clipped_with_a_hint(repo: Path):
 
     assert len(result) < 19_000
     assert "more characters not shown" in result and "`paths`" in result
+
+
+@pytest.mark.asyncio
+async def test_git_status_lists_branch_and_changes(repo: Path):
+    context = AgentContext(workspace=repo)
+    assert (await git_status(context=context)).endswith("Working tree clean.")
+    (repo / "app.py").write_text("changed\n", encoding="utf-8")
+    (repo / "new.py").write_text("x\n", encoding="utf-8")
+
+    result = await git_status(context=context)
+    only_new = await git_status(paths=["new.py"], context=context)
+
+    assert result.splitlines()[0].startswith("## main")
+    assert " M app.py" in result and "?? new.py" in result
+    assert "app.py" not in only_new and "?? new.py" in only_new
+
+
+@pytest.mark.asyncio
+async def test_git_status_outside_a_repository(tmp_path: Path):
+    result = await git_status(context=AgentContext(workspace=tmp_path))
+    assert result.startswith("Error")

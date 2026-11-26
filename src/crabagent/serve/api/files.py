@@ -864,6 +864,55 @@ async def stop_preview_session(
     return {"status": "stopped" if removed else "not_found", "token": token}
 
 
+_MAX_PLAN_FILES = 20
+
+
+def _list_plan_files(ws: Path) -> list[dict]:
+    """``docs/*plan*.md`` in ``ws``, newest first, with their first ``# `` heading."""
+    docs = ws / "docs"
+    if not docs.is_dir():
+        return []
+    found: list[tuple[float, dict]] = []
+    for entry in docs.iterdir():
+        if not (entry.suffix.lower() == ".md" and "plan" in entry.name.lower()):
+            continue
+        try:
+            if entry.is_symlink() or not entry.is_file():
+                continue
+            mtime = entry.stat().st_mtime
+            title = ""
+            with entry.open(encoding="utf-8", errors="replace") as fh:
+                for _ in range(20):
+                    line = fh.readline()
+                    if not line:
+                        break
+                    if line.startswith("# "):
+                        title = line[2:].strip()[:200]
+                        break
+        except OSError:
+            continue
+        found.append((mtime, {"path": f"docs/{entry.name}", "title": title, "mtime_ms": int(mtime * 1000)}))
+    found.sort(key=lambda item: item[0], reverse=True)
+    return [item for _, item in found[:_MAX_PLAN_FILES]]
+
+
+@router.get("/plans")
+async def plan_files(
+    workspace: str | None = Query(None, description="Absolute workspace path"),
+    user: User = Depends(get_current_user),
+):
+    """Project plan files (``docs/*plan*.md``) a new chat can continue from."""
+    import asyncio
+
+    from crabagent.core.config import settings as _settings
+
+    ws = Path(workspace).resolve() if workspace else _settings.workspace.resolve()
+    _require_allowed_path(ws)
+    if not ws.is_dir():
+        return {"plans": []}
+    return {"plans": await asyncio.to_thread(_list_plan_files, ws)}
+
+
 @router.get("/git-status")
 async def git_status(
     workspace: str | None = Query(None, description="Absolute workspace path"),

@@ -11,6 +11,13 @@ from crabagent.core.agent.tools.grep import _expand_braces, _match_include, grep
 from crabagent.core.agent.tools.read import read_file
 from crabagent.core.agent.tools.write import write_file
 
+
+@pytest.fixture(autouse=True)
+def _no_read_before_edit_check(monkeypatch: pytest.MonkeyPatch):
+    """These tests cover edit/write mechanics; the read-first rule is in test_file_state.py."""
+    monkeypatch.setattr("crabagent.core.agent.tools.edit.tracker_of", lambda _context: None)
+    monkeypatch.setattr("crabagent.core.agent.tools.write.tracker_of", lambda _context: None)
+
 # ── write ─────────────────────────────────────────────────────────────
 
 
@@ -673,8 +680,9 @@ def test_edit_single_pair_result_unchanged_by_batch_support(tmp_path: Path):
     one = edit_file(str(target), "= 1", "= 2", context=context)
     all_ = edit_file(str(target), "old_name", "final_name", replace_all=True, context=context)
 
-    assert one == f"Successfully replaced 1 occurrence in {target} @ L1"
-    assert all_ == f"Successfully replaced 2 occurrences in {target} (first @ L1)"
+    # The first paragraph is the edit's own result; diagnostics for the .py file follow it.
+    assert one.split("\n\n")[0] == f"Successfully replaced 1 occurrence in {target} @ L1"
+    assert all_.split("\n\n")[0] == f"Successfully replaced 2 occurrences in {target} (first @ L1)"
     assert target.read_text(encoding="utf-8") == "final_name = 2\nprint(final_name)\n"
 
 

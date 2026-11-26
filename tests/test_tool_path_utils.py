@@ -5,6 +5,7 @@ from crabagent.core.agent.context import AgentContext
 from crabagent.core.agent.tools.edit import edit_file
 from crabagent.core.agent.tools.grep import grep_files
 from crabagent.core.agent.tools.path_utils import get_workspace_root, resolve_tool_path
+from crabagent.core.agent.tools.read import read_file
 from crabagent.core.agent.tools.write import write_file
 
 
@@ -60,6 +61,7 @@ def test_edit_file_allows_absolute_path_outside_workspace(tmp_path: Path):
     context = AgentContext(workspace=tmp_path)
     outside = tmp_path.parent / "outside.txt"
     outside.write_text("hello", encoding="utf-8")
+    read_file(str(outside), context=context)
 
     result = edit_file(str(outside), "hello", "bye", context=context)
 

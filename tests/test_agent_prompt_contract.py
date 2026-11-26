@@ -268,7 +268,7 @@ class TestTeamPromptCapabilities:
                           "image_edit": "deny", "email_check": "deny", "email_send": "deny",
                           "calendar_list": "deny", "calendar_add": "deny", "scheduled_task_list": "deny",
                           "scheduled_task_create": "deny", "computer_act": "deny", "create_tool": "deny",
-                          "git_diff": "deny"}
+                          "git_diff": "deny", "git_status": "deny"}
 
         async def fake_registry():
             return [

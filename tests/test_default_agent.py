@@ -73,7 +73,9 @@ class TestRemovedBuiltins:
         await db._ensure_default_agents()
         async with agents_db() as session:
             rows = {r.name: r for r in (await session.execute(select(db.AgentProfile))).scalars()}
-        assert set(rows) == {"general", "architect", "coder", "tester", "the_reviewer", "researcher", "scout"}
+        assert set(rows) == {
+            "general", "architect", "coder", "tester", "ui_checker", "the_reviewer", "researcher", "scout"
+        }
         assert "plan" in json.loads(rows["architect"].skills)
         assert {"write-spec", "write-readme", "project-init", "design-patterns"} <= set(
             json.loads(rows["architect"].skills))
@@ -151,9 +153,10 @@ class TestDefaultTeamCapabilities:
             # observe without act is useless, and its hint claims the agent can drive the browser
             assert agent["tool_permissions"].get("computer_observe") == "deny", agent["name"]
 
-    def test_only_implementer_and_tester_use_the_shared_browser(self):
+    def test_only_the_ui_checker_uses_the_shared_browser(self):
+        # Browser checks moved off coder and tester (their most expensive steps).
         users = {a["name"] for a in db.DEFAULT_AGENTS if "shared browser" in self._caps(a["name"])}
-        assert users == {"coder", "tester"}
+        assert users == {"ui_checker"}
 
     def test_each_agent_keeps_what_its_job_needs(self):
         assert {"edit files", "run commands"} <= set(self._caps("coder"))
@@ -256,10 +259,11 @@ def test_architect_checks_a_feature_the_way_the_user_will_use_it():
     architect = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")
     goal = architect["goal"]
     assert "check it the way the user will use it" in goal
-    assert "a page through its UI in a browser" in goal
-    assert "web-app-testing" in goal
-    tester = next(a for a in db.DEFAULT_AGENTS if a["name"] == "tester")
-    assert "web-app-testing" in tester["skills"]  # the skill the rule points at is really the tester's
+    assert "a page through its UI in a browser (ui_checker" in goal
+    ui_checker = next(a for a in db.DEFAULT_AGENTS if a["name"] == "ui_checker")
+    assert "web-app-testing" in ui_checker["skills"]  # its fallback when a project has no harness
+    assert "scripts/ui_check.py" in ui_checker["goal"]
+    assert "At most 8 expectations" in ui_checker["goal"]
 
 
 def test_architect_briefs_only_seen_facts_and_recommends_what_the_request_promises():
@@ -289,3 +293,34 @@ def test_architect_checks_commands_and_keeps_the_users_choices_in_every_question
 def test_architect_prompt_matches_the_sub_agent_step_cap():
     architect = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")
     assert f"stops after about {agents.SUB_AGENT_MAX_STEPS} steps" in architect["goal"]
+
+
+def test_coding_workers_get_a_trimmed_toolset():
+    # Measured over the team's runs: coders never called these, and each one's
+    # definition was sent on every request.
+    for name in ("coder", "tester"):
+        perms = next(a for a in db.DEFAULT_AGENTS if a["name"] == name)["tool_permissions"]
+        for tool in ("collab_browser_open", "background_wait", "delegate_background", "office_read",
+                     "spreadsheet_read", "memory_save", "memory_recall", "tool_search"):
+            assert perms.get(tool) == "deny", (name, tool)
+        assert perms["read"] == perms["edit"] == perms["bash"] == "auto"
+
+
+def test_goals_point_at_the_new_tools_and_loop_rules():
+    goals = {a["name"]: a["goal"] for a in db.DEFAULT_AGENTS}
+    assert "read tool before you edit it" in goals["coder"]
+    assert "Run the diagnostics tool on your changed files" in goals["coder"]
+    assert "plan_update" in goals["coder"]
+    assert "OUTCOME / FILES" in goals["coder"]
+    assert 'kind="reference"' in goals["scout"]
+    assert "after two fix rounds" in goals["architect"]
+    assert "A batch is done when" in goals["architect"]
+    assert "not deliberation" in goals["architect"]
+    assert "sibling prefix" in goals["the_reviewer"]
+    assert "run one probe that would show it false" in goals["the_reviewer"]
+
+
+def test_architect_compacts_early_and_others_use_the_global_cap():
+    caps = {a["name"]: a.get("compaction_max_tokens") for a in db.DEFAULT_AGENTS}
+    assert caps["architect"] == 200_000
+    assert all(cap is None for name, cap in caps.items() if name != "architect")

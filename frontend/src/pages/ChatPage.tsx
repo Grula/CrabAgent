@@ -70,6 +70,8 @@ import { useModelSelector } from "../hooks/useModelSelector";
 import { cn } from "../lib/cn";
 import { reasoningOptions, effectiveEffort } from "../lib/reasoningEffort";
 import { dbMessagesToChat } from "../lib/messageTransforms";
+import { planContinuationPrompt, planLabel, type PlanFile } from "../lib/planContinuation";
+import { getPlanFiles } from "../api/files";
 import { DocumentPanel, DocState } from "../components/DocumentPanel";
 import { CodePanel, promptFileContext, type CodePanelState, type ExternalFileChange } from "../components/CodePanel";
 import { DocTabs, type DocTab } from "../components/DocTabs";
@@ -1814,6 +1816,31 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   const [firstMessage, setFirstMessage] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [starterSeed, setStarterSeed] = useState<{ text: string; key: number } | undefined>();
+  // "Continue from plan file": the workspace's docs/*plan*.md, offered on the start screen.
+  const [planFiles, setPlanFiles] = useState<PlanFile[]>([]);
+  // Offered on the start screen and in a chat with no messages yet ("New chat"
+  // creates the session at once, so the start screen alone is rarely seen).
+  const offerPlans = !activeSession || (messages.length === 0 && !sending);
+  const planWorkspace = activeSession?.workspace || workspace || undefined;
+  useEffect(() => {
+    if (!offerPlans) return;
+    let cancelled = false;
+    getPlanFiles(planWorkspace)
+      .then((plans) => { if (!cancelled) setPlanFiles(plans.slice(0, 3)); })
+      .catch(() => { if (!cancelled) setPlanFiles([]); });
+    return () => { cancelled = true; };
+  }, [offerPlans, planWorkspace]);
+  // The open chat's composer has its own seed: the start screen's must not
+  // refill the composer of the chat its first message creates.
+  const [chatSeed, setChatSeed] = useState<{ text: string; key: number } | undefined>();
+  useEffect(() => { setChatSeed(undefined); }, [activeSession?.session_id]);
+  const continuePlan = useCallback((plan: PlanFile) => {
+    // The plan file is the architect's memory; pick it when it exists.
+    if (enabledAgents.some((a) => a.name === "architect")) setSelectedAgent("architect");
+    const seed = { text: planContinuationPrompt(plan), key: Date.now() };
+    if (activeSession) setChatSeed(seed);
+    else setStarterSeed(seed);
+  }, [enabledAgents, setSelectedAgent, activeSession]);
 
   const doStartConversation = useCallback(async (text: string) => {
     if (starting) return;
@@ -1853,6 +1880,29 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [firstMessage, activeSession?.session_id, connected]);
+
+  const planRow = offerPlans && planFiles.length > 0 ? (
+    <div className="flex flex-wrap items-center justify-center gap-2" aria-label="Continue a project plan">
+      <span className="text-[12px] text-[var(--text-tertiary)]">Continue a plan:</span>
+      {planFiles.map((plan) => (
+        <button
+          key={plan.path}
+          type="button"
+          title={plan.path}
+          onClick={() => continuePlan(plan)}
+          className={cn(
+            "flex max-w-full items-center gap-1.5 h-8 px-3 rounded-lg text-[13px]",
+            "border border-dashed border-[var(--border)] bg-transparent text-[var(--text-secondary)]",
+            "hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)]",
+            "transition-colors",
+          )}
+        >
+          <FileText size={14} className="shrink-0 text-[var(--text-tertiary)]" />
+          <span className="truncate">{planLabel(plan)}</span>
+        </button>
+      ))}
+    </div>
+  ) : null;
 
   const greeting = (() => {
     const hour = new Date().getHours();
@@ -2358,6 +2408,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                 sessionId={activeSession?.session_id ?? null}
                 refreshKey={messages.length * 100 + (sending ? 1 : 0) + statsTick}
               />
+              {planRow && <div className="mb-2">{planRow}</div>}
 
               <ChatInput
                 sending={sending}
@@ -2373,6 +2424,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                 toolbar={renderComposerControls(mainAgentRef, mainEffortRef)}
                 attachments={composerAttachments}
                 canSendEmpty={hasAttachments}
+                seed={chatSeed}
               />
               </div>
             </div>
@@ -2420,6 +2472,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                   </button>
                 ))}
               </div>
+              {planRow && <div className="mt-3">{planRow}</div>}
             </div>
           </div>
         )}

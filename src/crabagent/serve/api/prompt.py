@@ -262,6 +262,8 @@ async def apply_agent_profile(context, effective_agent: str) -> None:
     scope_skill_tool(context.tool_registry, agent_def.get("skills"))
     if agent_def.get("model"):
         context.model = agent_def["model"]
+    if agent_def.get("compaction_max_tokens"):
+        context.metadata["compaction_max_tokens"] = agent_def["compaction_max_tokens"]
 
 
 async def _report_run_failure(context: AgentContext, exc: BaseException) -> None:
@@ -565,6 +567,10 @@ async def prompt_async(
         provider_name=req.provider or conv.provider or None,
         system_prompt=base_prompt,
     )
+    # Files read in an earlier turn of this chat can be edited in this one.
+    from crabagent.core.agent.tools.file_state import session_tracker
+
+    context.file_state = session_tracker(session_id)
     try:
         from crabagent.core.goals.service import get_current_goal, goal_prompt
         from crabagent.core.goals.tools import register_goal_tools
@@ -612,6 +618,9 @@ Use ordinary Markdown when a visualization is not helpful.
     )
     if req.file_context:
         context.metadata["current_doc"] = req.file_context
+        if req.file_context_dirty:
+            # Sub-agents are told not to edit it (agents.unsaved_editor_note).
+            context.metadata["unsaved_editor_file"] = req.file_context
     if req.workspace_type:
         context.metadata["workspace_type"] = req.workspace_type
     if req.work_mode:

@@ -1,5 +1,17 @@
+from crabagent.core.agent.tools.diagnostics import post_edit_report
+from crabagent.core.agent.tools.file_state import tracker_of
 from crabagent.core.agent.tools.path_utils import file_lock, resolve_tool_path
 from crabagent.core.agent.tools.registry import registry
+
+
+def _previous_text(path) -> str | None:
+    """A Python or JSON file's text before an overwrite, for the diagnostics baseline (None: new file)."""
+    if path.suffix.lower() not in {".py", ".pyi", ".json"}:
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 @registry.register(
@@ -10,7 +22,8 @@ from crabagent.core.agent.tools.registry import registry
         "and must be non-empty. For a file that already exists, prefer edit "
         "to change part of it: write replaces the whole file and silently "
         "discards anything not included in the new content. Use write for "
-        "new files or intentional full rewrites."
+        "new files or intentional full rewrites. Overwriting an existing file "
+        "needs a read of it first in this session."
     ),
     parameters={
         "type": "object",
@@ -38,11 +51,23 @@ def write_file(file_path: str, content: str, context=None) -> str:
     if error:
         return error
     assert path is not None
+    tracker = tracker_of(context)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with file_lock(path):
+            if tracker is not None:
+                refusal = tracker.check(path, file_path, action="overwriting")
+                if refusal:
+                    return refusal
+            before = _previous_text(path)
             path.write_text(content, encoding="utf-8")
-        return f"Successfully wrote {len(content)} bytes to {file_path}"
+            if tracker is not None:
+                tracker.record(path, written=True)
+        try:
+            report = post_edit_report(path, before, content, getattr(context, "workspace", None))
+        except Exception:
+            report = ""
+        return f"Successfully wrote {len(content)} bytes to {file_path}" + report
     except Exception as e:
         return f"Error writing file: {e}"
 

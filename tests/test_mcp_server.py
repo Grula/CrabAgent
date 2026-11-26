@@ -156,7 +156,8 @@ async def test_tools_list_is_exactly_the_read_only_allowlist(tmp_path):
         assert "summary" not in tool.input_schema["properties"]
 
     read_schema = tools[0].input_schema
-    assert read_schema["required"] == ["file_path"]
+    # file_path or files (a batch): neither is required on its own.
+    assert {"file_path", "files"} <= set(read_schema["properties"])
 
 
 # ── allowlisted calls actually work ─────────────────────────────────────

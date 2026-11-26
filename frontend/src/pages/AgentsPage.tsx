@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { parseCompaction } from "../lib/compaction";
 import {
   Plus,
   Pencil,
@@ -74,6 +75,8 @@ type FormState = {
   tool_permissions: Record<string, Permission>;
   /** null: every installed skill. */
   skills: string[] | null;
+  /** Token count as typed; "" means the global setting. */
+  compaction: string;
 };
 
 const emptyForm: FormState = {
@@ -85,6 +88,7 @@ const emptyForm: FormState = {
   icon: "🤖",
   tool_permissions: {},
   skills: null,
+  compaction: "",
 };
 
 const PERM_LABELS: Record<Permission, string> = { auto: "Auto", confirm: "Confirm", deny: "Deny" };
@@ -205,6 +209,7 @@ export default function AgentsPage() {
       icon: selected.icon || "🤖",
       tool_permissions: (selected.tool_permissions || {}) as Record<string, Permission>,
       skills: selected.skills ?? null,
+      compaction: selected.compaction_max_tokens ? String(selected.compaction_max_tokens) : "",
     });
     setEditing(true);
     setError("");
@@ -223,7 +228,8 @@ export default function AgentsPage() {
     setSaving(true);
     setError("");
     try {
-      await updateAgentProfile(selected.name, form);
+      const { compaction, ...fields } = form;
+      await updateAgentProfile(selected.name, { ...fields, compaction_max_tokens: parseCompaction(compaction) });
       toast.success("Agent saved");
       await fetchAgents();
       setEditing(false);
@@ -257,6 +263,7 @@ export default function AgentsPage() {
         icon: form.icon,
         tool_permissions: form.tool_permissions,
         skills: form.skills,
+        compaction_max_tokens: parseCompaction(form.compaction),
       });
       toast.success("Agent created");
       await fetchAgents();
@@ -431,6 +438,12 @@ export default function AgentsPage() {
         value={form.model}
         onChange={(e) => setForm({ ...form, model: e.target.value })}
         placeholder={"Leave empty to use default"}
+      />
+      <Input
+        label={"Compact context above (tokens)"}
+        value={form.compaction}
+        onChange={(e) => setForm({ ...form, compaction: e.target.value })}
+        placeholder={"Leave empty to use the global setting, e.g. 200k"}
       />
       <div>
         <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1.5">

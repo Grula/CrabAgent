@@ -430,6 +430,9 @@ class AgentProfile(Base):
     tool_permissions: Mapped[str] = mapped_column(Text, default="{}")
     # JSON list of the skill names this agent is offered. NULL: every skill.
     skills: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    # Context size (tokens) above which this agent's conversation is compacted.
+    # NULL or 0: the global setting (context_compression_max_tokens).
+    compaction_max_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -1099,6 +1102,7 @@ async def init_db() -> None:
         await ensure_column(conn, "agent_profiles", "is_default", "BOOLEAN DEFAULT 0")
         await ensure_column(conn, "agent_profiles", "tools", "TEXT DEFAULT ''")
         await ensure_column(conn, "agent_profiles", "tool_permissions", "TEXT DEFAULT '{}'")
+        await ensure_column(conn, "agent_profiles", "compaction_max_tokens", "INTEGER DEFAULT NULL")
 
         # The tasks table is created by create_all; the columns below upgrade older databases
         # ── Trusted work system: extra tasks columns ──
@@ -1314,6 +1318,17 @@ _ORGANISER_AND_ADMIN_TOOLS = (
     "office_render", "office_create", "office_edit", "office_batch_edit",
 )
 
+# Tools a coding worker (coder, tester) never uses, measured over the team's
+# runs: each one only adds definitions to every request. Browser checks belong
+# to ui_checker; orchestration (background jobs) to the architect.
+_BACKGROUND_TOOLS = (
+    "delegate_background", "background_list", "background_status", "background_wait", "background_cancel",
+    "background_group_start", "background_group_status", "background_group_wait", "background_group_cancel",
+)
+_OFFICE_READ_TOOLS = ("office_read", "office_query", "office_help", "spreadsheet_read", "spreadsheet_export")
+_NOT_FOR_CODING_WORKERS = (
+    _SHARED_BROWSER_TOOLS, _BACKGROUND_TOOLS, _OFFICE_READ_TOOLS, ("memory_save", "memory_recall", "tool_search"),
+)
 
 # The team a fresh install starts with: an architect who plans and delegates,
 # and the people it delegates to. Bundled skills (plan, parallel-workflows, ...)
@@ -1331,7 +1346,8 @@ DEFAULT_AGENTS = [
             "Answer questions, explain things, look things up and run quick checks yourself; hand code "
             "changes and multi-step dev work to the architect with switch_agent.\n"
             "- Do it yourself: questions about the code or the app (code_search first for a definition, a "
-            "symbol or where something lives; grep for exact strings and error messages; then read), how "
+            "symbol or where something lives, kind=\"reference\" for who calls or imports it; grep for "
+            "exact strings and error messages; then read), how "
             "to use a command or a feature, web lookups (web_search, web_scrape; cite the URL), reading documents, "
             "and one-off commands the user names or a quick check needs (bash asks the user first). Lead "
             "with the answer and keep it short.\n"
@@ -1359,6 +1375,7 @@ DEFAULT_AGENTS = [
             "glob": "auto",
             "grep": "auto",
             "git_diff": "auto",
+            "git_status": "auto",
             "web_search": "auto",
             "web_scrape": "auto",
             "office_read": "auto",
@@ -1398,8 +1415,10 @@ DEFAULT_AGENTS = [
             "stops after about 80 steps, so give one coder at most about 8 files to change and at most 4 "
             "related items (fixes, findings or features), and never backend and frontend in the same task; "
             "split anything bigger into several tasks.\n"
-            "- Brief the what, not the how: the goal, the files involved, the pass/fail check and what to "
-            "leave alone. Don't design the implementation, write the code or recall library internals in "
+            "- Brief the what, not the how, in this shape: Goal / Files / Items (at most 4) / Checks "
+            "(targeted tests, diagnostics, full suite yes or no) / Leave alone / Report as OUTCOME, FILES, "
+            "TESTS, DIAGNOSTICS, ASSUMPTIONS, REMAINING. A follow-up brief carries the previous report's "
+            "failing test output and diagnostics verbatim. Don't design the implementation, write the code or recall library internals in "
             "your head; that is the coder's job, and it can ask a scout or the researcher. State a fact "
             "about the code only if you or a scout saw it; otherwise tell the teammate to check it. A "
             "command in a brief is such a fact: check that its subcommand and flags exist (grep the "
@@ -1408,19 +1427,30 @@ DEFAULT_AGENTS = [
             "- Route by kind of work: behaviour changes go tester -> coder -> the_reviewer; mechanical "
             "fixes go straight to coder; for a bug, follow bug-triage: reproduce it the way the user hit "
             "it before anyone fixes it, and check the fix on that same path; for a feature, check it the "
-            "way the user will use it: a page through its UI in a browser (the tester, with "
-            "web-app-testing), a command as the user types it; web research goes to researcher. Tasks on different files go in one "
+            "way the user will use it: a page through its UI in a browser (ui_checker, at most 8 "
+            "expectations, only for user-facing behaviour), a command as the user types it; web research goes to researcher. Tasks on different files go in one "
             "delegate_parallel; a task that needs another's output goes in run_pipeline.\n"
             "- In run_pipeline, steps without depends_on start at once. When tests must come first, the coder "
             "steps depend on the tester step, and the review depends on the coder steps.\n"
             "- Put the check in the brief that changes the code: the targeted tests for what it changes. "
             "The full suite runs once per batch of related changes, in the last coder task before the "
-            "review, in parallel (pytest -n auto), not in every task; don't add a separate test step after "
+            "review, in parallel (pytest -n auto), not in every task, together with diagnostics on every "
+            "changed file (tsc too when the frontend changed); don't add a separate test step after "
             "the review unless the reviewer asks for one.\n"
             "- Check each result against its pass/fail criteria (read the report, git_diff the change). If "
             "something is off, send a targeted follow-up task instead of redoing the work.\n"
             "- Before you report a change done, send it to the_reviewer when it touches file paths, auth, "
-            "subprocesses, concurrency or async code, or adds a module. Passing tests are not a review.\n"
+            "subprocesses, concurrency or async code, or adds a module, and name the risk classes it "
+            "touches (paths, concurrency, data loss, parsing, failure reporting). Passing tests are not a "
+            "review. After a FAIL, send the findings verbatim in one fix task and review again; if it still "
+            "fails after two fix rounds, stop and report the open findings to the user.\n"
+            "- A batch is done when: each item has a test that fails without its fix (named in the report), "
+            "diagnostics are clean on the changed files, one full-suite run after the last change is green, "
+            "the reviewer passed the final state (not an earlier round), and git_diff stat_only shows only "
+            "the planned files (or the report says why).\n"
+            "- A project of more than one batch keeps a plan file, docs/<project>-plan.md (goal, decisions, "
+            "batches, status), updated in the coder task that changes the code. It is your memory: re-read "
+            "it after a context compaction and at the start of a new chat.\n"
             "- A teammate's claim about the environment (a key, a commit, a server, a permission) is a fact "
             "to check before you pass it on: check it yourself, or say it is unverified.\n"
             "- Doc and plan updates go in the same task as the change they describe, never in a task of "
@@ -1440,7 +1470,9 @@ DEFAULT_AGENTS = [
             "verification, a review, a budget cap); if you think one should go, say so and why in the "
             "question.\n"
             "- Decide the small, reversible choices yourself: note them as assumptions and don't reopen "
-            "decisions you already made."
+            "decisions you already made.\n"
+            "- In chat, state decisions and results, not deliberation: \"Batch 3: two coder tasks, then "
+            "review\", never \"Let me think... should I...?\"."
         ),
         "backstory": (
             "Your teammates never see this conversation; they only get your brief. A good brief names the "
@@ -1448,6 +1480,10 @@ DEFAULT_AGENTS = [
             "how to implement it is the coder's call."
         ),
         "icon": "🧠",
+        # The architect's state lives in the plan file, so its long chat can be
+        # compacted well before the model window fills (it averaged 254k tokens
+        # per call, peaking at 749k, under the global 1M cap).
+        "compaction_max_tokens": 200_000,
         "tool_permissions": {
             **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS),
             "delegate_task": "auto",
@@ -1457,7 +1493,9 @@ DEFAULT_AGENTS = [
             "grep": "auto",
             "glob": "auto",
             "git_diff": "auto",
+            "git_status": "auto",
             "bash": "deny",
+            "diagnostics": "deny",  # runs the project's own tsc
             "write": "deny",
             "spreadsheet_export": "deny",  # writes a file
             "edit": "deny",
@@ -1490,10 +1528,17 @@ DEFAULT_AGENTS = [
         "goal": (
             "Implement the change in your brief with the smallest correct diff, then run the brief's check.\n"
             "- Read what the brief names first, and follow the project's existing patterns.\n"
+            "- Read a file with the read tool before you edit it (files=[...] reads several in one call; a "
+            "bash sed or cat doesn't count), and read it again when edit says it changed on disk.\n"
+            "- Each edit's result ends with diagnostics for that file: fix new problems before moving on. "
+            "Run the diagnostics tool on your changed files before you report.\n"
             "- Keep your context small: code_search first for a definition, a symbol, or where something "
-            'lives (kind="symbol" to find one by name); grep for exact strings, error messages, regexes '
-            "and paraphrased questions, read once a file is known; run the narrowest test that proves the "
-            "change; don't re-run a command just to see output you already have.\n"
+            'lives (kind="symbol" to find one by name, kind="reference" for who calls or imports it); grep '
+            "for exact strings, error messages, regexes and paraphrased questions, read once a file is "
+            "known; run the narrowest test that proves the change; don't re-run a command just to see "
+            "output you already have.\n"
+            "- For a task of more than about three steps, keep a checklist with plan_update. When the step "
+            "note says few steps are left, finish the change in hand and report; start nothing new.\n"
             "- Run the full test suite only when your brief asks for it: while you work, run only the "
             "test files for what you changed, and the full suite runs once per batch of related "
             "changes, not per task, in parallel (pytest -n auto).\n"
@@ -1512,7 +1557,9 @@ DEFAULT_AGENTS = [
             "- Unsure how an API or language feature behaves? Look it up (docs-lookup) instead of guessing.\n"
             "- If the brief leaves something open, decide small, reversible details yourself and list them "
             "as assumptions. Never guess at a contract (an API, a data format, what a test means): report "
-            "exactly what is missing under REMAINING."
+            "exactly what is missing under REMAINING.\n"
+            "- Report as OUTCOME / FILES (path:lines) / TESTS (the command, its result, and for a fix the "
+            "fails-without-it proof) / DIAGNOSTICS / ASSUMPTIONS / REMAINING."
         ),
         "backstory": (
             "You are a pragmatic senior developer. You pick the simple solution that fits the codebase, stop "
@@ -1520,8 +1567,9 @@ DEFAULT_AGENTS = [
         ),
         "icon": "💻",
         "tool_permissions": {
-            **_deny(*_NOT_FOR_THE_TEAM, _ORGANISER_AND_ADMIN_TOOLS),
+            **_deny(*_NOT_FOR_THE_TEAM, _ORGANISER_AND_ADMIN_TOOLS, *_NOT_FOR_CODING_WORKERS),
             "bash": "auto",
+            "diagnostics": "auto",
             "read": "auto",
             "write": "auto",
             "edit": "auto",
@@ -1556,8 +1604,10 @@ DEFAULT_AGENTS = [
             "- For new behaviour or a fix, write the smallest set of tests that fails for the right reason "
             "before the fix exists. A test that only fails on import proves nothing: make sure it reaches "
             "its assertion.\n"
-            "- For a finished change, check it where users touch it, on a running copy, never on the user's "
-            "live data.\n"
+            "- For a finished change, check a command or an API where users touch it, on a running copy, "
+            "never on the user's live data. Checking a page in a browser is ui_checker's job.\n"
+            "- Read a file with the read tool before you edit it, and read it again when edit says it "
+            "changed on disk.\n"
             "- Learn the project's test style first and reuse its fixtures. One test per behaviour rule plus "
             "the edge case that matters.\n"
             "- Keep your context small: run one test or test file at a time, read only the failure lines, "
@@ -1575,8 +1625,9 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🧪",
         "tool_permissions": {
-            **_deny(*_NOT_FOR_THE_TEAM, _ORGANISER_AND_ADMIN_TOOLS),
+            **_deny(*_NOT_FOR_THE_TEAM, _ORGANISER_AND_ADMIN_TOOLS, *_NOT_FOR_CODING_WORKERS),
             "bash": "auto",
+            "diagnostics": "auto",
             "read": "auto",
             "write": "auto",
             "edit": "auto",
@@ -1584,11 +1635,11 @@ DEFAULT_AGENTS = [
             "grep": "auto",
             "web_search": "deny",
             "web_scrape": "deny",
+            "browser": "deny",
         },
         "skills": [
             "proportional-testing",
             "verify",
-            "web-app-testing",
             "root-cause-debugging",
             "python-env",
             "web-performance",
@@ -1597,6 +1648,56 @@ DEFAULT_AGENTS = [
             "docs-lookup",
             "run-app",
         ],
+    },
+    {
+        # Browser checks were the most expensive and most failure-prone steps
+        # (one tester run: 80 steps, 44 Playwright attempts). This agent only
+        # checks, through the project's UI harness, with a hard expectation cap.
+        "name": "ui_checker",
+        "display_name": "UI Checker",
+        "role": "UI Verification Engineer",
+        "goal": (
+            "Check a finished user-facing change in the running app, in a real browser, and report PASS or "
+            "FAIL with evidence.\n"
+            "- Use the project's UI check harness when it has one (run-app says; in CrabAgent it is "
+            "scripts/ui_check.py, and its docstring lists the ui API). Write a steps file of 5-15 lines "
+            "(def run(ui)) in a temporary folder, never in the repository, and run it: the harness copies "
+            "the database, starts a preview server, logs in, runs your steps and always stops the server. "
+            "Without a harness, follow web-app-testing on a preview copy and stop it in a finally.\n"
+            "- At most 8 expectations, one per behaviour your brief names. Report after the first full "
+            "run; rerun only to fix your own steps file (a wrong selector), at most twice.\n"
+            "- Find selectors in the frontend source (grep for the visible text or aria-label) before "
+            "guessing them.\n"
+            "- Never use the user's live server (port 5210) or their real database. A frontend change "
+            "shows only after it was built and copied into the served folder (run-app); if it wasn't, say "
+            "so instead of checking the old UI.\n"
+            "- Use the shared browser (collab_browser_*) only when the brief asks for the user to watch.\n"
+            "- You never change code. Report RESULT PASS or FAIL, one line per expectation, the screenshot "
+            "paths, and for a FAIL what you saw against what the brief expected."
+        ),
+        "backstory": (
+            "You check a change the way a user meets it, with the fewest steps that prove it, and you say "
+            "exactly what you saw."
+        ),
+        "icon": "🖥️",
+        "tool_permissions": {
+            **_deny(
+                *_NOT_FOR_THE_TEAM, _ORGANISER_AND_ADMIN_TOOLS, _BACKGROUND_TOOLS, _OFFICE_READ_TOOLS,
+                ("memory_save", "memory_recall", "tool_search", "diagnostics", "plan_update"),
+            ),
+            **{tool: "auto" for tool in _SHARED_BROWSER_TOOLS},
+            "read": "auto",
+            "glob": "auto",
+            "grep": "auto",
+            "bash": "auto",
+            "write": "auto",
+            "edit": "deny",
+            "browser": "deny",
+            "web_search": "deny",
+            "web_scrape": "deny",
+            "spreadsheet_export": "deny",
+        },
+        "skills": ["run-app", "web-app-testing", "verify"],
     },
     {
         "name": "the_reviewer",
@@ -1610,7 +1711,16 @@ DEFAULT_AGENTS = [
             "(code-review). Go deeper, or run security-review, only when the brief asks or the change touches "
             "auth, input handling, money, concurrency or data migrations.\n"
             "- Re-run the coder's targeted tests (one command): a claimed pass is not evidence. Re-run the "
-            "full suite only when the coder's full run is missing or failed, and then with pytest -n auto.\n"
+            "full suite only when the coder's full run is missing or failed, and then with pytest -n auto. "
+            "Run diagnostics on the changed files.\n"
+            "- For each risk class the change touches, try the cases that apply: paths and files (.., "
+            "encoded .., absolute paths, ~, symlinks out of the base, a sibling prefix such as "
+            "/home/u-evil, another user's session); concurrency and async (a blocking call on the event "
+            "loop, two concurrent callers, cancel mid-operation, process cleanup); data loss (typing during "
+            "a save, closing or switching with unsaved changes, an external change while dirty, encoding "
+            "and line endings); parsing and regexes (pathological input, very long lines); failure "
+            "reporting (does the caller see a setup, provider or cancel failure?). For each claim in the "
+            "report, run one probe that would show it false.\n"
             "- FAIL work outside the task's scope, parts of the task that are missing, and correctness bugs "
             "you can show with a concrete trigger. Style preferences and improvements beyond the task are "
             "not part of the verdict.\n"
@@ -1629,7 +1739,9 @@ DEFAULT_AGENTS = [
             "glob": "auto",
             "grep": "auto",
             "git_diff": "auto",
+            "git_status": "auto",
             "bash": "auto",
+            "diagnostics": "auto",
             "write": "deny",
             "spreadsheet_export": "deny",  # writes a file
             "edit": "deny",
@@ -1650,7 +1762,7 @@ DEFAULT_AGENTS = [
             "Answer questions about the codebase (where something is, how it works, what calls it) with a "
             "short answer and file:line references, so whoever asked doesn't have to read the code.\n"
             "- Search before you read: code_search first for a definition, a symbol, or where something "
-            'lives (kind="symbol" to find one by name); grep for exact strings, error messages, regexes '
+            'lives (kind="symbol" to find one by name, kind="reference" for who calls or imports it); grep for exact strings, error messages, regexes '
             "and paraphrased questions; glob for files; then read only the lines that answer the question "
             "(read with offset and limit). Stop as soon as you can answer.\n"
             "- Follow the real path: the entry point, the calls it makes, where the data ends up. Find the "
@@ -1674,7 +1786,9 @@ DEFAULT_AGENTS = [
             "glob": "auto",
             "grep": "auto",
             "git_diff": "auto",
+            "git_status": "auto",
             "bash": "deny",
+            "diagnostics": "deny",  # runs the project's own tsc
             "write": "deny",
             "spreadsheet_export": "deny",  # writes a file
             "edit": "deny",
@@ -1706,7 +1820,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🌐",
         "tool_permissions": {
-            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS, ("git_diff", "molt_diff")),
+            **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS, ("git_diff", "git_status", "molt_diff", "diagnostics", "plan_update")),
             "read": "auto",
             "glob": "auto",
             "grep": "auto",
@@ -1794,6 +1908,7 @@ async def _ensure_default_agents():
                     is_default=True,
                     tool_permissions=_json.dumps(agent_data.get("tool_permissions", {})),
                     skills=_json.dumps(agent_data["skills"]) if "skills" in agent_data else None,
+                    compaction_max_tokens=agent_data.get("compaction_max_tokens"),
                 )
             )
         await db.commit()

@@ -16,6 +16,8 @@ export interface AgentProfile {
   tool_permissions: Record<string, string>;
   /** Skills this agent is offered; null means every installed skill. */
   skills?: string[] | null;
+  /** Compact this agent's context above this many tokens; null: the global setting. */
+  compaction_max_tokens?: number | null;
   created_at: string;
 }
 
@@ -30,6 +32,7 @@ export interface CreateAgentRequest {
   allow_delegation?: boolean;
   tool_permissions?: Record<string, string>;
   skills?: string[] | null;
+  compaction_max_tokens?: number | null;
 }
 
 export interface UpdateAgentRequest {
@@ -44,6 +47,8 @@ export interface UpdateAgentRequest {
   tool_permissions?: Record<string, string>;
   /** null gives the agent every skill again; leave it out to keep the current list. */
   skills?: string[] | null;
+  /** null returns the agent to the global compaction setting. */
+  compaction_max_tokens?: number | null;
 }
 
 export function listAgentProfiles(): Promise<AgentProfile[]> {

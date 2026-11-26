@@ -40,6 +40,8 @@ class AgentProfileResponse(BaseModel):
     tool_permissions: dict[str, str]
     # Skill names this agent is offered; None means every installed skill.
     skills: list[str] | None = None
+    # Compaction threshold in tokens; None means the global setting.
+    compaction_max_tokens: int | None = None
     created_at: str
 
 
@@ -54,6 +56,7 @@ class CreateAgentRequest(BaseModel):
     allow_delegation: bool = True
     tool_permissions: dict[str, str] | None = None
     skills: list[str] | None = None
+    compaction_max_tokens: int | None = None
 
 
 class UpdateAgentRequest(BaseModel):
@@ -69,6 +72,22 @@ class UpdateAgentRequest(BaseModel):
     # Sending ``"skills": null`` gives the agent every skill again; leaving the
     # field out keeps its current list.
     skills: list[str] | None = None
+    # ``null`` or 0 returns the agent to the global compaction setting.
+    compaction_max_tokens: int | None = None
+
+
+_MIN_COMPACTION_TOKENS = 20_000
+
+
+def _compaction_column(value: int | None) -> int | None:
+    """None/0: use the global setting. Below the minimum a run would compact every step."""
+    if not value:
+        return None
+    if value < _MIN_COMPACTION_TOKENS:
+        raise HTTPException(
+            status_code=400, detail=f"compaction_max_tokens must be at least {_MIN_COMPACTION_TOKENS} (or empty)"
+        )
+    return value
 
 
 def _skills_column(skills: list[str] | None) -> str | None:
@@ -107,6 +126,7 @@ def _to_response(a: AgentProfile) -> AgentProfileResponse:
         tools=tools_list,
         tool_permissions=tool_perms,
         skills=parse_agent_skills(a.skills),
+        compaction_max_tokens=a.compaction_max_tokens or None,
         created_at=iso_utc(a.created_at) or "",
     )
 
@@ -150,6 +170,7 @@ async def create_agent_profile(
         is_default=False,
         tool_permissions=_json.dumps(req.tool_permissions) if req.tool_permissions else "{}",
         skills=_skills_column(req.skills),
+        compaction_max_tokens=_compaction_column(req.compaction_max_tokens),
     )
     db.add(profile)
     await db.commit()
@@ -192,6 +213,8 @@ async def update_agent_profile(
         profile.tool_permissions = _json.dumps(req.tool_permissions)
     if "skills" in req.model_fields_set:
         profile.skills = _skills_column(req.skills)
+    if "compaction_max_tokens" in req.model_fields_set:
+        profile.compaction_max_tokens = _compaction_column(req.compaction_max_tokens)
 
     await db.commit()
     await db.refresh(profile)

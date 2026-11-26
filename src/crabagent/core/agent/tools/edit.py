@@ -1,3 +1,5 @@
+from crabagent.core.agent.tools.diagnostics import post_edit_report
+from crabagent.core.agent.tools.file_state import tracker_of
 from crabagent.core.agent.tools.path_utils import file_lock, resolve_tool_path
 from crabagent.core.agent.tools.registry import registry
 
@@ -106,6 +108,14 @@ def _write_edited(path, new_content: str, newline: str = "\n") -> None:
     if newline != "\n":
         new_content = new_content.replace("\n", newline)
     path.write_bytes(new_content.encode("utf-8"))
+
+
+def _diagnostics(path, before: str, after: str, context) -> str:
+    """Problems the edit introduced (see tools/diagnostics.py); never fails the edit."""
+    try:
+        return post_edit_report(path, before, _normalise_newlines(after), getattr(context, "workspace", None))
+    except Exception:
+        return ""
 
 
 def _success_message(file_path: str, count: int, line_num: int) -> str:
@@ -225,7 +235,12 @@ def edit_file(
         if old_string == new_string:
             return "Error: old_string and new_string are identical; nothing to change."
 
+    tracker = tracker_of(context)
     with file_lock(path):
+        if tracker is not None:
+            refusal = tracker.check(path, file_path)
+            if refusal:
+                return refusal
         try:
             content, newline = _read_preserving(path)
         except Exception as e:
@@ -250,7 +265,11 @@ def edit_file(
                     )
                 return f"Error: {reason}"
             _write_edited(path, new_content, newline)
-            return _success_message(file_path, outcome["count"], outcome["line"])
+            if tracker is not None:
+                tracker.record(path, written=True)
+            return _success_message(file_path, outcome["count"], outcome["line"]) + _diagnostics(
+                path, content, new_content, context
+            )
 
         applied = [o for o in outcomes if o["ok"]]
         total = len(outcomes)
@@ -271,7 +290,9 @@ def edit_file(
             )
 
         _write_edited(path, new_content, newline)
+        if tracker is not None:
+            tracker.record(path, written=True)
         replaced = sum(o["count"] for o in applied)
         lines.append(f"Applied {len(applied)} of {total} replacements to {file_path}")
         lines.append(_success_message(file_path, replaced, applied[0]["line"]))
-        return "\n".join(lines)
+        return "\n".join(lines) + _diagnostics(path, content, new_content, context)

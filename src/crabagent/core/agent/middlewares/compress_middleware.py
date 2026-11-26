@@ -43,7 +43,7 @@ class CompressMiddleware:
         full_model = context.metadata.get("_resolved_model_full")
         bare_model = context.metadata.get("_resolved_model") or context.model or "gpt-4"
         try:
-            trigger = compression_trigger_tokens(bare_model)
+            trigger = compression_trigger_tokens(bare_model, context.metadata.get("compaction_max_tokens"))
         except Exception:
             trigger = int(8000 * settings.context_compression_threshold)
         if context.total_tokens <= trigger:

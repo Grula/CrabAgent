@@ -377,6 +377,10 @@ def test_both_tools_are_registered_and_export_follows_write_permission():
     assert registry.get("spreadsheet_read") is not None and registry.get("spreadsheet_export") is not None
     for agent in DEFAULT_AGENTS:
         perms = agent.get("tool_permissions", {})
+        if agent["name"] in {"coder", "tester", "ui_checker"}:
+            # Trimmed from the coding workers: never called in their runs.
+            assert perms.get("spreadsheet_read") == perms.get("spreadsheet_export") == "deny", agent["name"]
+            continue
         assert perms.get("spreadsheet_read") != "deny", agent["name"]
         if perms.get("write") == "deny":
             assert perms.get("spreadsheet_export") == "deny", agent["name"]

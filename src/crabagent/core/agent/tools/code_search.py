@@ -8,14 +8,17 @@ result costs tens of tokens instead of a whole file.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 from typing import Any
 
 from crabagent.core.agent.tools.path_utils import get_workspace_root
 from crabagent.core.agent.tools.registry import registry
 from crabagent.core.code_index import Match, ensure_indexed, iter_matches
 from crabagent.core.code_index.extract import SYMBOL_KINDS
+from crabagent.core.code_index.references import find_references, format_references, narrow_to_qualifier
 
 DEFAULT_LIMIT = 10
 MAX_LIMIT = 50
@@ -32,7 +35,8 @@ MAX_EXCERPT_LINES = 2
 _DESCRIPTION = (
     "Search the workspace's code index for symbols (functions, methods, classes, headings) "
     "and file text; exact and prefix name matches rank first. Use kind=\"symbol\" to find a "
-    "definition by name. Prefer grep for exact literal text, regexes, or paraphrastic queries "
+    "definition by name, and kind=\"reference\" with one name to list its definitions, calls, "
+    "imports and other uses (who calls X). Prefer grep for exact literal text, regexes, or paraphrastic queries "
     "this index may miss. Pass reindex=true after large changes."
 )
 
@@ -339,7 +343,8 @@ def format_hits(shown: Sequence[Match], total: int, query: str) -> str:
             "kind": {
                 "type": "string",
                 "description": (
-                    'Filter: "symbol" (any symbol kind), "text" (file bodies only), one of '
+                    'Filter: "symbol" (any symbol kind), "text" (file bodies only), "reference" '
+                    "(every use of one name: definitions, calls, imports), one of "
                     "function, method, class, constant, interface, type, enum, heading, "
                     "or omit for everything."
                 ),
@@ -370,13 +375,15 @@ async def code_search(
     workspace = get_workspace_root(context)
     if workspace is None:
         return "Error: no workspace is set for this session, so there is nothing to search."
+    if (kind or "").strip().lower() == "reference":
+        return await _references(workspace, query, path_prefix, limit)
     tokens = [token.lower() for token in (query or "").split() if token.strip()]
     if not tokens:
         return f"No matches for '{query}' — try grep for literal text or a shorter query."
     try:
         symbol_kinds, want_symbols, want_text = _kind_filter(kind)
     except ValueError:
-        accepted = ", ".join(["symbol", "text", *sorted(SYMBOL_KINDS)])
+        accepted = ", ".join(["symbol", "text", "reference", *sorted(SYMBOL_KINDS)])
         return f"Error: unknown kind '{kind}'; use one of {accepted}."
     if isinstance(limit, bool) or not isinstance(limit, int):
         limit = DEFAULT_LIMIT
@@ -406,3 +413,24 @@ async def code_search(
         )
     shown, total = rank_matches(hits, tokens, limit=limit)
     return format_hits(shown, total, query)
+
+
+_IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
+REFERENCE_DEFAULT_LIMIT = 30
+
+
+async def _references(workspace, query: str, path_prefix: str | None, limit: Any) -> str:
+    """kind="reference": every use of one name (the last part of a dotted name)."""
+    names = _IDENTIFIER.findall((query or "").split()[0]) if (query or "").split() else []
+    if not names:
+        return "Error: kind=\"reference\" needs one identifier, e.g. \"spawn_sub_agent\" or \"ToolRegistry.execute\"."
+    name = names[-1]
+    qualifier = names[-2] if len(names) > 1 else ""
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit == DEFAULT_LIMIT:
+        limit = REFERENCE_DEFAULT_LIMIT
+    limit = min(max(limit, 1), MAX_LIMIT)
+    refs = await asyncio.to_thread(find_references, Path(workspace), name, path_prefix)
+    hidden = 0
+    if qualifier:
+        refs, hidden = narrow_to_qualifier(refs, qualifier)
+    return format_references(refs, name, limit, hidden, qualifier)

@@ -252,6 +252,14 @@ async def compress_context(context: AgentContext, llm_params: dict, model: str) 
         logger.warning("Context compression returned an empty summary; keeping original")
         return
 
+    # The plan_update calls are part of what was just summarised: carry the
+    # agent's current checklist over verbatim so the plan isn't lost.
+    from crabagent.core.agent.tools.plan import render_run_plan
+
+    checklist = render_run_plan(context)
+    if checklist:
+        summary = summary.rstrip() + "\n\n" + checklist
+
     ack = {
         "role": "assistant",
         "content": "Understood. I will continue based on this context summary.",

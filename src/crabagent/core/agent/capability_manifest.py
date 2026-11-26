@@ -27,6 +27,7 @@ REQUIRES_SESSION = (
     "memory_list",
     "memory_forget",
     "git_diff",
+    "git_status",
 )
 
 
@@ -72,12 +73,56 @@ def workspace_prompt_section(prompt: str, context) -> str:
     return build_workspace_section(getattr(context, "workspace", None))
 
 
+_DELEGATION_TOOL_NAMES = ("delegate_task", "delegate_parallel", "run_pipeline")
+_NO_DELEGATION_INTRO = (
+    "These are the agents on the team. You can't delegate to them: when work belongs to one of them, "
+    "hand the conversation over with switch_agent if you have it, or tell the user who should do it."
+)
+
+
+def without_delegation_sections(prompt: str, context) -> str:
+    """Drop the team prompt's delegation how-to for an agent that can't delegate.
+
+    The team section is cached per conversation, not per agent, so an agent
+    without delegation tools (the General front desk) used to read instructions
+    for tools it doesn't have. The roster stays: it says who to hand work to.
+    Deterministic per agent, so the provider's prompt cache still holds.
+    """
+    from crabagent.core.agent.agents import (
+        _TEAM_PROMPT_AVAILABLE_AGENTS,
+        _TEAM_PROMPT_DELEGATION_TOOLS,
+        _TEAM_PROMPT_INTRO,
+        _TEAM_PROMPT_TITLE,
+    )
+
+    team = prompt.find(_TEAM_PROMPT_TITLE + "\n")
+    if team < 0:
+        return prompt
+    tools = prompt.find(_TEAM_PROMPT_DELEGATION_TOOLS, team)
+    if tools < 0:
+        return prompt
+    registry_ = getattr(context, "tool_registry", None)
+    if registry_ is None:
+        return prompt
+    names = {tool.name for tool in registry_.list_tools()}
+    if names & set(_DELEGATION_TOOL_NAMES):
+        return prompt
+    # The team section ends at the next top-level heading (or the prompt's end).
+    after = prompt.find("\n## ", tools)
+    end = after + 1 if after >= 0 else len(prompt)
+    head = prompt[team:tools].replace(_TEAM_PROMPT_INTRO, _NO_DELEGATION_INTRO, 1)
+    if _TEAM_PROMPT_AVAILABLE_AGENTS not in head:
+        return prompt
+    return prompt[:team] + head.rstrip() + "\n\n" + prompt[end:]
+
+
 def build_runtime_system_prompt(context) -> str:
     from crabagent.core.agent.failure_modes import inject_failure_modes, known_failure_modes
 
     prompt = context.system_prompt or ""
     if not prompt:
         return ""
+    prompt = without_delegation_sections(prompt, context)
     prompt = inject_failure_modes(prompt, known_failure_modes())
     # Once per run: the loop builds this before its first model call, and the
     # section is skipped if the prompt already carries one.

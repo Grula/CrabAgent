@@ -1144,3 +1144,38 @@ def test_file_context_block_is_path_only_for_binary(tmp_path: Path):
     assert "`logo.png`" in block
     assert "binary" in block.lower()
     assert "\x00" not in block
+
+
+@pytest.mark.asyncio
+async def test_plan_files_lists_docs_plans_newest_first(backends):
+    import os
+
+    from crabagent.serve.api import files
+
+    docs = backends.chat / "docs"
+    docs.mkdir()
+    (docs / "old-plan.md").write_text("intro\n# Old project\n", encoding="utf-8")
+    (docs / "new-plan.md").write_text("# New project\nbody\n", encoding="utf-8")
+    (docs / "notes.md").write_text("# Not a plan\n", encoding="utf-8")
+    (docs / "plan-image.png").write_bytes(b"\x89PNG")
+    os.utime(docs / "old-plan.md", (1_000_000, 1_000_000))
+    (docs / "linked-plan.md").symlink_to(backends.tmp / "outside.md")
+
+    result = await files.plan_files(workspace=str(backends.chat), user=_user())
+
+    assert [(p["path"], p["title"]) for p in result["plans"]] == [
+        ("docs/new-plan.md", "New project"),
+        ("docs/old-plan.md", "Old project"),
+    ]
+    assert (await files.plan_files(workspace=str(backends.server), user=_user())) == {"plans": []}
+
+
+@pytest.mark.asyncio
+async def test_plan_files_refuses_a_workspace_outside_the_allowed_roots(backends):
+    from crabagent.serve.api import files
+
+    outside = backends.tmp / "elsewhere"
+    (outside / "docs").mkdir(parents=True)
+    with pytest.raises(HTTPException) as exc:
+        await files.plan_files(workspace=str(outside), user=_user())
+    assert exc.value.status_code == 403

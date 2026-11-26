@@ -108,6 +108,45 @@ async def test_sub_agent_gets_only_its_own_skills(monkeypatch: pytest.MonkeyPatc
     assert _offered(parent.tool_registry) == ["code-review", "docx", "plan", "strict-review"]
 
 
+async def test_sub_agent_inherits_unsaved_editor_warning_and_its_compaction_cap(monkeypatch: pytest.MonkeyPatch):
+    from crabagent.core.agent.context import AgentContext
+
+    agent_def = {
+        "name": "coder", "display_name": "Coder", "role": "r", "goal": "g", "backstory": "",
+        "tool_permissions": {}, "skills": [], "compaction_max_tokens": 120_000,
+    }
+
+    async def returns(value):
+        return value
+
+    monkeypatch.setattr(agents_module, "_load_shared_context", lambda *a, **k: returns(""))
+    monkeypatch.setattr(agents_module, "load_sub_agent_model_map", lambda *a, **k: returns({}))
+    seen: list = []
+
+    async def run_agent(sub_context, task, *args, **kwargs):
+        seen.append((sub_context.system_prompt, dict(sub_context.metadata)))
+        sub_context.messages.append({"role": "assistant", "content": "done"})
+        return sub_context.messages
+
+    monkeypatch.setattr("crabagent.core.agent.loop.run_agent", run_agent)
+    agents_module._running_sub_agents.clear()
+    parent = AgentContext(workspace=Path("/tmp"), metadata={"user_id": 0, "unsaved_editor_file": "src/app.py"})
+    parent.tool_registry = _registry()
+
+    await agents_module.spawn_sub_agent(parent, agent_name="coder", task="x", agent_def=agent_def)
+
+    prompt, metadata = seen[0]
+    assert "unsaved edits in `src/app.py`" in prompt
+    assert metadata["unsaved_editor_file"] == "src/app.py"  # passed on to its own sub-agents
+    assert metadata["compaction_max_tokens"] == 120_000
+
+    seen.clear()
+    clean = AgentContext(workspace=Path("/tmp"), metadata={"user_id": 0})
+    clean.tool_registry = _registry()
+    await agents_module.spawn_sub_agent(clean, agent_name="coder", task="x", agent_def={**agent_def})
+    assert "Unsaved editor changes" not in seen[0][0]
+
+
 # --- API --------------------------------------------------------------------------
 
 
@@ -146,6 +185,49 @@ async def test_api_sets_narrows_and_resets_skills(agents_db):
     async with agents_db() as session:
         none = await api.update_agent_profile("helper", api.UpdateAgentRequest(skills=[]), user=None, db=session)
     assert none.skills == []
+
+
+async def test_api_sets_and_clears_the_compaction_cap(agents_db):
+    from fastapi import HTTPException
+
+    from crabagent.serve.api import agent as api
+
+    async with agents_db() as session:
+        created = await api.create_agent_profile(
+            api.CreateAgentRequest(name="lead", display_name="Lead", role="r", goal="g", compaction_max_tokens=200_000),
+            user=type("U", (), {"id": 1})(), db=session,
+        )
+    assert created.compaction_max_tokens == 200_000
+
+    async with agents_db() as session:
+        kept = await api.update_agent_profile("lead", api.UpdateAgentRequest(goal="g2"), user=None, db=session)
+    assert kept.compaction_max_tokens == 200_000  # left out: unchanged
+
+    async with agents_db() as session:
+        with pytest.raises(HTTPException) as too_small:
+            await api.update_agent_profile(
+                "lead", api.UpdateAgentRequest(compaction_max_tokens=500), user=None, db=session
+            )
+    assert too_small.value.status_code == 400
+
+    async with agents_db() as session:
+        cleared = await api.update_agent_profile(
+            "lead", api.UpdateAgentRequest(compaction_max_tokens=None), user=None, db=session
+        )
+    assert cleared.compaction_max_tokens is None  # explicit null: the global setting again
+
+
+async def test_profile_cap_reaches_the_chat_context(monkeypatch: pytest.MonkeyPatch):
+    from crabagent.core.agent.context import AgentContext
+    from crabagent.serve.api import prompt as prompt_api
+
+    async def fake_get_agent(name):
+        return {"name": name, "tool_permissions": {}, "skills": None, "compaction_max_tokens": 150_000}
+
+    monkeypatch.setattr(agents_module, "get_agent", fake_get_agent)
+    context = AgentContext(workspace=Path("."))
+    await prompt_api.apply_agent_profile(context, "architect")
+    assert context.metadata["compaction_max_tokens"] == 150_000
 
 
 # --- Chat mode ----------------------------------------------------------------------

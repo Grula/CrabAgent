@@ -541,7 +541,7 @@ async def _run_agent(
             completion_params = {
                 "model": model,
                 **llm,
-                "messages": _build_messages(context, text_only=_force_text_only),
+                "messages": with_step_note(_build_messages(context, text_only=_force_text_only), context),
                 "tools": tools,
                 **({} if provider.provider_type == "chatgpt" else {"max_tokens": settings.max_tokens}),
                 "stream": True,
@@ -719,7 +719,9 @@ async def _run_agent(
             # real token count) but BEFORE appending the current response,
             # so compression doesn't need to deal with messages from the
             # current iteration — simplifying DB persistence.
-            if context.total_tokens > compression_trigger_tokens(model):
+            if context.total_tokens > compression_trigger_tokens(
+                model, context.metadata.get("compaction_max_tokens")
+            ):
                 if context.middlewares:
                     try:
                         await context.middlewares.run_before_llm(context, context.messages)
@@ -1282,6 +1284,57 @@ async def _run_agent(
         logger.warning("molt flush failed", exc_info=True)
 
     return context.messages
+
+
+# Steps left (counting the current one) at which an agent is told to wind down,
+# and at which it must stop editing and report. Agents used to hit the step cap
+# mid-change with no warning and return nothing usable.
+STEP_WIND_DOWN_AT = 10
+STEP_REPORT_NOW_AT = 2
+
+
+def step_budget_note(context: AgentContext) -> str:
+    """The run-state line for this step, or "" when there is nothing to say.
+
+    Sub-agents see "[Step N of M]" every step; every agent is told to wind down
+    when few steps are left, so a run that would hit the cap ends with a partial
+    report instead of a failure.
+    """
+    total = context.max_iterations
+    step = context.iteration
+    if total <= 0 or step <= 0:
+        return ""
+    left = total - step + 1
+    header = f"[Step {step} of {total}]"
+    if left <= STEP_REPORT_NOW_AT:
+        return (
+            f"{header} Your step budget is almost used up: make no new edits and write your final report "
+            "now, with anything unfinished under REMAINING."
+        )
+    if left <= STEP_WIND_DOWN_AT and total >= 2 * STEP_WIND_DOWN_AT:
+        return (
+            f"{header} {left} steps left: finish the change you are making, run the targeted tests, then "
+            "write your report with anything unfinished under REMAINING. Don't start anything new."
+        )
+    if context.metadata.get("_sub_agent_depth", 0) > 0:
+        return header
+    return ""
+
+
+def with_step_note(messages: list[dict], context: AgentContext) -> list[dict]:
+    """Add this step's run-state note to the request (never to the history).
+
+    The note is a separate trailing message after the tool results, not text
+    appended to a tool result: the next request drops it, and the tool result
+    before it stays byte-identical, so the provider's prompt cache still covers
+    it. Only added mid-loop (after tool results), where a user message is valid.
+    """
+    if not messages or messages[-1].get("role") != "tool":
+        return messages
+    note = step_budget_note(context)
+    if not note:
+        return messages
+    return [*messages, {"role": "user", "content": note}]
 
 
 _ITERATION_BUDGET_NOTE = (

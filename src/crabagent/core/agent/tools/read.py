@@ -4,10 +4,13 @@ from typing import Any
 
 from crabagent.core.agent.multimodal import image_file_to_block, is_image_path
 from crabagent.core.agent.token_limits import is_vision_model
-from crabagent.core.agent.tools.path_utils import resolve_tool_path
+from crabagent.core.agent.tools.file_state import tracker_of
+from crabagent.core.agent.tools.path_utils import file_lock, resolve_tool_path
 from crabagent.core.agent.tools.registry import registry
 from crabagent.core.agent.tools.text_encoding import decode_file
 import codecs
+
+_MAX_BATCH_FILES = 10
 
 # Shared exclude set — keep in sync with glob.py and grep.py
 _SKIP_DIRS = {
@@ -68,15 +71,74 @@ def _is_binary(filepath: str) -> bool:
                 "description": "Maximum number of lines to read. Default: 2000.",
                 "default": 2000,
             },
+            "files": {
+                "type": "array",
+                "description": (
+                    f"Read several files or line ranges in one call (at most {_MAX_BATCH_FILES}), instead of "
+                    "file_path: each item is {file_path, offset?, limit?}. Use it rather than several reads "
+                    "or a bash sed/cat."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string"},
+                        "offset": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["file_path"],
+                },
+            },
         },
-        "required": ["file_path"],
     },
 )
 def read_file(
-    file_path: str,
+    file_path: str | None = None,
     offset: int = 1,
     limit: int = 2000,
+    files: list | None = None,
     context: Any = None,
+) -> str | list[dict[str, Any]]:
+    if files is not None:
+        if file_path:
+            return "Error: pass either file_path or files, not both."
+        return _read_batch(files, context)
+    if not file_path:
+        return "Error: file_path is required (or files, to read several in one call)."
+    return _read_one(file_path, offset, limit, context)
+
+
+def _read_batch(files: Any, context: Any) -> str:
+    if isinstance(files, dict):
+        files = [files]
+    if not isinstance(files, list) or not files:
+        return "Error: files must be a non-empty array of {file_path, offset?, limit?} objects."
+    if len(files) > _MAX_BATCH_FILES:
+        return f"Error: at most {_MAX_BATCH_FILES} files per call; split the list."
+    sections: list[str] = []
+    for item in files:
+        if not isinstance(item, dict) or not str(item.get("file_path") or item.get("path") or "").strip():
+            sections.append("Error: each item needs a file_path.")
+            continue
+        name = str(item.get("file_path") or item.get("path")).strip()
+        try:
+            item_offset = int(item.get("offset") or 1)
+            item_limit = int(item.get("limit") or 2000)
+        except (TypeError, ValueError):
+            sections.append(f"Error: offset and limit must be integers ({name}).")
+            continue
+        result = _read_one(name, item_offset, item_limit, context)
+        if isinstance(result, list):
+            # Image blocks can't be combined with text sections; describe instead.
+            result = f"[Image file: {name}: read it on its own to see the image.]"
+        sections.append(result)
+    return "\n\n".join(sections)
+
+
+def _read_one(
+    file_path: str,
+    offset: int,
+    limit: int,
+    context: Any,
 ) -> str | list[dict[str, Any]]:
     path, error = resolve_tool_path(file_path, context)
     if error:
@@ -122,8 +184,15 @@ def read_file(
             f"Binary content not displayed. Use a specialized tool to inspect."
         )
 
+    tracker = tracker_of(context)
     try:
-        lines = decode_file(path.read_bytes()).splitlines(keepends=True)
+        # Under the file lock: a parallel edit of the same file must not finish
+        # between these bytes being read and their hash being recorded.
+        with file_lock(path):
+            raw = path.read_bytes()
+            if tracker is not None:
+                tracker.record(path, raw)
+        lines = decode_file(raw).splitlines(keepends=True)
     except Exception as e:
         return f"Error reading file: {e}"
 

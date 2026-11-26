@@ -165,3 +165,45 @@ async def git_diff(
         scope = f"compared with {base}" if base else "uncommitted"
         return f"No changes ({scope})."
     return _clip("\n\n".join(sections))
+
+
+_MAX_STATUS_LINES = 200
+
+
+@registry.register(
+    name="git_status",
+    description=(
+        "Show the workspace's Git status, read-only: the current branch, how far it is ahead of or behind "
+        "its upstream, and every changed, staged, deleted and untracked file (short format: XY path). "
+        "Cheaper than bash for this; use git_diff to see the changes themselves."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Only show these files or directories (workspace-relative). Default: all.",
+            },
+        },
+    },
+    metadata={"source": "builtin", "category": "file_management"},
+)
+async def git_status(paths: list[str] | None = None, context: Any = None) -> str:
+    workspace = get_workspace_root(context)
+    if workspace is None:
+        return "Error: git_status requires an active session with a workspace"
+    path_args = [text for text in (str(raw).strip() for raw in paths or []) if text]
+    try:
+        code, output = await _git(workspace, "status", "--short", "--branch", "--untracked-files=all", "--", *path_args)
+    except FileNotFoundError:
+        return "Error: git is not installed on this machine."
+    if code != 0:
+        return f"Error: {output or 'git status failed'}"
+    lines = output.rstrip().splitlines()
+    if len(lines) <= 1:
+        return (lines[0] + "\n" if lines else "") + "Working tree clean."
+    if len(lines) > _MAX_STATUS_LINES + 1:
+        hidden = len(lines) - _MAX_STATUS_LINES - 1
+        lines = lines[: _MAX_STATUS_LINES + 1] + [f"... and {hidden} more (pass `paths` to narrow it down)"]
+    return "\n".join(lines)

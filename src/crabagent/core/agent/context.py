@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from crabagent.core.agent.tools.file_state import FileStateTracker
 from crabagent.core.agent.tools.registry import ToolRegistry
 from crabagent.core.event import EventBus
 
@@ -41,6 +42,10 @@ class AgentContext:
     confirm_callback: Callable[[str, dict[str, Any]], Awaitable[bool]] | None = None
     ask_callback: Callable[[str, list[str] | None], Awaitable[str]] | None = None
     middlewares: MiddlewareChain | None = None
+    # Files read and written in this run: edit/write refuse a file the agent
+    # hasn't read or that changed on disk since (see tools/file_state.py).
+    # Chat sessions replace it with the session's tracker so it spans turns.
+    file_state: FileStateTracker = field(default_factory=FileStateTracker)
 
     # Token accumulators (cumulative across all iterations in this run)
     accumulated_prompt: int = 0

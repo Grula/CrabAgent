@@ -152,6 +152,7 @@ _TEAM_PROMPT_AGENT_ROUTES: tuple[tuple[str, str], ...] = (
     ('scout', 'Finding where something is or how it works in the code -> `scout`'),
     ('coder', 'Writing, fixing or refactoring code -> `coder`'),
     ('tester', 'Writing tests, reproducing a bug, verifying a change end to end -> `tester`'),
+    ('ui_checker', 'Checking a user-facing change in the running app, in a real browser -> `ui_checker`'),
     ('the_reviewer', 'Reviewing a finished change before it is committed -> `the_reviewer`'),
     ('researcher', 'Web research, searching, browsing -> `researcher`'),
     # Agents from older installs, still routed while they exist.
@@ -229,6 +230,7 @@ async def load_agent_registry() -> list[dict]:
                     "tools": tools_list,
                     "tool_permissions": tool_perms,
                     "skills": parse_agent_skills(r.skills),
+                    "compaction_max_tokens": r.compaction_max_tokens or None,
                 }
             )
     _registry_loaded = True
@@ -451,7 +453,7 @@ _CAPABILITIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("read files", ("read", "grep", "glob")),
     ("edit files", ("edit", "write")),
     ("run commands", ("bash",)),
-    ("git diff", ("git_diff",)),
+    ("git diff", ("git_diff", "git_status")),
     ("web search", ("web_search", "web_scrape")),
     ("browser", ("browser_navigate",)),
     ("shared browser", ("collab_browser_open",)),
@@ -483,8 +485,8 @@ def agent_capabilities(tool_permissions: dict[str, str] | None) -> list[str]:
 # is the fallback.
 _CAPABILITY_OWNERS: dict[str, tuple[str, ...]] = {
     "web search": ("researcher",),
-    "browser": ("researcher", "tester"),
-    "shared browser": ("tester",),
+    "browser": ("researcher",),
+    "shared browser": ("ui_checker",),
     "run commands": ("tester", "coder"),
     "building tools": ("toolsmith",),
 }
@@ -963,6 +965,14 @@ async def _persist_sub_agent_usage(sub_context, parent_context, agent_name: str)
     await token_usage_batch_create(records)
 
 
+def unsaved_editor_note(path: str) -> str:
+    """The line telling a sub-agent not to race the user's unsaved editor buffer."""
+    return (
+        f"\n\nUnsaved editor changes: the user has unsaved edits in `{path}`. Don't edit or overwrite "
+        "that file; if your task needs it changed, say so under REMAINING."
+    )
+
+
 @dataclass(frozen=True)
 class BackgroundAgentResult:
     status: str
@@ -1096,6 +1106,8 @@ async def spawn_sub_agent(
         str(agent_def.get(field) or "") for field in ("role", "goal", "backstory")
     )
     sub_context.metadata["_sub_agent_depth"] = current_depth + 1
+    if agent_def.get("compaction_max_tokens"):
+        sub_context.metadata["compaction_max_tokens"] = agent_def["compaction_max_tokens"]
     parent_user_id = parent_context.metadata.get("user_id", 0)
     if parent_user_id:
         sub_context.metadata["user_id"] = parent_user_id
@@ -1116,6 +1128,11 @@ async def spawn_sub_agent(
             )
         except Exception:
             logger.debug("Failed to inject lessons for sub-agent %s", agent_name, exc_info=True)
+
+    unsaved = parent_context.metadata.get("unsaved_editor_file")
+    if unsaved:
+        sub_context.metadata["unsaved_editor_file"] = unsaved
+        sub_context.system_prompt = (sub_context.system_prompt or "") + unsaved_editor_note(unsaved)
 
     shared_context = await _load_shared_context(session_id)
 

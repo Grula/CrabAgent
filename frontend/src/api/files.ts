@@ -1,3 +1,4 @@
+import type { PlanFile } from "../lib/planContinuation";
 import { api } from "./client";
 import { IMAGE_EXTENSIONS } from "../lib/workspaceFiles";
 
@@ -190,6 +191,14 @@ export async function getGitDiff(path?: string, cached?: boolean, workspace?: st
   if (cached) params.set("cached", "true");
   if (workspace) params.set("workspace", workspace);
   return api.get<GitDiffResult>(`/files/git-diff?${params}`);
+}
+
+/** Project plan files (docs/*plan*.md) a new chat can continue from, newest first. */
+export async function getPlanFiles(workspace?: string): Promise<PlanFile[]> {
+  const params = new URLSearchParams();
+  if (workspace) params.set("workspace", workspace);
+  const result = await api.get<{ plans: PlanFile[] }>(`/files/plans?${params}`);
+  return result.plans || [];
 }
 
 export async function saveFile(
