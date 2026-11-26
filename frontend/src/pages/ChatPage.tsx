@@ -84,6 +84,7 @@ import * as documentsApi from "../api/documents";
 import {
   closeDocDiscardPrompt,
   forgetDiscardedMarkdownEdits,
+  forgetLeaveWorkDiscardedMarkdownEdits,
   hasUnsavedEditorEdits,
   isAbsolutePath,
   needsDiscardConfirmForDocClose,
@@ -92,6 +93,7 @@ import {
   needsDiscardConfirmForSessionSwitch,
   needsDiscardConfirmForWorkTabSwitch,
   needsOfficePreview,
+  queuePendingPrompt,
   workspaceFileKind,
 } from "../lib/workspaceFiles";
 import {
@@ -258,13 +260,22 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     body: string;
     confirmTestId: string;
   };
-  const [pendingDiscard, setPendingDiscard] = useState<PendingDiscard | null>(null);
-  // A dirty code buffer plus a chat switch: the buffer would land in another
-  // workspace, so hold the switch until the user confirms.
-  const [pendingSessionSwitch, setPendingSessionSwitch] = useState<{ run: () => void; dirtyName: string } | null>(null);
-  // Leaving Work (for Chat, or for any other page in the nav bar) unmounts the
-  // editors, so a dirty code or Markdown buffer holds the move until confirmed.
-  const [pendingLeaveWork, setPendingLeaveWork] = useState<{ run: () => void; dirtyName: string } | null>(null);
+  // One pending confirmation, whatever asked for it: leaving Documents (another
+  // Work tab, a document switch or close), a chat switch, or leaving Work. The
+  // three used to be independent states, so an out-of-band hashchange (browser
+  // Back) could stack a second dialog on top of an open one and run its move
+  // behind the question still on screen. `queuePendingPrompt` keeps at most one:
+  // a request arriving while another prompt is pending is dropped, not queued to
+  // fire later. `run` is the unguarded move the dialog lets through.
+  type PendingPrompt =
+    | ({ kind: "discard" } & PendingDiscard)
+    // A dirty code buffer plus a chat switch: the buffer would land in another
+    // workspace, so hold the switch until the user confirms.
+    | { kind: "sessionSwitch"; run: () => void; dirtyName: string }
+    // Leaving Work (for Chat, or for any other page in the nav bar) unmounts the
+    // editors, so a dirty code or Markdown buffer holds the move until confirmed.
+    | { kind: "leaveWork"; run: () => void; dirtyName: string };
+  const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null);
   // Kind of file open in the Documents tab. `image` keeps its own branch so the
   // office preview and the code editor are never asked to render one.
   type WorkspaceType = "document" | "code" | "prototype" | "markdown" | "image";
@@ -319,14 +330,15 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
       markdownDirty: markdownDirtyPaths.length > 0,
     })) {
       const dirtyPath = (codeDirty ? editor?.openPath : markdownDirtyPaths[0]) || currentDocPath || "";
-      setPendingDiscard({
+      setPendingPrompt((prev) => queuePendingPrompt(prev, {
+        kind: "discard",
         run: () => commitWorkTab(tab),
         dirtyName: dirtyPath.split("/").pop() || "this file",
         // Names the file: the dirty buffer may be a document, not the editor.
         description: "Leaving Documents closes this file, and its unsaved edits would be thrown away.",
         body: "Save with Ctrl/Cmd+S to keep your edits, or discard them and switch tabs.",
         confirmTestId: "work-tab-discard-confirm",
-      });
+      }));
       return false;
     }
     commitWorkTab(tab);
@@ -531,7 +543,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
       return;
     }
     const dirtyPath = (hasUnsavedEditorEdits(editor) ? editor?.openPath : markdownDirtyPaths[0]) || currentDocPath || "";
-    setPendingSessionSwitch({ run, dirtyName: dirtyPath.split("/").pop() || "this file" });
+    setPendingPrompt((prev) => queuePendingPrompt(prev, { kind: "sessionSwitch", run, dirtyName: dirtyPath.split("/").pop() || "this file" }));
   }, [currentDocPath]);
 
   /** Record every MarkdownPanel dirty report; a clean report clears its file. */
@@ -557,7 +569,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
       return true;
     }
     const dirtyPath = (codeDirty ? editor?.openPath : markdownDirtyPaths[0]) || currentDocPath || "";
-    setPendingLeaveWork({ run, dirtyName: dirtyPath.split("/").pop() || "this file" });
+    setPendingPrompt((prev) => queuePendingPrompt(prev, { kind: "leaveWork", run, dirtyName: dirtyPath.split("/").pop() || "this file" }));
     // The move is held: the caller keeps the page (and the URL) where it is.
     return false;
   }, [currentDocPath]);
@@ -723,7 +735,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
       run();
       return;
     }
-    setPendingDiscard({ run, ...closeDocDiscardPrompt(closingPath) });
+    setPendingPrompt((prev) => queuePendingPrompt(prev, { kind: "discard", run, ...closeDocDiscardPrompt(closingPath) }));
   }, []);
 
   /**
@@ -743,7 +755,8 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
       return;
     }
     const leaving = currentDocPath;
-    setPendingDiscard({
+    setPendingPrompt((prev) => queuePendingPrompt(prev, {
+      kind: "discard",
       run: () => {
         // The panel being left is gone with its edits: forget its report, or the
         // stale path would ask again on the next document or chat switch.
@@ -754,7 +767,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
       description: "Switching documents closes this one, and its unsaved edits would be thrown away.",
       body: "Save with Ctrl/Cmd+S to keep your edits, or discard them and switch documents.",
       confirmTestId: "doc-switch-discard-confirm",
-    });
+    }));
   }, [currentDocPath]);
 
   /**
@@ -2641,44 +2654,48 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
           </div>
         </Modal>
       )}
-      {pendingDiscard && (
+      {pendingPrompt?.kind === "discard" && (
         <DiscardChangesDialog
-          fileName={pendingDiscard.dirtyName}
-          description={pendingDiscard.description}
-          body={pendingDiscard.body}
-          confirmTestId={pendingDiscard.confirmTestId}
-          onCancel={() => setPendingDiscard(null)}
+          fileName={pendingPrompt.dirtyName}
+          description={pendingPrompt.description}
+          body={pendingPrompt.body}
+          confirmTestId={pendingPrompt.confirmTestId}
+          onCancel={() => setPendingPrompt(null)}
           onDiscard={() => {
-            const next = pendingDiscard;
-            setPendingDiscard(null);
+            const next = pendingPrompt;
+            setPendingPrompt(null);
             next?.run();
           }}
         />
       )}
-      {pendingSessionSwitch && (
+      {pendingPrompt?.kind === "sessionSwitch" && (
         <DiscardChangesDialog
-          fileName={pendingSessionSwitch.dirtyName}
+          fileName={pendingPrompt.dirtyName}
           description="Switching conversations closes the editor, and its unsaved edits would be thrown away."
           body="Save with Ctrl/Cmd+S to keep your edits, or discard them and switch conversations."
           confirmTestId="session-switch-discard-confirm"
-          onCancel={() => setPendingSessionSwitch(null)}
+          onCancel={() => setPendingPrompt(null)}
           onDiscard={() => {
-            const next = pendingSessionSwitch;
-            setPendingSessionSwitch(null);
+            const next = pendingPrompt;
+            setPendingPrompt(null);
             next?.run();
           }}
         />
       )}
-      {pendingLeaveWork && (
+      {pendingPrompt?.kind === "leaveWork" && (
         <DiscardChangesDialog
-          fileName={pendingLeaveWork.dirtyName}
+          fileName={pendingPrompt.dirtyName}
           description="Leaving Work closes the editor and its documents, and their unsaved edits would be thrown away."
           body="Save with Ctrl/Cmd+S to keep your edits, or discard them and leave Work."
           confirmTestId="leave-work-discard-confirm"
-          onCancel={() => setPendingLeaveWork(null)}
+          onCancel={() => setPendingPrompt(null)}
           onDiscard={() => {
-            const next = pendingLeaveWork;
-            setPendingLeaveWork(null);
+            const next = pendingPrompt;
+            setPendingPrompt(null);
+            // Leaving Work unmounts every document panel, not only the one the
+            // dialog named: forget them all, or a later document inherits the
+            // stale "discard a.md?" question about a panel that is gone.
+            forgetLeaveWorkDiscardedMarkdownEdits(markdownDirtyRef.current);
             next?.run();
           }}
         />

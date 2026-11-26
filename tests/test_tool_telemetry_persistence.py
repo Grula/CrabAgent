@@ -204,3 +204,31 @@ async def test_sub_agent_tool_results_carry_the_verdict_to_the_parent(monkeypatc
     assert len(forwarded) == 1
     assert len(forwarded[0].data["result"]) == 500
     assert (forwarded[0].data["ok"], forwarded[0].data["reason_class"]) == (False, "exit_nonzero")
+
+
+async def test_a_successful_read_that_quotes_the_trap_phrases_is_a_success():
+    """2026-11-26 audit item 28: only a result that starts with "Error" is a failure.
+
+    Reading CrabAgent's own source returns lines containing "requires an active
+    session" and "is not available (may be restricted"; those are content, not a
+    verdict, and used to be counted as failures.
+    """
+    from crabagent.core.agent.tool_telemetry import classify_tool_outcome
+
+    result = (
+        "   33:     if 'requires an active session' in s or 'no user_id in context' in s:\n"
+        "   35:     if 'is not available (may be restricted' in s:\n"
+        "   37:     if 'is disabled (no permission' in s:\n"
+    )
+
+    assert classify_tool_outcome("read", result) == (True, "ok")
+
+
+async def test_a_registry_error_still_classifies_as_a_failure():
+    """A real "Error: ..." result keeps its failure class and the stored shape."""
+    from crabagent.core.agent.tool_telemetry import classify_tool_outcome
+
+    assert classify_tool_outcome(
+        "agent_runs_inspect", "Error: agent_runs_inspect requires an active session"
+    ) == (False, "no_session")
+    assert classify_tool_outcome("bash", "Error executing bash: boom") == (False, "error")

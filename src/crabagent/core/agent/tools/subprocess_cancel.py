@@ -51,7 +51,7 @@ class SubprocessResult:
     start_error: str = ""
 
 
-def subprocess_kwargs() -> dict[str, Any]:
+def subprocess_kwargs(*, shell: bool = False) -> dict[str, Any]:
     """Kwargs that put the child in its own process group (and pick the shell)."""
     if IS_WINDOWS:
         return {
@@ -61,7 +61,9 @@ def subprocess_kwargs() -> dict[str, Any]:
             )
         }
     kwargs: dict[str, Any] = {"start_new_session": True}
-    if _POSIX_SHELL:
+    # Popen's ``executable`` replaces the program in argv mode too, so an
+    # argv call such as ['echo', 'hi'] would be run *as* a bash script.
+    if shell and _POSIX_SHELL:
         kwargs["executable"] = _POSIX_SHELL
     return kwargs
 
@@ -131,7 +133,7 @@ async def spawn_cancellable(argv: Any, *, shell: bool = False, **kwargs: Any) ->
     kwargs.setdefault("stdin", subprocess.DEVNULL)
     kwargs.setdefault("stdout", asyncio.subprocess.PIPE)
     kwargs.setdefault("stderr", asyncio.subprocess.PIPE)
-    for key, value in subprocess_kwargs().items():
+    for key, value in subprocess_kwargs(shell=shell).items():
         kwargs.setdefault(key, value)
     if shell:
         proc = await asyncio.create_subprocess_shell(argv, **kwargs)

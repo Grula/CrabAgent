@@ -17,16 +17,59 @@ import logging
 import re
 from typing import Any
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, validators
 
 logger = logging.getLogger(__name__)
 
-# Schemas declared in this repo are plain draft-07-style objects; draft 2020-12
-# accepts them unchanged and is jsonschema's default in 4.x.
-_VALIDATOR_CLASS = Draft202012Validator
+# Fallback for schemas that declare no ``$schema`` (or whose dialect cannot be
+# determined): draft 2020-12 accepts the plain draft-07-style objects this repo
+# declares and is jsonschema's default in 4.x. Schemas that do declare a
+# dialect are validated with that dialect via :func:`_validator_class`.
+_DEFAULT_VALIDATOR_CLASS = Draft202012Validator
 
 _INT_RE = re.compile(r"[+-]?\d+")
+# A finite JSON number, so "nan"/"inf" are left as text instead of becoming floats.
+_NUMBER_RE = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
 _MAX_DEPTH = 12
+
+# id(schema) -> (schema, validator class). Holding the schema keeps its id
+# unique for as long as the entry lives; the cap bounds the memory held.
+_VALIDATOR_CACHE: dict[int, tuple[dict[str, Any], type]] = {}
+_VALIDATOR_CACHE_MAX = 64
+
+
+def _validator_class(schema: dict[str, Any]):
+    """The validator class for the schema's own dialect, defaulting to 2020-12.
+
+    ``validator_for`` honours a declared ``$schema`` (e.g. draft-04, where
+    ``exclusiveMinimum: true`` is legal and means something different from
+    2020-12). A schema that fails its own meta-schema falls back to 2020-12 so a
+    slightly broken MCP schema still validates as before instead of raising.
+
+    The result is cached by schema identity: ``validate_args`` runs on every
+    tool call, and rebuilding (and re-checking) the class each time is pure
+    overhead. The value keeps a reference to the schema, so an ``id`` cannot be
+    reused by a different object while cached, and the dict is capped at
+    :data:`_VALIDATOR_CACHE_MAX` entries with oldest-first eviction so it
+    cannot leak.
+    """
+    key = id(schema)
+    cached = _VALIDATOR_CACHE.get(key)
+    if cached is not None and cached[0] is schema:
+        return cached[1]
+    try:
+        cls = validators.validator_for(schema, default=_DEFAULT_VALIDATOR_CLASS)
+    except Exception:  # noqa: BLE001 - unusable schema, use the default dialect
+        cls = _DEFAULT_VALIDATOR_CLASS
+    else:
+        try:
+            cls.check_schema(schema)
+        except Exception:  # noqa: BLE001 - declared dialect rejects it; keep validating
+            cls = _DEFAULT_VALIDATOR_CLASS
+    if len(_VALIDATOR_CACHE) >= _VALIDATOR_CACHE_MAX:
+        _VALIDATOR_CACHE.pop(next(iter(_VALIDATOR_CACHE)))
+    _VALIDATOR_CACHE[key] = (schema, cls)
+    return cls
 
 
 # --------------------------------------------------------------------------- #
@@ -180,7 +223,7 @@ def validate_args(schema: dict[str, Any] | None, args: Any) -> list[str]:
     if schema is None or schema == {} or not isinstance(schema, dict):
         return []
     try:
-        validator = _VALIDATOR_CLASS(schema)
+        validator = _validator_class(schema)(schema)
         errors = sorted(
             validator.iter_errors(args),
             key=lambda err: (len(err.absolute_path), list(map(str, err.absolute_path)), err.message),
@@ -211,6 +254,15 @@ def _coerce(schema: Any, value: Any, root: Any, depth: int) -> Any:
     if not isinstance(resolved, dict):
         return value
 
+    types = _types(resolved, root)
+
+    # Never coerce a value away from a type the schema already allows. In
+    # particular a string stays text whenever "string" is one of the allowed
+    # types (including inside anyOf/oneOf), so "007" (a code, an ID) is not
+    # turned into 7 and "nan" is not silently turned into a float.
+    if isinstance(value, str) and "string" in types:
+        return value
+
     # Composition: use the first branch that already fits (or that repairs the
     # value into a fit), then fall through to plain in-place repair.
     for key in ("anyOf", "oneOf"):
@@ -222,8 +274,6 @@ def _coerce(schema: Any, value: Any, root: Any, depth: int) -> Any:
                     return candidate
     for branch in resolved.get("allOf") or ():
         value = _coerce(branch, value, root, depth + 1)
-
-    types = _types(resolved, root)
 
     # (a) a JSON-encoded container string where the schema wants a container
     if isinstance(value, str) and ("object" in types or "array" in types):
@@ -238,11 +288,8 @@ def _coerce(schema: Any, value: Any, root: Any, depth: int) -> Any:
         text = value.strip()
         if "integer" in types and _INT_RE.fullmatch(text):
             return int(text)
-        if "number" in types:
-            try:
-                return float(text)
-            except ValueError:
-                pass
+        if "number" in types and _NUMBER_RE.fullmatch(text):
+            return float(text)
         if "boolean" in types and text.lower() in ("true", "false"):
             return text.lower() == "true"
 

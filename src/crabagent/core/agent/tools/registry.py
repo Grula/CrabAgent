@@ -79,14 +79,28 @@ def _confirm_accepts_diff_preview(callback: Callable) -> bool:
     return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
-async def _request_confirm(callback: Callable, tool_name: str, arguments: dict, workspace) -> bool:
+async def _request_confirm(
+    callback: Callable,
+    tool_name: str,
+    arguments: dict,
+    workspace,
+    preview_args: dict | None = None,
+) -> bool:
     """Ask the user to confirm a tool call, with a diff preview when supported.
 
     The preview is only built here — at the moment a confirmation really is
-    requested — so tools that never confirm pay no file I/O.
+    requested — so tools that never confirm pay no file I/O. It is built from
+    *preview_args*, the coerced arguments the handler will run with: a string
+    ``"false"`` for ``replace_all`` must not preview a replace-all that will not
+    happen. The callback still gets the arguments the model sent, so the
+    confirmation card shows the call as issued.
     """
     if _confirm_accepts_diff_preview(callback):
-        preview = await build_diff_preview(tool_name, arguments, workspace)
+        preview = await build_diff_preview(
+            tool_name,
+            arguments if preview_args is None else preview_args,
+            workspace,
+        )
         if preview is not None:
             return await callback(tool_name, arguments, diff_preview=preview)
     return await callback(tool_name, arguments)
@@ -437,31 +451,13 @@ class ToolRegistry:
         }
         _t0 = _t.monotonic()
 
-        if context is not None:
-            try:
-                await self._take_molt_snapshot(name, arguments, context)
-            except Exception:
-                logger.warning("Molt snapshot failed for %s, continuing tool execution", name)
-
-        if context is not None:
-            permission = resolve_permission(context.tool_permissions, tool.name)
-            if permission is None:
-                permission = "confirm" if tool.requires_permission else "auto"
-            if permission == "deny":
-                return f"Tool '{tool.name}' is disabled (no permission for current agent)"
-            if permission == "confirm":
-                if tool.name not in context.approved_tools:
-                    if context.confirm_callback:
-                        approved = await _request_confirm(
-                            context.confirm_callback,
-                            tool.name,
-                            arguments,
-                            getattr(context, "workspace", None),
-                        )
-                        if not approved:
-                            return f"Tool '{tool.name}' execution denied by user."
-                    context.approved_tools.add(tool.name)
-
+        # Prepare the call before anything has a side effect: drop undeclared
+        # keys, repair the common "nearly right" argument shapes the model sends
+        # ("5" for integer, a JSON string for an object, ...) and prove the
+        # result against the declared JSON Schema.
+        # Validation runs *first*: a call that is then rejected must never take a
+        # molt snapshot nor ask the user to approve it.
+        # One insertion point covers sync, coroutine, MCP and custom tools.
         try:
             sig = inspect.signature(tool.handler)
             kwargs = dict(arguments)
@@ -495,10 +491,6 @@ class ToolRegistry:
                         f"Required parameters: {', '.join(missing)}. "
                         f"Please retry the tool call with all required arguments."
                     )
-            # Repair the common "nearly right" argument shapes the model sends
-            # ("5" for integer, a JSON string for an object, ...) and prove the
-            # result against the declared JSON Schema before the handler runs.
-            # One insertion point covers sync, coroutine, MCP and custom tools.
             kwargs = coerce_args(tool.parameters, kwargs)
             problems = validate_args(tool.parameters, kwargs)
             if problems:
@@ -511,6 +503,41 @@ class ToolRegistry:
                     f"Error: invalid arguments for tool '{name}': {detail}. "
                     f"Fix the arguments and call the tool again."
                 )
+        except Exception as e:
+            return f"Error executing {name}: {e}"
+
+        # Permission and confirmation come after validation: the user is only
+        # asked about a call that can run, and the diff preview is built from the
+        # coerced arguments the handler will actually use.
+        if context is not None:
+            permission = resolve_permission(context.tool_permissions, tool.name)
+            if permission is None:
+                permission = "confirm" if tool.requires_permission else "auto"
+            if permission == "deny":
+                return f"Tool '{tool.name}' is disabled (no permission for current agent)"
+            if permission == "confirm":
+                if tool.name not in context.approved_tools:
+                    if context.confirm_callback:
+                        approved = await _request_confirm(
+                            context.confirm_callback,
+                            tool.name,
+                            arguments,
+                            getattr(context, "workspace", None),
+                            preview_args=kwargs,
+                        )
+                        if not approved:
+                            return f"Tool '{tool.name}' execution denied by user."
+                    context.approved_tools.add(tool.name)
+
+        # Snapshot only after the user agreed: a call that was rejected by
+        # validation or denied prompts nothing and leaves no staged molt behind.
+        if context is not None:
+            try:
+                await self._take_molt_snapshot(name, kwargs, context)
+            except Exception:
+                logger.warning("Molt snapshot failed for %s, continuing tool execution", name)
+
+        try:
             if "context" in sig.parameters and context is not None:
                 kwargs["context"] = context
             _t1 = _t.monotonic()

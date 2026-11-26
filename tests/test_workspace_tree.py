@@ -80,6 +80,22 @@ def test_char_cap_is_respected(tmp_path):
     assert out.splitlines()[-1].endswith("more entries not shown)")
 
 
+def test_footer_counts_entries_trimmed_to_make_room_for_it(tmp_path):
+    """Lines dropped to fit the footer are omitted entries too: the footer used
+    to be formatted before that trimming, so it kept the smaller pre-trim count."""
+    root = tmp_path
+    for i in range(10):
+        (root / f"f{i}.txt").write_text("x")
+
+    out = build_workspace_tree(root, max_entries=100, max_chars=60)
+
+    lines = out.splitlines()
+    shown = len(lines) - 1  # the last line is the footer
+    omitted = 10 - shown
+    assert len(out) <= 60
+    assert lines[-1] == f"… ({omitted} more entries not shown)"
+
+
 def test_missing_workspace_returns_empty(tmp_path):
     assert build_workspace_tree(tmp_path / "does-not-exist") == ""
     assert build_workspace_section(tmp_path / "does-not-exist") == ""

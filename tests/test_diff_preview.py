@@ -515,3 +515,213 @@ async def test_confirmation_without_a_preview_omits_the_argument(tmp_path):
     # A missing preview leaves the confirm payload without the key.
     assert seen == [{}]
     assert result == "wrote big.py"
+
+
+# ── path resolution through the tools' helper (expanduser) ────────────
+
+
+@pytest.mark.asyncio
+async def test_write_tilde_path_previews_the_real_target(tmp_path, monkeypatch):
+    """`write("~/x")` must diff the file the tool overwrites, not a new ./~/x."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "x").write_text("old\n", encoding="utf-8")
+
+    preview = await build_diff_preview("write", {"path": "~/x", "content": "new\n"}, tmp_path)
+
+    assert preview is not None
+    assert preview["path"] == "x"
+    assert preview["new_file"] is False
+    assert preview["added"] == 1 and preview["removed"] == 1
+    assert "-old" in preview["unified"] and "+new" in preview["unified"]
+
+
+@pytest.mark.asyncio
+async def test_edit_tilde_path_previews_the_real_target(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "x").write_text("old\n", encoding="utf-8")
+
+    preview = await build_diff_preview(
+        "edit", {"path": "~/x", "old_string": "old", "new_string": "new"}, tmp_path
+    )
+
+    assert preview is not None
+    assert preview["path"] == "x"
+    assert preview["new_file"] is False
+    assert "-old" in preview["unified"] and "+new" in preview["unified"]
+
+
+@pytest.mark.asyncio
+async def test_tilde_path_outside_the_workspace_gets_no_preview(tmp_path, tmp_path_factory, monkeypatch):
+    """The tool would overwrite ~/x; a "new file in the workspace" preview would lie."""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    (home / "x").write_text("old\n", encoding="utf-8")
+
+    write_preview = await build_diff_preview("write", {"path": "~/x", "content": "new\n"}, tmp_path)
+    edit_preview = await build_diff_preview(
+        "edit", {"path": "~/x", "old_string": "old", "new_string": "new"}, tmp_path
+    )
+
+    assert write_preview is None
+    assert edit_preview is None
+
+
+# ── batch (replacements) previews ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_edit_batch_preview_counts_match_the_applied_result(tmp_path):
+    (tmp_path / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+    preview = await build_diff_preview(
+        "edit",
+        {
+            "path": "app.py",
+            "replacements": [
+                {"old_string": "one", "new_string": "ONE"},
+                {"old_string": "three", "new_string": "THREE"},
+            ],
+        },
+        tmp_path,
+    )
+
+    assert preview is not None
+    assert preview["path"] == "app.py"
+    assert preview["new_file"] is False
+    assert preview["added"] == 2
+    assert preview["removed"] == 2
+    assert "-one" in preview["unified"] and "+ONE" in preview["unified"]
+    assert "-three" in preview["unified"] and "+THREE" in preview["unified"]
+
+
+@pytest.mark.asyncio
+async def test_edit_batch_with_a_failing_item_returns_none(tmp_path):
+    """edit is all-or-nothing, so a half-applicable batch previews nothing."""
+    (tmp_path / "app.py").write_text("one\ntwo\n", encoding="utf-8")
+
+    preview = await build_diff_preview(
+        "edit",
+        {
+            "path": "app.py",
+            "replacements": [
+                {"old_string": "one", "new_string": "ONE"},
+                {"old_string": "absent", "new_string": "x"},
+            ],
+        },
+        tmp_path,
+    )
+
+    assert preview is None
+
+
+@pytest.mark.asyncio
+async def test_edit_batch_with_an_ambiguous_item_returns_none(tmp_path):
+    (tmp_path / "app.py").write_text("x\nx\nkeep\n", encoding="utf-8")
+
+    preview = await build_diff_preview(
+        "edit",
+        {
+            "path": "app.py",
+            "replacements": [
+                {"old_string": "keep", "new_string": "KEEP"},
+                {"old_string": "x", "new_string": "y"},
+            ],
+        },
+        tmp_path,
+    )
+
+    assert preview is None
+
+
+@pytest.mark.asyncio
+async def test_edit_batch_with_empty_replacements_returns_none(tmp_path):
+    (tmp_path / "app.py").write_text("hello\n", encoding="utf-8")
+
+    preview = await build_diff_preview("edit", {"path": "app.py", "replacements": []}, tmp_path)
+
+    assert preview is None
+
+
+@pytest.mark.asyncio
+async def test_edit_batch_with_no_applicable_item_returns_none(tmp_path):
+    (tmp_path / "app.py").write_text("hello\n", encoding="utf-8")
+
+    preview = await build_diff_preview(
+        "edit",
+        {
+            "path": "app.py",
+            "replacements": [
+                {"old_string": "absent", "new_string": "x"},
+                {"old_string": "missing", "new_string": "y"},
+            ],
+        },
+        tmp_path,
+    )
+
+    assert preview is None
+
+
+@pytest.mark.asyncio
+async def test_edit_string_false_replace_all_previews_one_replacement(tmp_path):
+    (tmp_path / "dup.txt").write_text("x\nx\n", encoding="utf-8")
+
+    preview = await build_diff_preview(
+        "edit",
+        {"path": "dup.txt", "old_string": "x", "new_string": "y", "replace_all": "false"},
+        tmp_path,
+    )
+
+    assert preview is not None
+    assert preview["added"] == 1 and preview["removed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_string_false_replace_all_is_coerced_before_the_preview(tmp_path):
+    """The card must show what the handler runs: "false" is not a replace-all."""
+    seen: list[dict | None] = []
+
+    async def confirm(tool_name: str, args: dict, diff_preview: dict | None = None) -> bool:
+        seen.append(diff_preview)
+        return True
+
+    registry = ToolRegistry()
+
+    @registry.register(
+        name="edit",
+        description="edit",
+        parameters={
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "old_string": {"type": "string"},
+                "new_string": {"type": "string"},
+                "replace_all": {"type": "boolean"},
+            },
+            "required": ["file_path", "old_string", "new_string"],
+        },
+        requires_permission=True,
+    )
+    def _edit(
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+        context=None,
+    ):
+        return f"replace_all={replace_all!r}"
+
+    (tmp_path / "dup.txt").write_text("x\nx\n", encoding="utf-8")
+    context = AgentContext(workspace=tmp_path, tool_registry=registry)
+    context.tool_permissions["edit"] = "confirm"
+    context.confirm_callback = confirm
+
+    result = await registry.execute(
+        "edit",
+        {"file_path": "dup.txt", "old_string": "x", "new_string": "y", "replace_all": "false"},
+        context=context,
+    )
+
+    assert result == "replace_all=False"
+    assert len(seen) == 1
+    assert seen[0] is not None
+    assert seen[0]["added"] == 1 and seen[0]["removed"] == 1

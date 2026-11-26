@@ -126,12 +126,17 @@ def build_workspace_tree(
                 break
 
         if more:
-            footer = f"… ({more} more entries not shown)"
-            while lines and total + len(footer) + 1 > max_chars:
+            # Re-format on every trim: ``more`` grows as lines are dropped, and a
+            # footer formatted once before the loop would keep reporting the
+            # smaller pre-trim number (and its shorter, stale length).
+            while True:
+                footer = f"… ({more} more entries not shown)"
+                if total + len(footer) + 1 <= max_chars:
+                    break
+                if not lines:
+                    return ""
                 total -= len(lines.pop()) + 1
                 more += 1
-            if total + len(footer) + 1 > max_chars:
-                return ""
             lines.append(footer)
 
         return "\n".join(lines)

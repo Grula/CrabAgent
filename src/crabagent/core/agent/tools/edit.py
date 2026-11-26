@@ -55,9 +55,57 @@ def _apply_items(content: str, items: list) -> tuple[str, list[dict]]:
     return content, outcomes
 
 
-def _write_edited(path, new_content: str) -> None:
-    """The one write path both modes share (called while holding the file lock)."""
-    path.write_text(new_content, encoding="utf-8")
+def _batch_ok(outcomes: list[dict]) -> bool:
+    """True when every item of a replacements batch applied.
+
+    A replacements batch is all-or-nothing, so this is the single rule both the
+    tool (before writing) and the approval-card preview (before showing a diff)
+    use to decide whether the batch as a whole would succeed.
+    """
+    return all(outcome["ok"] for outcome in outcomes)
+
+
+def _detect_newline(raw: bytes) -> str:
+    """The file's own line ending, decided from its bytes (LF when there is none)."""
+    crlf = raw.count(b"\r\n")
+    lf = raw.count(b"\n") - crlf
+    return "\r\n" if crlf > lf else "\n"
+
+
+def _read_preserving(path) -> tuple[str, str]:
+    """Read *path* as LF text plus the newline to write back.
+
+    ``Path.read_text`` uses universal-newline mode, so a CRLF file comes back as
+    LF and used to be written back as LF. Reading the bytes and normalising to
+    LF here lets :func:`_write_edited` restore the file's own line endings, so
+    an edit changes only the text the caller asked about. The trailing-newline
+    state is untouched because only matched substrings are replaced.
+    """
+    raw = path.read_bytes()
+    text = raw.decode("utf-8")
+    if "\r\n" in text:
+        text = text.replace("\r\n", "\n")
+    return text, _detect_newline(raw)
+
+
+def _normalise_newlines(text: str) -> str:
+    """Collapse CRLF and lone CR to LF so line endings can be re-applied once."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _write_edited(path, new_content: str, newline: str = "\n") -> None:
+    """The one write path both modes share (called while holding the file lock).
+
+    ``new_content`` is normalised to LF *first*: a model that quotes a block
+    from a CRLF file passes ``\\r\\n`` inside ``new_string``, and converting
+    that to the file's own ``\\r\\n`` afterwards would double every CR. With
+    the normalisation up front the written bytes are exactly the intended text
+    in the file's own line ending.
+    """
+    new_content = _normalise_newlines(new_content)
+    if newline != "\n":
+        new_content = new_content.replace("\n", newline)
+    path.write_bytes(new_content.encode("utf-8"))
 
 
 def _success_message(file_path: str, count: int, line_num: int) -> str:
@@ -103,8 +151,9 @@ def _success_message(file_path: str, count: int, line_num: int) -> str:
                     "Several replacements applied to file_path in one call, in order: each item is "
                     "{old_string, new_string, replace_all?} and sees the result of the items before it. "
                     "All items are applied in memory and the file is written once at the end, so this is "
-                    "one unit with one confirmation. Use it whenever several changes touch the same file. "
-                    "Provide either old_string/new_string or replacements, not both."
+                    "one unit with one confirmation: if any item fails, nothing is written (all-or-nothing) "
+                    "and the result lists every item's outcome. Use it whenever several changes touch the "
+                    "same file. Provide either old_string/new_string or replacements, not both."
                 ),
                 "items": {
                     "type": "object",
@@ -178,7 +227,7 @@ def edit_file(
 
     with file_lock(path):
         try:
-            content = path.read_text(encoding="utf-8")
+            content, newline = _read_preserving(path)
         except Exception as e:
             return f"Error reading file: {e}"
 
@@ -200,7 +249,7 @@ def edit_file(
                         "make it unique, or set replace_all=true to replace every occurrence."
                     )
                 return f"Error: {reason}"
-            _write_edited(path, new_content)
+            _write_edited(path, new_content, newline)
             return _success_message(file_path, outcome["count"], outcome["line"])
 
         applied = [o for o in outcomes if o["ok"]]
@@ -212,17 +261,17 @@ def edit_file(
             for index, o in enumerate(outcomes, start=1)
         ]
 
-        if not applied:
-            # Nothing applied: do not write. Leading "Error:" keeps the result
-            # from being reported as a successful file write upstream.
+        if not _batch_ok(outcomes):
+            # All-or-nothing: the replacements batch is one unit, so if any item
+            # fails nothing is written. Every item's outcome is still reported.
+            failed = total - len(applied)
             return "\n".join(
-                [f"Error: 0 of {total} replacements applied to {file_path}; nothing was written."]
+                [f"Error: {failed} of {total} replacements failed in {file_path}; nothing was written."]
                 + lines
             )
 
-        _write_edited(path, new_content)
+        _write_edited(path, new_content, newline)
         replaced = sum(o["count"] for o in applied)
         lines.append(f"Applied {len(applied)} of {total} replacements to {file_path}")
-        if len(applied) == total:
-            lines.append(_success_message(file_path, replaced, applied[0]["line"]))
+        lines.append(_success_message(file_path, replaced, applied[0]["line"]))
         return "\n".join(lines)

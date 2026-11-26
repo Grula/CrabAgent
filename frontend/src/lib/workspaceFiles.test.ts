@@ -4,6 +4,7 @@ import {
   closeDocDiscardPrompt,
   fileExtension,
   forgetDiscardedMarkdownEdits,
+  forgetLeaveWorkDiscardedMarkdownEdits,
   hasUnsavedEditorEdits,
   isCodeFile,
   needsDiscardConfirmForDocClose,
@@ -13,6 +14,7 @@ import {
   needsDiscardConfirmForWorkTabSwitch,
   needsOfficePreview,
   opensInWorkspace,
+  queuePendingPrompt,
   workspaceFileKind,
 } from "./workspaceFiles";
 
@@ -220,5 +222,37 @@ describe("workspaceFiles", () => {
 
   it("asks before leaving Work when code and Markdown are both dirty", () => {
     expect(needsDiscardConfirmForLeaveWork({ codeDirty: true, markdownDirty: true })).toBe(true);
+  });
+
+  it("discarding on leave-Work forgets every dirty document, not just the named one", () => {
+    const dirty = new Set(["docs/a.md", "docs/b.md"]);
+    // Cancel only closes the dialog: nothing is forgotten, so the page still asks.
+    expect(needsDiscardConfirmForLeaveWork({ codeDirty: false, markdownDirty: dirty.size > 0 })).toBe(true);
+    // Discard unmounts every Documents panel, so every dirty report is stale.
+    forgetLeaveWorkDiscardedMarkdownEdits(dirty);
+    expect([...dirty]).toEqual([]);
+    // Nothing is left to ask about a panel that is gone.
+    expect(needsDiscardConfirmForLeaveWork({ codeDirty: false, markdownDirty: dirty.size > 0 })).toBe(false);
+    // An already clean page stays clean (and the helper does not shift entries).
+    forgetLeaveWorkDiscardedMarkdownEdits(dirty);
+    expect([...dirty]).toEqual([]);
+  });
+
+  it("refuses a second pending prompt from any entry point while one is open", () => {
+    type Request = { source: "discard" | "sessionSwitch" | "leaveWork" };
+    const sources = ["discard", "sessionSwitch", "leaveWork"] as const;
+    // Regression: with nothing pending, each request becomes the prompt.
+    for (const source of sources) {
+      expect(queuePendingPrompt(null, { source })).toEqual({ source });
+    }
+    // A discard dialog is open; browser Back (a hashchange) asks for a Work tab
+    // or a chat switch, or a document close asks again. Each later request is
+    // dropped, never queued behind the open one.
+    const open: Request = { source: "discard" };
+    for (const source of sources) {
+      expect(queuePendingPrompt(open, { source })).toBe(open);
+    }
+    // Once the open prompt is answered (state null) the next request is accepted.
+    expect(queuePendingPrompt(null, { source: "leaveWork" })).toEqual({ source: "leaveWork" });
   });
 });

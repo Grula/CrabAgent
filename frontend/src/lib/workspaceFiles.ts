@@ -201,6 +201,29 @@ export function forgetDiscardedMarkdownEdits(
 }
 
 /**
+ * The leave-Work discard throws away every document, not only the one the
+ * dialog named: leaving Work unmounts each Documents panel, so every dirty
+ * Markdown report is stale once the user accepts. Forgetting them here keeps a
+ * later document from being asked about (or silently marked dirty by) a panel
+ * that no longer exists. Cancel never reaches this, so it changes nothing.
+ */
+export function forgetLeaveWorkDiscardedMarkdownEdits(dirtyPaths: Set<string>): void {
+  forgetDiscardedMarkdownEdits(dirtyPaths, [...dirtyPaths]);
+}
+
+/**
+ * At most one discard confirmation may be on screen. Browser Back (an
+ * out-of-band hashchange) or any other second entry point can ask while a
+ * dialog is already open; queueing that request would stack two dialogs and run
+ * a move behind a question the user has not answered yet. A request that arrives
+ * while a prompt is pending is therefore dropped — never replayed later — and
+ * the pending one stays. With nothing pending, the request becomes the prompt.
+ */
+export function queuePendingPrompt<T>(pending: T | null, request: T): T | null {
+  return pending === null ? request : pending;
+}
+
+/**
  * True when leaving the Work page would throw unsaved work away. Work hosts both
  * the code editor and every document panel, so a dirty code buffer and a dirty
  * Markdown document count alike; either one has to confirm before the page moves.

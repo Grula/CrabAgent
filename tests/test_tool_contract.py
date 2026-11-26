@@ -175,6 +175,91 @@ def test_validate_args_without_schema_reports_nothing():
     assert validate_args({}, {"a": 1}) == []
 
 
+# ── coercion keeps values that already fit ───────────────────────────
+
+
+def test_coerce_args_leaves_a_string_that_already_fits():
+    assert coerce_args(_schema(code={"type": "string"}), {"code": "007"}) == {"code": "007"}
+    multi = _schema(code={"anyOf": [{"type": "integer"}, {"type": "string"}]})
+    assert coerce_args(multi, {"code": "007"}) == {"code": "007"}
+
+
+def test_coerce_args_does_not_turn_nan_text_into_a_float():
+    schema = _schema(value={"type": "number"})
+    assert coerce_args(schema, {"value": "nan"}) == {"value": "nan"}
+    assert coerce_args(schema, {"value": "inf"}) == {"value": "inf"}
+
+
+def test_coerce_args_still_turns_integer_string_into_int():
+    assert coerce_args(_schema(count={"type": "integer"}), {"count": "5"}) == {"count": 5}
+    assert coerce_args(_schema(ratio={"type": "number"}), {"ratio": "2.5"}) == {"ratio": 2.5}
+
+
+# ── validation uses the schema's own dialect ─────────────────────────
+
+
+_DRAFT4_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "type": "object",
+    "properties": {"n": {"type": "integer", "minimum": 0, "exclusiveMinimum": True}},
+    "required": ["n"],
+}
+
+
+def test_validate_args_honours_a_draft04_exclusive_minimum():
+    assert validate_args(_DRAFT4_SCHEMA, {"n": 1}) == []
+    assert validate_args(_DRAFT4_SCHEMA, {"n": 0})
+
+
+def test_validate_args_without_dollar_schema_defaults_to_2020_12():
+    # Numeric exclusiveMinimum is 2020-12 syntax (draft-04 only allows a boolean).
+    schema = _schema(n={"type": "integer", "exclusiveMinimum": 5})
+    assert validate_args(schema, {"n": 6}) == []
+    assert validate_args(schema, {"n": 5})
+
+
+def test_validate_args_caches_the_validator_class_per_schema(monkeypatch):
+    """Repeated validation of one schema looks its dialect up only once."""
+    from crabagent.core.agent.tools import schema_validation
+
+    schema = _schema(n={"type": "integer", "exclusiveMinimum": 5})
+    calls: list = []
+    real = schema_validation.validators.validator_for
+
+    def counting(schema_arg, **kwargs):
+        if schema_arg is schema:
+            calls.append(schema_arg)
+        return real(schema_arg, **kwargs)
+
+    monkeypatch.setattr(schema_validation.validators, "validator_for", counting)
+
+    first = validate_args(schema, {"n": 6})
+    second = validate_args(schema, {"n": 6})
+    third = validate_args(schema, {"n": 5})
+
+    assert first == second == []
+    assert third  # the cached class still validates, and still rejects 5
+    assert len(calls) == 1
+
+
+def test_validator_cache_keeps_each_schema_dialect():
+    """Caching by identity does not hand one schema another's dialect."""
+    draft4 = {
+        "$schema": "http://json-schema.org/draft-04/schema#",
+        "type": "object",
+        "properties": {"n": {"type": "integer", "minimum": 0, "exclusiveMinimum": True}},
+        "required": ["n"],
+    }
+    modern = _schema(n={"type": "integer", "exclusiveMinimum": 5})
+
+    # Interleave the calls: a cache keyed by the $schema string (or by dialect)
+    # would hand one schema the class validated for the other.
+    assert validate_args(draft4, {"n": 1}) == []
+    assert validate_args(modern, {"n": 5})  # 2020-12: 5 is not > 5
+    assert validate_args(draft4, {"n": 0})  # draft-04: 0 is not > 0
+    assert validate_args(modern, {"n": 6}) == []
+
+
 # ── explicit nulls for optional arguments ────────────────────────────
 
 

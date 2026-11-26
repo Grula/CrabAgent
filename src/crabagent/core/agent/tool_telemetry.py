@@ -30,19 +30,27 @@ def classify_tool_outcome(name: str, result: object) -> tuple[bool, str]:
     if not isinstance(result, str):
         return True, 'ok'
     s = result
-    if 'requires an active session' in s or 'no user_id in context' in s:
-        return False, 'no_session'
-    if 'is not available (may be restricted' in s:
-        return False, 'unknown_tool'
-    if 'is disabled (no permission' in s:
+    # Only the registry's own refusals count, and each one is anchored to the
+    # start of the result: "Error: ..." or one of the exact prefixes below. A
+    # tool *result* that merely mentions a phrase such as "requires an active
+    # session" (reading CrabAgent's own source, say) is a success.
+    if s.startswith('Error'):
+        if 'requires an active session' in s or 'no user_id in context' in s:
+            return False, 'no_session'
+        if 'is not available (may be restricted' in s:
+            return False, 'unknown_tool'
+        return False, 'error'
+    # "Tool error: ..." is what the loop records when a handler raises.
+    if s.startswith('Tool error:'):
+        return False, 'error'
+    if s.startswith("Tool '") and 'execution denied by user' in s:
+        return False, 'user_denied'
+    if s.startswith("Tool '") and 'is disabled (no permission' in s:
         return False, 'permission_denied'
-    if 'execution denied by user' in s or s.startswith('Command denied by user:'):
+    if s.startswith('Command denied by user:'):
         return False, 'user_denied'
     if s.startswith('Command blocked:'):
         return False, 'blocked'
-    # "Tool error: ..." is what the loop records when a handler raises.
-    if s.startswith('Error') or s.startswith('Tool error:'):
-        return False, 'error'
     code = _exit_code(name, s)
     if name == "run_tests" and s.startswith(("FAILED:", "ERROR:")):
         code = 1

@@ -161,6 +161,55 @@ async def test_a_compacted_run_without_reasoning_sends_no_reasoning_field(monkey
 
 
 @pytest.mark.asyncio
+async def test_a_first_compaction_after_switching_to_a_thinking_model_completes(monkeypatch):
+    # 2026-11-26 audit item 27: a non-thinking chat switched to a DeepSeek thinking
+    # model has no reasoning_content anywhere yet. The summariser answers without
+    # one, so the ack must be sent without the field instead of an invalid payload.
+    context = AgentContext(workspace=Path.cwd(), system_prompt="sys", messages=_tool_loop(reasoning=False))
+
+    async def fake_acompletion(**kwargs):
+        return FakeStream([FakeChunk(content="SUMMARY")])
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    monkeypatch.setattr(compress.settings, "context_keep_recent", 4)
+
+    await compress.compress_context(context, {}, "deepseek/deepseek-v4-pro")
+
+    from crabagent.core.agent.loop import _build_messages
+
+    assert context.messages[0]["content"] == "SUMMARY"
+    assert not any("reasoning_content" in m for m in _build_messages(context))
+
+
+@pytest.mark.asyncio
+async def test_the_ack_does_not_claim_reasoning_the_compaction_summarised_away(monkeypatch):
+    # The ack is sent next to the *kept* messages, so it must mirror them: here every
+    # reasoning-carrying message falls into the summarised part, and the ack must not
+    # become the only assistant message carrying reasoning_content.
+    messages = [
+        {"role": "user", "content": "brief"},
+        {"role": "assistant", "content": "thinking", "reasoning_content": "t0"},
+        {"role": "tool", "tool_call_id": "c0", "content": "out"},
+        {"role": "user", "content": "one"},
+        {"role": "user", "content": "two"},
+        {"role": "user", "content": "three"},
+        {"role": "user", "content": "four"},
+    ]
+    context = AgentContext(workspace=Path.cwd(), system_prompt="sys", messages=messages)
+
+    async def fake_acompletion(**kwargs):
+        return FakeStream([FakeChunk(content="SUMMARY")])
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    monkeypatch.setattr(compress.settings, "context_keep_recent", 4)
+
+    await compress.compress_context(context, {}, "deepseek-flash")
+
+    assert context.messages[0]["content"] == "SUMMARY"
+    assert not any("reasoning_content" in m for m in context.messages)
+
+
+@pytest.mark.asyncio
 async def test_compress_context_preserves_recent_messages(monkeypatch: pytest.MonkeyPatch):
     context = AgentContext(
         workspace=Path.cwd(),

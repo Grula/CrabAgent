@@ -428,6 +428,11 @@ async def _run_agent(
         except Exception:
             logger.debug("middleware run_start failed", exc_info=True)
 
+    # A TUI reuses one context across turns: a provider recorded by the previous
+    # run must not name this run's failure. It is set again as soon as this run
+    # resolves its own provider (``_prepare_llm``), so a setup failure before
+    # that point falls back to this run's configured provider name.
+    context.metadata.pop("resolved_provider", None)
     saved_model, saved_provider_name = await _get_default_model_settings()
     try:
         provider, llm, model = await _prepare_llm(context, saved_model, saved_provider_name)

@@ -334,6 +334,56 @@ def test_half_the_query_words_is_not_a_strict_majority():
 # ── filters ────────────────────────────────────────────────────────────────
 
 
+@pytest.fixture
+def non_ascii_workspace(tmp_path: Path) -> Path:
+    """A non-ASCII symbol plus a chunk that repeats its words: bm25 alone would
+    put the chunk first, so only a surviving exact tier keeps the definition on
+    top. The ASCII-only query split used to shred ``číst`` into ``st``."""
+    root = tmp_path / "cestina"
+    _write(
+        root,
+        "src/app/cestina.py",
+        "def číst_soubor(cesta: str) -> str:\n"
+        '    """Načte obsah souboru z disku."""\n'
+        "    return cesta\n",
+    )
+    _write(
+        root,
+        "tests/test_cestina.py",
+        "def test_cteni():\n"
+        + "    # číst soubor číst soubor číst soubor\n" * 12
+        + "    assert True\n",
+    )
+    return root
+
+
+@pytest.fixture
+def non_ascii_context(non_ascii_workspace: Path) -> types.SimpleNamespace:
+    return types.SimpleNamespace(
+        workspace=str(non_ascii_workspace),
+        tool_permissions={},
+        approved_tools=set(),
+        confirm_callback=None,
+        metadata={},
+    )
+
+
+def test_query_words_split_on_unicode_boundaries_not_ascii_ones():
+    assert cs._query_words(["číst_soubor"]) == ["číst", "soubor"]
+    # The ASCII behaviour the index (unicode61) and name forms rely on is intact.
+    assert cs._query_words(["ToolRegistry.execute"]) == ["toolregistry", "execute"]
+    assert cs._query_words(["workspace_tree"]) == ["workspace", "tree"]
+
+
+async def test_non_ascii_symbol_name_keeps_the_exact_tier(non_ascii_context):
+    output = await _run(non_ascii_context, query="číst_soubor")
+
+    headers = _headers(output)
+    assert headers[0].startswith("src/app/cestina.py"), output
+    assert "function číst_soubor" in headers[0]
+    assert any(header.startswith("tests/test_cestina.py") for header in headers), output
+
+
 async def test_kind_symbol_returns_only_symbols_and_finds_a_definition(context):
     output = await _run(context, query="ToolRegistry.execute", kind="symbol")
 

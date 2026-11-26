@@ -486,9 +486,9 @@ def _count_writes(monkeypatch) -> list[str]:
     writes: list[str] = []
     real_write = edit_module._write_edited
 
-    def spy(path, new_content):
+    def spy(path, new_content, newline="\n"):
         writes.append(str(path))
-        return real_write(path, new_content)
+        return real_write(path, new_content, newline)
 
     monkeypatch.setattr(edit_module, "_write_edited", spy)
     return writes
@@ -518,10 +518,12 @@ def test_edit_batch_three_replacements_writes_once(tmp_path: Path, monkeypatch):
     assert "Successfully replaced 3 occurrences" in result
 
 
-def test_edit_batch_missing_item_keeps_other_items(tmp_path: Path, monkeypatch):
+def test_edit_batch_failing_item_writes_nothing(tmp_path: Path, monkeypatch):
+    """One failing item aborts the whole batch: the file bytes stay untouched."""
     context = AgentContext(workspace=tmp_path)
     target = tmp_path / "f.py"
-    target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    target.write_bytes(b"one\ntwo\nthree\n")
+    before = target.read_bytes()
     writes = _count_writes(monkeypatch)
 
     result = edit_file(
@@ -534,18 +536,23 @@ def test_edit_batch_missing_item_keeps_other_items(tmp_path: Path, monkeypatch):
         context=context,
     )
 
-    assert target.read_text(encoding="utf-8") == "ONE\ntwo\nTHREE\n"
-    assert len(writes) == 1
+    assert writes == []
+    assert target.read_bytes() == before
+    assert result.startswith("Error: 1 of 3 replacements failed in")
+    assert "nothing was written" in result
+    # Both the successes and the failure are still reported.
     assert "1. ok (1 replacement)" in result
     assert "2. not found: absent text here" in result
     assert "3. ok (1 replacement)" in result
-    assert "Applied 2 of 3 replacements to" in result
+    assert "Applied" not in result
 
 
-def test_edit_batch_ambiguous_item_reported(tmp_path: Path):
+def test_edit_batch_ambiguous_item_aborts_whole_batch(tmp_path: Path, monkeypatch):
     context = AgentContext(workspace=tmp_path)
     target = tmp_path / "f.py"
-    target.write_text("dup\ndup\nkeep\n", encoding="utf-8")
+    target.write_bytes(b"dup\ndup\nkeep\n")
+    before = target.read_bytes()
+    writes = _count_writes(monkeypatch)
 
     result = edit_file(
         str(target),
@@ -556,10 +563,11 @@ def test_edit_batch_ambiguous_item_reported(tmp_path: Path):
         context=context,
     )
 
+    assert writes == []
+    assert target.read_bytes() == before
+    assert result.startswith("Error: 1 of 2 replacements failed in")
     assert "1. ambiguous: 2 matches" in result
     assert "2. ok (1 replacement)" in result
-    assert "Applied 1 of 2 replacements to" in result
-    assert target.read_text(encoding="utf-8") == "dup\ndup\nKEPT\n"
 
 
 def test_edit_batch_replace_all_item_replaces_every_occurrence(tmp_path: Path):
@@ -616,7 +624,8 @@ def test_edit_batch_all_items_fail_leaves_file_untouched(tmp_path: Path, monkeyp
     assert writes == []
     assert target.read_text(encoding="utf-8") == "dup\ndup\n"
     assert target.stat().st_mtime_ns == before_mtime
-    assert result.startswith("Error: 0 of 2 replacements applied")
+    assert result.startswith("Error: 2 of 2 replacements failed in")
+    assert "nothing was written" in result
     assert "1. not found: missing" in result
     assert "2. ambiguous: 2 matches" in result
 
@@ -669,6 +678,91 @@ def test_edit_single_pair_result_unchanged_by_batch_support(tmp_path: Path):
     assert target.read_text(encoding="utf-8") == "final_name = 2\nprint(final_name)\n"
 
 
+def test_edit_preserves_crlf_line_endings(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.txt"
+    target.write_bytes(b"one\r\ntwo\r\nthree\r\n")
+
+    result = edit_file(str(target), "two", "TWO", context=context)
+
+    assert "Successfully replaced 1 occurrence" in result
+    assert target.read_bytes() == b"one\r\nTWO\r\nthree\r\n"
+
+
+def test_edit_preserves_missing_trailing_newline(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.txt"
+    target.write_bytes(b"one\ntwo")
+
+    result = edit_file(str(target), "two", "TWO", context=context)
+
+    assert "Successfully replaced 1 occurrence" in result
+    assert target.read_bytes() == b"one\nTWO"
+
+
+def test_edit_batch_on_crlf_file_keeps_crlf_and_no_trailing_newline(tmp_path: Path):
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.txt"
+    target.write_bytes(b"one\r\ntwo")
+
+    result = edit_file(
+        str(target),
+        replacements=[
+            {"old_string": "one", "new_string": "ONE"},
+            {"old_string": "two", "new_string": "TWO"},
+        ],
+        context=context,
+    )
+
+    assert "Applied 2 of 2 replacements to" in result
+    assert target.read_bytes() == b"ONE\r\nTWO"
+
+
+def test_edit_new_string_with_crlf_is_not_doubled(tmp_path: Path):
+    """2026-11-26 review: quoting a CRLF block must not produce \\r\\r\\n."""
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.txt"
+    target.write_bytes(b"a\r\nb\r\n")
+
+    result = edit_file(str(target), "b", "X\r\nY", context=context)
+
+    assert "Successfully replaced 1 occurrence" in result
+    assert target.read_bytes() == b"a\r\nX\r\nY\r\n"
+    assert b"\r\r\n" not in target.read_bytes()
+
+
+def test_edit_new_string_with_lone_cr_is_normalised(tmp_path: Path):
+    """A lone \\r in new_string becomes the file's own ending, never a raw CR."""
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.txt"
+    target.write_bytes(b"a\nb\n")
+
+    result = edit_file(str(target), "b", "X\rY", context=context)
+
+    assert "Successfully replaced 1 occurrence" in result
+    assert target.read_bytes() == b"a\nX\nY\n"
+
+
+def test_edit_batch_new_string_with_crlf_is_not_doubled(tmp_path: Path):
+    """The replacements batch form normalises a CRLF-bearing item the same way."""
+    context = AgentContext(workspace=tmp_path)
+    target = tmp_path / "f.txt"
+    target.write_bytes(b"a\r\nb\r\n")
+
+    result = edit_file(
+        str(target),
+        replacements=[
+            {"old_string": "a", "new_string": "A"},
+            {"old_string": "b", "new_string": "X\r\nY"},
+        ],
+        context=context,
+    )
+
+    assert "Applied 2 of 2 replacements to" in result
+    assert target.read_bytes() == b"A\r\nX\r\nY\r\n"
+    assert b"\r\r\n" not in target.read_bytes()
+
+
 @pytest.mark.asyncio
 async def test_edit_batch_via_registry_confirms_once_and_snapshots_once(tmp_path: Path, monkeypatch):
     from crabagent.core.agent.tools.registry import registry
@@ -708,3 +802,47 @@ async def test_edit_batch_via_registry_confirms_once_and_snapshots_once(tmp_path
     assert "Applied 2 of 2 replacements to" in result
     assert confirms == ["edit"]
     assert snapshots == ["edit"]
+
+
+def test_grep_include_path_is_relative_to_the_workspace(tmp_path: Path):
+    """2026-11-26 audit item 30: a "/" include is workspace-relative, even from a subdirectory.
+
+    Searching path="src" used to match the pattern against "src"-relative paths,
+    so include="src/**/*.py" silently found nothing.
+    """
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "mod.py").write_text("needle = 1\n", encoding="utf-8")
+    (tmp_path / "src" / "pkg" / "skip.txt").write_text("needle = 2\n", encoding="utf-8")
+    context = AgentContext(workspace=tmp_path)
+
+    result = grep_files("needle", path="src", include="src/**/*.py", context=context)
+
+    assert "mod.py" in result
+    assert "skip.txt" not in result
+
+
+def test_grep_include_supports_character_classes(tmp_path: Path):
+    """A [...] class in a path include is a class, not literal brackets."""
+    (tmp_path / "src").mkdir()
+    for name in ("a_mod.py", "b_mod.py", "c_mod.py"):
+        (tmp_path / "src" / name).write_text("needle = 1\n", encoding="utf-8")
+    context = AgentContext(workspace=tmp_path)
+
+    result = grep_files("needle", path="src", include="src/[ab]_mod.py", context=context)
+
+    assert "a_mod.py" in result
+    assert "b_mod.py" in result
+    assert "c_mod.py" not in result
+
+
+def test_grep_invalid_character_class_matches_nothing(tmp_path: Path):
+    """2026-11-26 review: a typo'd [...] class must not raise out of grep."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("needle = 1\n", encoding="utf-8")
+    context = AgentContext(workspace=tmp_path)
+
+    # Bare pattern (fnmatch path) and directory-scoped pattern (path-glob path).
+    assert grep_files("needle", path="src", include="[z-a]*.py", context=context) == "No matches found."
+    assert grep_files("needle", path="src", include="src/[z-a]*.py", context=context) == "No matches found."
+    # A valid class still selects files.
+    assert "a.py" in grep_files("needle", path="src", include="src/[a-z]*.py", context=context)

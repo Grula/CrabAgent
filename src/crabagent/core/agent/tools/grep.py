@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import logging
 import os
 import re
 import stat
@@ -9,6 +10,8 @@ from typing import Any
 
 from crabagent.core.agent.tools.path_utils import get_workspace_root, resolve_tool_path
 from crabagent.core.agent.tools.registry import registry
+
+logger = logging.getLogger(__name__)
 
 # ── Default directories to skip when searching ──────────────────────────
 _DEFAULT_IGNORE_DIRS = {
@@ -60,12 +63,15 @@ def _expand_braces(pattern: str) -> list[str]:
     return [f"{prefix}{opt}{suffix}" for opt in options]
 
 
-def _compile_path_glob(pattern: str) -> re.Pattern[str]:
+def _compile_path_glob(pattern: str) -> re.Pattern[str] | None:
     """Compile a directory-scoped include glob into a regex over relative paths.
 
     ``**`` spans any number of directories (``src/**/*.py`` matches both
-    ``src/a.py`` and ``src/pkg/a.py``), ``*`` stays within one path segment
-    and ``?`` matches one non-``/`` character. A leading ``./`` is ignored.
+    ``src/a.py`` and ``src/pkg/a.py``), ``*`` stays within one path segment,
+    ``?`` matches one non-``/`` character and ``[...]`` is a character class.
+    A leading ``./`` is ignored. An invalid character class (``[z-a]``) makes
+    the whole pattern match nothing and returns ``None``, so a typo in
+    ``include`` yields ``No matches found.`` instead of an exception.
     """
     if pattern.startswith("./"):
         pattern = pattern[2:]
@@ -86,18 +92,33 @@ def _compile_path_glob(pattern: str) -> re.Pattern[str]:
             out.append("[^/]*")
         elif char == "?":
             out.append("[^/]")
+        elif char == "[" and pattern.find("]", i + 1) != -1:
+            # A character class is passed through (fnmatch-style), not escaped,
+            # so "src/[ab]*.py" selects files starting with a or b. Convert
+            # fnmatch's "!" negation to the regex "^".
+            end = pattern.find("]", i + 1)
+            body = pattern[i + 1 : end]
+            if body.startswith("!"):
+                body = "^" + body[1:]
+            out.append("[" + body + "]")
+            i = end + 1
+            continue
         else:
             out.append(re.escape(char))
         i += 1
     flags = re.IGNORECASE if os.path.normcase("A") == os.path.normcase("a") else 0
-    return re.compile("".join(out), flags)
+    try:
+        return re.compile("".join(out), flags)
+    except re.error:
+        logger.debug("Ignoring include glob with an invalid character class: %r", pattern)
+        return None
 
 
 class _IncludeMatcher:
     """Pre-compiled ``include`` filter.
 
     Patterns without ``/`` match the bare filename with plain ``fnmatch``
-    semantics; patterns with ``/`` match the search-relative path (POSIX
+    semantics; patterns with ``/`` match the workspace-relative path (POSIX
     separators) using the ``**``-aware glob rules.
     """
 
@@ -106,8 +127,17 @@ class _IncludeMatcher:
         self._paths: list[re.Pattern[str]] = []
         for pattern in patterns:
             if "/" in pattern:
-                self._paths.append(_compile_path_glob(pattern))
+                compiled = _compile_path_glob(pattern)
+                if compiled is not None:
+                    self._paths.append(compiled)
             else:
+                # fnmatch compiles the pattern on first use; do it here so an
+                # invalid class is a non-match rather than a mid-walk raise.
+                try:
+                    re.compile(fnmatch.translate(pattern))
+                except re.error:
+                    logger.debug("Ignoring include glob with an invalid character class: %r", pattern)
+                    continue
                 self._bare.append(pattern)
 
     def match(self, fname: str, rel_path: str) -> bool:
@@ -222,8 +252,9 @@ def _escapes_via_symlinked_dir(path: str, real_root: str) -> bool:
                     "Glob pattern matched against file paths to limit which files are searched "
                     '(not file content, not a regex): a bare filename glob ("*.py", '
                     '"*.{ts,tsx}") or a directory-scoped glob ("src/**/*.py", where ** spans '
-                    "directories). Brace expansion is supported. The content search is pattern, "
-                    "which is always a regular expression, not a glob."
+                    "directories and the path is relative to the workspace root). Brace "
+                    "expansion and [...] character classes are supported. The content search is "
+                    "pattern, which is always a regular expression, not a glob."
                 ),
             },
             "ignore_dirs": {
@@ -336,6 +367,13 @@ def grep_files(
 
     # ── Build include patterns (with brace expansion) ───────────────────
     matcher = _IncludeMatcher(_expand_braces(include)) if include else None
+    # Path-qualified include patterns ("src/**/*.py") are matched against the
+    # workspace, as documented, not against the searched *path*: searching
+    # path="src" with include="src/**/*.py" would otherwise match nothing.
+    workspace_root = get_workspace_root(context)
+    include_root = (
+        os.path.abspath(str(workspace_root)) if workspace_root is not None else root_path
+    )
 
     results: list[str] = []
     match_count = 0
@@ -367,7 +405,11 @@ def grep_files(
             if _is_escaping_symlink(fpath, real_root):
                 continue
             if matcher is not None:
-                rel_path = os.path.relpath(fpath, root_path).replace(os.sep, "/")
+                rel_path = os.path.relpath(fpath, include_root).replace(os.sep, "/")
+                if rel_path.startswith("../"):
+                    # The searched path is outside the workspace: fall back to
+                    # the search-relative path so the traversal still filters.
+                    rel_path = os.path.relpath(fpath, root_path).replace(os.sep, "/")
                 if not matcher.match(fname, rel_path):
                     continue
 

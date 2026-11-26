@@ -377,3 +377,46 @@ async def test_a_hard_cancel_kills_a_running_test_run(tmp_path):
     await asyncio.sleep(0.3)
     found = subprocess.run(["pgrep", "-af", probe], capture_output=True, text=True).stdout.splitlines()
     assert [line for line in found if "pgrep" not in line] == []
+
+
+# ── argv mode must not be run through the shell ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_argv_mode_does_not_pass_a_shell_executable(monkeypatch):
+    """2026-11-26 audit item 29: ['echo','hi'] is not a bash script.
+
+    ``executable`` replaces the program in argv mode too, so passing the POSIX
+    shell there made Popen run bash with argv[0] as its name instead of running
+    argv[0] itself.
+    """
+    import crabagent.core.agent.tools.subprocess_cancel as sc
+
+    seen: dict = {}
+    real_exec = asyncio.create_subprocess_exec
+
+    async def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return await real_exec(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spy)
+
+    result = await sc.run_subprocess_cancellable([sys.executable, "-c", "print('hi')"])
+
+    assert result.returncode == 0, result.start_error
+    assert result.stdout.strip() == b"hi"
+    assert "executable" not in seen
+
+
+@pytest.mark.asyncio
+async def test_shell_mode_still_uses_the_posix_shell():
+    """Shell mode keeps the bash executable (the reason it exists), argv mode drops it."""
+    import crabagent.core.agent.tools.subprocess_cancel as sc
+
+    assert "executable" not in sc.subprocess_kwargs()
+    if sc._POSIX_SHELL:
+        assert sc.subprocess_kwargs(shell=True)["executable"] == sc._POSIX_SHELL
+
+    result = await sc.run_subprocess_cancellable('[[ -n "$BASH_VERSION" ]] && echo in-bash', shell=True)
+
+    assert result.stdout.strip() == b"in-bash", result.stderr

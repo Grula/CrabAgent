@@ -499,6 +499,83 @@ async def _counts(conn: aiosqlite.Connection, workspace: str) -> tuple[int, int,
 # ── public build entry point ───────────────────────────────────────────────
 
 
+async def _sweep(
+    conn: aiosqlite.Connection,
+    key: str,
+    root: Path,
+    scanned: Sequence[ScannedFile],
+    *,
+    force: bool,
+) -> tuple[str, bool]:
+    """Read, index and write one workspace sweep; returns ``(built_at, rebuilt)``.
+
+    Everything from the read of the existing rows to the final commit, so a
+    caller can roll the whole attempt back and run it again. One transaction:
+    nothing here commits before the end.
+    """
+    meta = await _meta(conn)
+    last_build = meta.get(f"last_build:{key}")
+    full = force or not last_build or meta.get("schema_version") != SCHEMA_VERSION
+
+    existing = await _existing_files(conn, key)
+    skipped_before = _remembered_skips(meta, key)
+    changed: list[ScannedFile] = []
+    vanished: list[str] = []
+    if not full:
+        for scanned_file in scanned:
+            row = existing.get(scanned_file.path)
+            if row is not None:
+                if row["mtime_ms"] == scanned_file.mtime_ms and row["size"] == scanned_file.size:
+                    continue
+            elif skipped_before.get(scanned_file.path) == [scanned_file.mtime_ms, scanned_file.size]:
+                # Unindexable last time and untouched since: not a change.
+                continue
+            changed.append(scanned_file)
+        seen = {scanned_file.path for scanned_file in scanned}
+        vanished = [path for path in existing if path not in seen]
+        if len(changed) > MAX_INCREMENTAL_CHANGES:
+            full = True
+
+    by_path = {scanned_file.path: [scanned_file.mtime_ms, scanned_file.size] for scanned_file in scanned}
+    indexed_at = _now_ns()
+    if full:
+        await _delete_workspace_rows(conn, key)
+        skipped = await _insert_files(conn, key, root, scanned, indexed_at)
+    else:
+        for path in vanished:
+            await _delete_file_rows(conn, existing[path]["id"])
+        changed_paths = {scanned_file.path for scanned_file in changed}
+        for scanned_file in changed:
+            # A brand-new file has no rows yet: only re-indexed files do.
+            row = existing.get(scanned_file.path)
+            if row is not None:
+                await _delete_file_rows(conn, row["id"])
+        skipped = await _insert_files(conn, key, root, changed, indexed_at)
+        # Remember every unindexable file: the ones skipped just now and
+        # the ones already known and not re-read this sweep. A file that
+        # is gone, or that now indexes, is forgotten.
+        skipped |= {
+            path for path in skipped_before if path in by_path and path not in changed_paths
+        }
+
+    remembered = {path: by_path[path] for path in skipped if path in by_path}
+    if remembered:
+        await _set_meta(conn, f"{_SKIPPED_PREFIX}{key}", json.dumps(remembered, sort_keys=True))
+    else:
+        await conn.execute(
+            "DELETE FROM code_index_meta WHERE key = ?", (f"{_SKIPPED_PREFIX}{key}",)
+        )
+
+    if full or changed or vanished:
+        built_at = _now_iso()
+    else:
+        built_at = last_build or _now_iso()
+    await _set_meta(conn, "schema_version", SCHEMA_VERSION)
+    await _set_meta(conn, f"last_build:{key}", built_at)
+    await conn.commit()
+    return built_at, full
+
+
 async def ensure_indexed(workspace: Path, *, force: bool = False) -> IndexStats:
     """Make the index for ``workspace`` current and report what it holds.
 
@@ -509,7 +586,9 @@ async def ensure_indexed(workspace: Path, *, force: bool = False) -> IndexStats:
     version mismatch or ``force=True`` rebuild the workspace from scratch.
 
     Concurrent calls for the same workspace serialise on one lock, so the index
-    is built exactly once and both callers see the finished result.
+    is built exactly once and both callers see the finished result. The lock is
+    per process; another process sweeping the same workspace is handled by
+    retrying the sweep once inside the database's own transaction (see below).
     """
     started = time.perf_counter()
     root = Path(workspace).expanduser().resolve()
@@ -527,67 +606,23 @@ async def ensure_indexed(workspace: Path, *, force: bool = False) -> IndexStats:
     lock = await _workspace_lock(key)
     async with lock:
         async with connect() as conn:
-            meta = await _meta(conn)
-            last_build = meta.get(f"last_build:{key}")
-            full = force or not last_build or meta.get("schema_version") != SCHEMA_VERSION
-
             scanned = await asyncio.to_thread(_scan_files, root)
-            existing = await _existing_files(conn, key)
-            skipped_before = _remembered_skips(meta, key)
-            changed: list[ScannedFile] = []
-            vanished: list[str] = []
-            if not full:
-                for scanned_file in scanned:
-                    row = existing.get(scanned_file.path)
-                    if row is not None:
-                        if row["mtime_ms"] == scanned_file.mtime_ms and row["size"] == scanned_file.size:
-                            continue
-                    elif skipped_before.get(scanned_file.path) == [scanned_file.mtime_ms, scanned_file.size]:
-                        # Unindexable last time and untouched since: not a change.
-                        continue
-                    changed.append(scanned_file)
-                seen = {scanned_file.path for scanned_file in scanned}
-                vanished = [path for path in existing if path not in seen]
-                if len(changed) > MAX_INCREMENTAL_CHANGES:
-                    full = True
-
-            by_path = {scanned_file.path: [scanned_file.mtime_ms, scanned_file.size] for scanned_file in scanned}
-            indexed_at = _now_ns()
-            if full:
-                await _delete_workspace_rows(conn, key)
-                skipped = await _insert_files(conn, key, root, scanned, indexed_at)
-            else:
-                for path in vanished:
-                    await _delete_file_rows(conn, existing[path]["id"])
-                changed_paths = {scanned_file.path for scanned_file in changed}
-                for scanned_file in changed:
-                    # A brand-new file has no rows yet: only re-indexed files do.
-                    row = existing.get(scanned_file.path)
-                    if row is not None:
-                        await _delete_file_rows(conn, row["id"])
-                skipped = await _insert_files(conn, key, root, changed, indexed_at)
-                # Remember every unindexable file: the ones skipped just now and
-                # the ones already known and not re-read this sweep. A file that
-                # is gone, or that now indexes, is forgotten.
-                skipped |= {
-                    path for path in skipped_before if path in by_path and path not in changed_paths
-                }
-
-            remembered = {path: by_path[path] for path in skipped if path in by_path}
-            if remembered:
-                await _set_meta(conn, f"{_SKIPPED_PREFIX}{key}", json.dumps(remembered, sort_keys=True))
-            else:
-                await conn.execute(
-                    "DELETE FROM code_index_meta WHERE key = ?", (f"{_SKIPPED_PREFIX}{key}",)
-                )
-
-            if full or changed or vanished:
-                built_at = _now_iso()
-            else:
-                built_at = last_build or _now_iso()
-            await _set_meta(conn, "schema_version", SCHEMA_VERSION)
-            await _set_meta(conn, f"last_build:{key}", built_at)
-            await conn.commit()
+            # The build lock is per process, so a second CrabAgent process can
+            # sweep the same workspace at the same time: it can insert a file
+            # row between our read of the existing rows and our write, and our
+            # INSERT then trips UNIQUE(workspace, path). That is a race, not a
+            # corrupt index: nothing has committed yet, so roll the attempt back
+            # and sweep once more, where the other process's rows are visible and
+            # nothing collides. A second failure is real and propagates.
+            for attempt in (0, 1):
+                try:
+                    built_at, full = await _sweep(conn, key, root, scanned, force=force)
+                    break
+                except aiosqlite.IntegrityError:
+                    if attempt:
+                        raise
+                    await conn.rollback()
+                    logger.info("code_index: concurrent sweep for %s, retrying", key)
             files, symbols, chunks = await _counts(conn, key)
 
     return IndexStats(
@@ -603,16 +638,23 @@ async def ensure_indexed(workspace: Path, *, force: bool = False) -> IndexStats:
 # ── query surface for the search tool (task 2) ─────────────────────────────
 
 
+# Control characters are not whitespace to ``str.split()``, but FTS5 refuses
+# them inside a quoted term: a NUL makes ``MATCH`` raise "unterminated string".
+# They become spaces, so such a query yields no terms (no hits) instead.
+_CONTROL_CHARS = {code: " " for code in tuple(range(0x20)) + (0x7F,)}
+
+
 def fts_query(tokens: Sequence[str], *, prefix: bool = False) -> str:
     """Build a safe FTS5 expression: tokens quoted, joined with ``OR``.
 
     ``prefix=True`` makes each token a prefix query (``"regis"*``), which the
     ranking layer uses for name lookups. Empty tokens are dropped; a result of
-    ``""`` must not be passed to ``MATCH``.
+    ``""`` must not be passed to ``MATCH``. Control characters (a NUL above
+    all) are treated as spaces, so they can never make ``MATCH`` raise.
     """
     terms: list[str] = []
     for raw in tokens:
-        token = " ".join((raw or "").split())
+        token = " ".join((raw or "").translate(_CONTROL_CHARS).split())
         if not token:
             continue
         terms.append(f'"{token.replace(chr(34), chr(34) * 2)}"' + ("*" if prefix else ""))

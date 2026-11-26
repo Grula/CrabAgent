@@ -120,6 +120,51 @@ async def test_run_agent_uses_saved_default_model_and_provider(monkeypatch: pyte
     assert received["model"] == "openai/configured-model"
 
 
+@pytest.mark.asyncio
+async def test_setup_failure_names_this_runs_provider_not_the_previous_runs(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A TUI reuses one context: the first run leaves ``resolved_provider`` set,
+    so the second run's setup failure used to blame the first run's provider."""
+    context = AgentContext(workspace=Path.cwd(), model="gpt-4o", max_iterations=1)
+    context.provider_name = "first-provider"
+    events = []
+    context.event_bus.subscribe(lambda event: events.append(event))
+
+    async def fake_settings():
+        return "gpt-4o", None
+
+    async def fake_provider(provider_name=None):
+        if provider_name == "first-provider":
+            return SimpleNamespace(
+                name="first-provider", provider_type="openai", api_key="k", base_url="", enabled=True
+            )
+        raise ValueError("provider 'second-provider' is unavailable or disabled")
+
+    async def fake_acompletion(**kwargs):
+        return _stream([_chunk(delta=_delta(content="done"), finish_reason="stop", usage=_usage())])
+
+    monkeypatch.setattr(loop, "_get_default_model_settings", fake_settings)
+    monkeypatch.setattr(loop, "_resolve_provider", fake_provider)
+    monkeypatch.setattr(
+        loop,
+        "litellm",
+        SimpleNamespace(acompletion=fake_acompletion, exceptions=loop.litellm.exceptions),
+    )
+    monkeypatch.setattr("crabagent.core.proxy.resolve_llm_proxy", _async_return(""))
+
+    await loop.run_agent(context, "first turn")
+    assert context.metadata["resolved_provider"] == "first-provider"
+
+    context.provider_name = "second-provider"
+    await loop.run_agent(context, "second turn")
+
+    error_event = next(event for event in events if event.type == EventType.AGENT_ERROR)
+    assert error_event.data["provider"] == "second-provider"
+    assert "second-provider" in error_event.data["error"]
+    assert "first-provider" not in error_event.data["error"]
+
+
 def test_preview_result_handles_text_lists_and_images():
     result = loop._preview_result(
         [

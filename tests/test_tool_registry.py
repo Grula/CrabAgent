@@ -319,3 +319,94 @@ async def test_summary_only_does_not_hide_missing_required_arguments():
 
     result = await registry.execute("example", {"summary": "Read value"})
     assert "without any arguments" in result
+
+
+# ── validation before confirmation and snapshot ───────────────────────
+
+
+def _write_tool(registry: ToolRegistry, calls: list[str]):
+    @registry.register(
+        name="write",
+        description="write",
+        parameters={
+            "type": "object",
+            "properties": {"file_path": {"type": "string"}, "content": {"type": "string"}},
+            "required": ["file_path", "content"],
+        },
+        requires_permission=True,
+    )
+    def _write(file_path: str, content: str, context=None):
+        calls.append("handler")
+        return "ok"
+
+    return _write
+
+
+@pytest.mark.asyncio
+async def test_invalid_arguments_never_confirm_and_never_snapshot(tmp_path):
+    registry = ToolRegistry()
+    confirmed: list[str] = []
+    calls: list[str] = []
+    _write_tool(registry, calls)
+
+    async def confirm(name, args, **kwargs):
+        confirmed.append(name)
+        return True
+
+    (tmp_path / "notes.txt").write_text("old\n", encoding="utf-8")
+    ctx = AgentContext(workspace=tmp_path, confirm_callback=confirm)
+    ctx.tool_permissions["write"] = "confirm"
+    # Batch mode keeps a would-be snapshot in staging instead of flushing it.
+    ctx.metadata["_batch_molt"] = True
+
+    result = await registry.execute(
+        "write", {"file_path": str(tmp_path / "notes.txt"), "content": 123}, context=ctx
+    )
+
+    assert result.startswith("Error: invalid arguments for tool 'write':")
+    assert "content" in result
+    assert result.endswith("Fix the arguments and call the tool again.")
+    assert confirmed == []
+    assert calls == []
+    assert "_pending_molt_files" not in ctx.metadata
+    assert not (tmp_path / ".crabagent").exists(), "no staged copy for a rejected call"
+
+
+@pytest.mark.asyncio
+async def test_valid_call_confirms_then_snapshots_exactly_once(tmp_path):
+    registry = ToolRegistry()
+    order: list[str] = []
+    calls: list[str] = []
+    _write_tool(registry, calls)
+
+    async def confirm(name, args, **kwargs):
+        order.append("confirm")
+        return True
+
+    (tmp_path / "notes.txt").write_text("old\n", encoding="utf-8")
+    ctx = AgentContext(workspace=tmp_path, confirm_callback=confirm)
+    ctx.tool_permissions["write"] = "confirm"
+    ctx.metadata["_batch_molt"] = True
+
+    original = registry._take_molt_snapshot
+    snapshots: list[dict] = []
+
+    async def spy(name, arguments, context):
+        order.append("snapshot")
+        snapshots.append(dict(arguments))
+        return await original(name, arguments, context)
+
+    registry._take_molt_snapshot = spy
+
+    result = await registry.execute(
+        "write", {"file_path": str(tmp_path / "notes.txt"), "content": "new\n"}, context=ctx
+    )
+
+    assert result == "ok"
+    assert order == ["confirm", "snapshot"]
+    assert calls == ["handler"]
+    assert len(snapshots) == 1
+    assert snapshots[0]["file_path"] == str(tmp_path / "notes.txt")
+    staged = list((tmp_path / ".crabagent" / "molts" / "_staging").rglob("notes.txt"))
+    assert len(staged) == 1
+    assert staged[0].read_text(encoding="utf-8") == "old\n"

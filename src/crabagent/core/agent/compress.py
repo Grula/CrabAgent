@@ -257,11 +257,16 @@ async def compress_context(context: AgentContext, llm_params: dict, model: str) 
         "content": "Understood. I will continue based on this context summary.",
         "_compress_ack": True,
     }
-    if any(m.get("role") == "assistant" and m.get("reasoning_content") for m in messages):
+    if any(m.get("role") == "assistant" and m.get("reasoning_content") for m in recent):
         # In thinking mode with tools, DeepSeek rejects a request in which any
         # assistant message lacks reasoning_content ("The `reasoning_content` in
-        # the thinking mode must be passed back to the API"). Only give the ack
-        # one when the run is thinking, so other providers see no new field.
+        # the thinking mode must be passed back to the API"). The ack is sent
+        # alongside `recent`, so it must mirror those messages: give it one only
+        # when a kept assistant message has one. Reasoning that lived only in the
+        # summarised part is gone from the new context, and a non-thinking chat
+        # switched to a thinking model has none at all — sending the field on the
+        # ack alone would be a payload no assistant message backs. Other providers
+        # then still see no new field.
         ack["reasoning_content"] = "The earlier conversation is summarised above; I continue from it."
     compressed = [
         {

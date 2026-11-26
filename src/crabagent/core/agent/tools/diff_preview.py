@@ -34,6 +34,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from .path_utils import resolve_tool_path
+
 logger = logging.getLogger(__name__)
 
 # Tools whose args are rendered as a diff. Everything else returns None so a
@@ -71,15 +73,31 @@ class _Unpreviewable(Exception):
     """The file cannot be rendered as a text diff (too large, binary, ...)."""
 
 
+class _WorkspaceContext:
+    """Just enough of an AgentContext for :func:`resolve_tool_path`."""
+
+    __slots__ = ("workspace",)
+
+    def __init__(self, workspace: Path) -> None:
+        self.workspace = workspace
+
+
 def _resolve_target(workspace: Path | str | None, raw_path: str) -> tuple[Path, str]:
-    """Resolve *raw_path* inside *workspace*; raise _Unpreviewable when it escapes."""
+    """Resolve *raw_path* inside *workspace*; raise _Unpreviewable when it escapes.
+
+    Resolution goes through the tools' own path helper, so the preview looks at
+    the file the tool will really touch: ``write("~/x")`` must not be shown as a
+    new file while the tool overwrites the existing ``~/x``.
+    """
     if workspace is None or not raw_path:
         raise _Unpreviewable("no workspace or path")
-    ws = Path(workspace).resolve()
-    target = Path(raw_path)
-    if not target.is_absolute():
-        target = ws / target
-    target = target.resolve()
+    try:
+        ws = Path(workspace).resolve()
+    except (OSError, RuntimeError):
+        raise _Unpreviewable("workspace cannot be resolved") from None
+    target, error = resolve_tool_path(raw_path, _WorkspaceContext(ws))
+    if error or target is None:
+        raise _Unpreviewable(error or "path cannot be resolved")
     try:
         rel = target.relative_to(ws).as_posix()
     except ValueError:
@@ -181,6 +199,52 @@ def _too_large_to_diff(old_text: str, new_text: str) -> bool:
     return len(old_text) + len(new_text) > _MAX_DIFF_INPUT_CHARS
 
 
+def _is_true(value: Any) -> bool:
+    """Strict truth check, so a leftover string ``"false"`` is not a replace-all."""
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    return value is True
+
+
+def _edited_text(old_text: str, args: dict[str, Any]) -> str | None:
+    """The text ``edit`` would produce for *args*, or None when nothing applies.
+
+    The batch form (``replacements``) is applied with ``edit``'s own helper, so
+    the preview shows exactly the content the tool is about to write. A batch is
+    all-or-nothing: if any item would fail (not found, or ambiguous without
+    ``replace_all``) nothing is written, so no diff is previewed either.
+    """
+    old_string = args.get("old_string")
+    new_string = args.get("new_string")
+    replacements = args.get("replacements")
+    if (old_string is not None or new_string is not None) and replacements is not None:
+        # The tool rejects this combination; do not invent a preview for it.
+        return None
+
+    if replacements is not None:
+        items = [replacements] if isinstance(replacements, dict) else replacements
+        if not isinstance(items, list) or not items:
+            return None
+        # Imported lazily: edit.py imports registry, which imports this module.
+        from .edit import _apply_items, _batch_ok
+
+        new_text, outcomes = _apply_items(old_text, items)
+        if not _batch_ok(outcomes):
+            # The tool would refuse the whole batch; showing a partial diff
+            # would advertise a write that is not going to happen.
+            return None
+        return new_text
+
+    if not isinstance(old_string, str) or not old_string or not isinstance(new_string, str):
+        return None
+    if old_string not in old_text:
+        # Project "edit" would fail too; do not invent a diff.
+        return None
+    if _is_true(args.get("replace_all")):
+        return old_text.replace(old_string, new_string)
+    return old_text.replace(old_string, new_string, 1)
+
+
 def _prepare(
     tool_name: str, args: dict[str, Any], workspace: Path | str | None
 ) -> tuple[str, str, str, bool] | None:
@@ -212,18 +276,9 @@ def _prepare(
     else:
         if not exists:
             return None
-        old_string = args.get("old_string")
-        new_string = args.get("new_string")
-        if not isinstance(old_string, str) or not old_string or not isinstance(new_string, str):
+        new_text = _edited_text(old_text, args)
+        if new_text is None:
             return None
-        if old_string not in old_text:
-            # Project "edit" would fail too; do not invent a diff.
-            return None
-        new_text = (
-            old_text.replace(old_string, new_string)
-            if args.get("replace_all")
-            else old_text.replace(old_string, new_string, 1)
-        )
 
     if old_text == new_text:
         return None

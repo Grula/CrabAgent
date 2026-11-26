@@ -65,8 +65,10 @@ def _match_tokens(tokens: Sequence[str]) -> list[str]:
 
 
 # Query words are split the way FTS (unicode61) splits them: on punctuation and
-# underscores, but not on camelCase boundaries.
-_QUERY_SPLIT = re.compile(r"[^A-Za-z0-9]+")
+# underscores, but not on camelCase boundaries. ``\W`` is Unicode-aware, so a
+# word like ``číst`` stays one word; the old ASCII-only class cut it into
+# ``["st"]`` and the exact tier was lost for any non-ASCII query word.
+_QUERY_SPLIT = re.compile(r"[\W_]+", re.UNICODE)
 # Names are split further, on camelCase boundaries too, so "ToolRegistry" and
 # "toolregistry" are the same name and "workspace_tree" is two words.
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")

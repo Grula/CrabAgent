@@ -262,7 +262,9 @@ _POSIX_SHELL = None if sys.platform == "win32" else shutil.which("bash")
 
 def _build_subprocess_kwargs(workdir: str | None = None) -> dict:
     """Build platform-appropriate kwargs for subprocess creation."""
-    kwargs = subprocess_kwargs()
+    # Every call site here runs a shell (create_subprocess_shell / shell=True),
+    # so the bash executable applies.
+    kwargs = subprocess_kwargs(shell=True)
     if workdir:
         kwargs["cwd"] = workdir
     return kwargs

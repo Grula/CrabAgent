@@ -648,6 +648,79 @@ async def test_concurrent_calls_build_exactly_once(tmp_path, index_db):
             assert (await cur.fetchone())["value"] == first.built_at
 
 
+async def test_a_concurrent_sweep_from_another_process_retries_instead_of_raising(
+    tmp_path, index_db, monkeypatch
+):
+    """Two processes sweeping one workspace: no ``IntegrityError``, coherent rows.
+
+    The per-workspace lock is in-process only, so a second CrabAgent process can
+    commit a file row between our read of the existing rows and our write; the
+    write then trips ``UNIQUE(workspace, path)``. The hook below plays that
+    second process: it lets the real read finish, then inserts ``b.py`` through
+    its own connection before the sweep goes on to write.
+    """
+    root = tmp_path / "ws"
+    _write(root, "a.py", "def alpha():\n    return 1\n")
+    await ensure_indexed(root)
+
+    _write(root, "b.py", "def beta():\n    return 2\n")
+    real_existing = store._existing_files
+    injected = {"done": False}
+
+    async def racing_existing(conn, workspace):
+        rows = await real_existing(conn, workspace)
+        if not injected["done"]:
+            injected["done"] = True
+            scanned = {f.path: f for f in await asyncio.to_thread(store._scan_files, root)}
+            source = store.read_source(root / "b.py")
+            async with store.connect() as other:
+                await store._insert_one(
+                    other,
+                    workspace,
+                    scanned["b.py"],
+                    source,
+                    store.extract("python", source.text),
+                    123,
+                )
+                await other.commit()
+        return rows
+
+    monkeypatch.setattr(store, "_existing_files", racing_existing)
+
+    stats = await ensure_indexed(root)
+
+    assert injected["done"]  # the race really happened
+    assert stats.files == 2
+    assert [row["path"] for row in await _rows("SELECT path FROM code_files ORDER BY path")] == [
+        "a.py",
+        "b.py",
+    ]
+    orphans = await _rows(
+        "SELECT COUNT(*) AS n FROM code_symbols WHERE file_id NOT IN (SELECT id FROM code_files)"
+    )
+    assert orphans[0]["n"] == 0
+    assert len(await iter_matches(root, ["beta"])) >= 1
+
+
+# ── FTS query surface for task 2 ───────────────────────────────────────────
+
+
+def test_fts_query_treats_control_characters_as_spaces():
+    assert fts_query(["a\x00b"]) == '"a b"'
+    assert fts_query(["a\x00b"], prefix=True) == '"a b"*'
+    assert fts_query(["alpha", "\x00"]) == '"alpha"'
+    assert fts_query(["\x00"]) == ""
+
+
+async def test_nul_in_the_query_returns_no_hits_instead_of_raising(tmp_path, index_db):
+    root = tmp_path / "ws"
+    _write(root, "a.py", "def alpha():\n    return 1\n")
+    await ensure_indexed(root)
+
+    assert await iter_matches(root, ["a\x00b"]) == []
+    assert await iter_matches(root, ["alpha"]) != []
+
+
 # ── FTS query surface for task 2 ───────────────────────────────────────────
 
 
