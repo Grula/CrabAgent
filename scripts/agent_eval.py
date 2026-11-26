@@ -195,6 +195,27 @@ def _answer_pending(api: Api, con: sqlite3.Connection, session_id: str, answered
                     "at": round(time.monotonic(), 1)})
 
 
+class Settle:
+    """Done only after the run looked finished on several polls in a row with no new runs.
+
+    A switch_agent handover starts the next agent's turn about 2 s after the first
+    run ends; scoring in that gap would grade half the work.
+    """
+
+    def __init__(self, polls: int = 3) -> None:
+        self.polls = polls
+        self.streak = 0
+        self.runs = -1
+
+    def observe(self, finished: bool, run_count: int) -> bool:
+        if finished and run_count == self.runs:
+            self.streak += 1
+        else:
+            self.streak = 1 if finished else 0
+        self.runs = run_count
+        return self.streak >= self.polls
+
+
 def _main_run_finished(con: sqlite3.Connection, session_id: str) -> tuple[bool, str]:
     rows = con.execute(
         "select status from agent_runs where session_id = ? and agent_name = 'main' order by id", (session_id,)
@@ -282,6 +303,44 @@ def _trace(calls) -> str:
     return ", ".join(parts)
 
 
+def _call_line(name: str, raw_args: str) -> str:
+    """One readable line for a tool call: the command for bash, the files for read/edit, else the args."""
+    try:
+        args = json.loads(raw_args or "{}")
+    except ValueError:
+        args = {}
+    if not isinstance(args, dict):
+        args = {}
+    if name in ("bash", "run_tests"):
+        detail = " ".join(str(args.get(k, "")) for k in ("command", "target", "workdir") if args.get(k))
+    elif name == "read" and args.get("files"):
+        detail = ", ".join(str(f.get("file_path", "")) for f in args["files"] if isinstance(f, dict))
+    elif args.get("file_path"):
+        detail = str(args["file_path"])
+    else:
+        detail = json.dumps(args, ensure_ascii=False)
+    detail = " ".join(detail.split())
+    return f"{name}: {detail[:240]}"
+
+
+def _transcript(con: sqlite3.Connection, session_id: str) -> list[str]:
+    """Every tool call of the chat's main agent, in order (sub-agents keep their own context)."""
+    rows = con.execute(
+        "select tool_calls, agent from messages where conversation_id = (select id from conversations "
+        "where session_id = ?) and coalesce(tool_calls, '') not in ('', 'null', '[]') order by id", (session_id,)
+    ).fetchall()
+    lines = []
+    for raw, agent in rows:
+        try:
+            calls = json.loads(raw)
+        except ValueError:
+            continue
+        for call in calls if isinstance(calls, list) else []:
+            function = (call or {}).get("function") or {}
+            lines.append(f"[{agent or 'main'}] " + _call_line(function.get("name", "?"), function.get("arguments", "")))
+    return lines
+
+
 def _collect(con: sqlite3.Connection, session_id: str) -> dict:
     runs = [dict(r) for r in con.execute(
         "select id, parent_run_id, agent_name, model, status, iterations, tokens_used, tool_calls, elapsed, "
@@ -307,6 +366,7 @@ def _collect(con: sqlite3.Connection, session_id: str) -> dict:
         "step_cap_hits": len(step_cap),
         "failed_runs": [r for r in runs if r["status"] in ("failed", "interrupted")],
         "final_reply": (final[0] if final else "")[:6000],
+        "transcript": _transcript(con, session_id),
     }
 
 
@@ -323,7 +383,7 @@ def _clock(value) -> str:
 
 
 def _report_md(report: dict) -> str:
-    lines = [f"# Eval {report['task']}: {report['verdict']}", ""]
+    lines = [f"# Eval {report['task']} ({report.get('agent', 'architect')}): {report['verdict']}", ""]
     lines.append(f"- status: {report['run_status']} after {report['elapsed_s']} s; interventions: "
                  f"{len(report['interventions'])}; step-cap hits: {report['metrics'].get('step_cap_hits')}")
     tokens = report["metrics"].get("tokens", {})
@@ -358,10 +418,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--model", default="", help="chat model override (default: the app's default)")
     parser.add_argument("--timeout-minutes", type=float, default=None)
+    parser.add_argument("--agent", default="",
+                        help="agent that gets the request (default: task.json's, else architect)")
     args = parser.parse_args(argv)
 
     task = args.task.resolve()
     spec = json.loads((task / "task.json").read_text())
+    if args.agent:
+        spec["agent"] = args.agent
     request = (task / "request.md").read_text().strip()
     out = (args.out or Path(tempfile.mkdtemp(prefix=f"agent-eval-{task.name}-"))).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -371,7 +435,8 @@ def main(argv: list[str] | None = None) -> int:
     for signum in (ui_check.signal.SIGTERM, ui_check.signal.SIGHUP):
         ui_check.signal.signal(signum, ui_check._exit_on_signal)
 
-    report: dict = {"task": task.name, "workspace": str(workspace), "interventions": [], "tests": [],
+    report: dict = {"task": task.name, "agent": spec.get("agent", "architect"), "workspace": str(workspace),
+                    "interventions": [], "tests": [],
                     "metrics": {}, "run_status": "not started", "elapsed_s": 0}
     tmp = Path(tempfile.mkdtemp(prefix="agent-eval-"))
     proc = None
@@ -380,7 +445,8 @@ def main(argv: list[str] | None = None) -> int:
         username = ui_check._prepare_db_copy(tmp, None)
         port = ui_check._free_port()
         base_url = f"http://127.0.0.1:{port}"
-        proc = ui_check._start_server(tmp, port)
+        # Started in the workspace: nothing in the agents' environment points at this repo.
+        proc = ui_check._start_server(tmp, port, cwd=workspace)
         ui_check._wait_until_up(base_url, proc)
         api = Api(base_url, ui_check._login(base_url, username, ui_check.PREVIEW_PASSWORD))
         session = api.call("POST", "/api/sessions", {"title": f"eval {task.name}", "workspace": str(workspace),
@@ -394,6 +460,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"eval {task.name}: session {session_id}, workspace {workspace}", flush=True)
 
         answered: set[str] = set()
+        settle = Settle()
         db_copy = tmp / "db.sqlite"
         status = "running"
         last_print = 0.0
@@ -405,15 +472,16 @@ def main(argv: list[str] | None = None) -> int:
             con = _ro(db_copy)
             try:
                 _answer_pending(api, con, session_id, answered, report["interventions"])
-                done, status = _main_run_finished(con, session_id)
+                finished, status = _main_run_finished(con, session_id)
+                count = con.execute("select count(*) from agent_runs where session_id = ?",
+                                    (session_id,)).fetchone()[0]
                 if time.monotonic() - last_print > 60:
                     last_print = time.monotonic()
-                    count = con.execute("select count(*) from agent_runs where session_id = ?",
-                                        (session_id,)).fetchone()[0]
                     print(f"  {int(time.monotonic() - started)} s: {count} runs, status {status or 'starting'}",
                           flush=True)
             finally:
                 con.close()
+            done = settle.observe(finished, count)
             if done:
                 break
             if time.monotonic() - started > timeout_s:
@@ -457,6 +525,7 @@ def main(argv: list[str] | None = None) -> int:
     report["verdict"] = "PASS" if passed else "FAIL"
     if passed and report["interventions"]:
         report["verdict"] = "PASS (with interventions)"
+    (out / "transcript.txt").write_text("\n".join(report["metrics"].get("transcript", [])) + "\n")
     (out / "report.json").write_text(json.dumps(report, indent=2, default=str))
     (out / "report.md").write_text(_report_md(report))
     print(_report_md(report).split("## Runs")[0])

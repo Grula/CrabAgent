@@ -104,11 +104,12 @@ async def handoff_to(agent_name: str, context_summary: str, context=None) -> str
 @registry.register(
     name="switch_agent",
     description=(
-        "Hand this chat over to another agent. From the user's next message on, that agent runs the "
-        "chat as the main agent, with the whole conversation and all its own tools (delegation "
-        "included). Use it when the request is that agent's job, for example code changes or "
-        "multi-step dev work for the architect. After calling it, stop: tell the user in one line who "
-        "takes over and that their next message goes to that agent. Don't start the work yourself."
+        "Hand this chat over to another agent, which then runs the chat as the main agent with the "
+        "whole conversation and all its own tools. In the web chat it starts on your summary right "
+        "away; elsewhere it takes over with the user's next message. Use it when the request is that "
+        "agent's job: a contained code change for the engineer, big multi-part dev work for the "
+        "architect. After calling it, stop: tell the user in one line who takes over. Don't start the "
+        "work yourself."
     ),
     parameters={
         "type": "object",
@@ -150,6 +151,14 @@ async def switch_agent(agent_name: str, summary: str, context=None) -> str:
         await db.commit()
 
     display = profile.get("display_name") or name
+    # Read by the chat endpoint (serve/api/prompt.py), which starts the new agent's
+    # turn at once with this summary instead of waiting for the user's next message.
+    context.metadata["_switched_to"] = {
+        "agent": name,
+        "display_name": display,
+        "summary": summary,
+        "from": getattr(context, "current_agent", "") or "",
+    }
     try:
         await context.event_bus.emit(
             AgentEvent(
@@ -159,6 +168,12 @@ async def switch_agent(agent_name: str, summary: str, context=None) -> str:
         )
     except Exception:
         logger.debug("Failed to emit AGENT_SWITCHED", exc_info=True)
+    if context.metadata.get("_auto_handover"):
+        return (
+            f"Switched this chat to {display} ({name}). It starts on your summary as soon as you stop, and "
+            f"sees this whole conversation. Stop now: tell the user in one line that {display} is taking "
+            "over. Don't start the work yourself."
+        )
     return (
         f"Switched this chat to {display} ({name}). It takes over with the user's next message and sees "
         "this whole conversation. Stop now: tell the user in one line that their next message goes to "

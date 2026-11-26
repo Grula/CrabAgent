@@ -243,10 +243,16 @@ def _prepare_db_copy(tmp: Path, username: str | None) -> str:
     return username
 
 
-def _start_server(tmp: Path, port: int) -> subprocess.Popen:
-    user_site = subprocess.run(
-        [sys.executable, "-m", "site", "--user-site"], capture_output=True, text=True, check=False
-    ).stdout.strip()
+# Puts this repo's src on the *server's* sys.path only. A PYTHONPATH would be
+# inherited by every command the agents run, which then import this repo's code
+# (not their workspace's) and learn its path: an eval on a repo copy leaked both.
+_LAUNCH = (
+    "import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); "
+    "runpy.run_module('crabagent', run_name='__main__', alter_sys=True)"
+)
+
+
+def _start_server(tmp: Path, port: int, cwd: Path | None = None) -> subprocess.Popen:
     user_base = subprocess.run(
         [sys.executable, "-m", "site", "--user-base"], capture_output=True, text=True, check=False
     ).stdout.strip()
@@ -259,9 +265,9 @@ def _start_server(tmp: Path, port: int) -> subprocess.Popen:
             "PLAYWRIGHT_BROWSERS_PATH": os.environ.get(
                 "PLAYWRIGHT_BROWSERS_PATH", str(Path.home() / ".cache" / "ms-playwright")
             ),
-            "PYTHONPATH": os.pathsep.join(p for p in (str(REPO / "src"), user_site) if p),
         }
     )
+    env.pop("PYTHONPATH", None)
     if user_base:
         # The fake HOME would also hide the user's site-packages from every
         # command the agents run (e.g. `PYTHONPATH=src pytest` then can't import
@@ -274,8 +280,8 @@ def _start_server(tmp: Path, port: int) -> subprocess.Popen:
     (tmp / "home" / ".crabagent").mkdir(parents=True, exist_ok=True)  # the server logs there
     log = open(tmp / "server.log", "wb")  # noqa: SIM115 - closed with the process
     return subprocess.Popen(
-        [sys.executable, "-m", "crabagent", "--serve", "--port", str(port)],
-        cwd=str(REPO),
+        [sys.executable, "-c", _LAUNCH, str(REPO / "src"), "--serve", "--port", str(port)],
+        cwd=str(cwd or REPO),
         env=env,
         stdout=log,
         stderr=subprocess.STDOUT,

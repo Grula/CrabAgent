@@ -128,9 +128,56 @@ class TestGeneralAgent:
         ).list_tools()}
         assert "code_search" in tools
 
-    def test_goal_sends_dev_work_to_the_architect_by_switching(self):
+    def test_goal_sends_dev_work_to_the_engineer_or_architect_by_switching(self):
         goal = GENERAL["goal"]
         first_line = goal.split("\n", 1)[0]
-        assert "switch_agent" in first_line and "architect" in first_line
+        assert "switch_agent" in first_line and "engineer" in first_line and "architect" in first_line
         assert "in their own words" in goal
         assert "handoff_to are not yours" in goal
+
+
+class TestAutomaticHandover:
+    async def test_records_the_switch_for_the_chat_endpoint(self, chat_db):
+        ctx, _ = _context()
+        await agent_tools.switch_agent("architect", "Add a --models flag", context=ctx)
+        assert ctx.metadata["_switched_to"] == {
+            "agent": "architect", "display_name": "Architect", "summary": "Add a --models flag", "from": "general",
+        }
+
+    async def test_web_chat_says_the_new_agent_starts_now(self, chat_db):
+        ctx, _ = _context()
+        ctx.metadata["_auto_handover"] = True
+        result = await agent_tools.switch_agent("architect", "x", context=ctx)
+        assert "starts on your summary as soon as you stop" in result
+        assert "next message" not in result
+
+    async def test_a_refused_switch_records_nothing(self, chat_db):
+        ctx, _ = _context()
+        await agent_tools.switch_agent("missing", "x", context=ctx)
+        assert "_switched_to" not in ctx.metadata
+
+
+def test_handover_request_carries_the_summary_and_the_settings():
+    from crabagent.serve.api.prompt import HANDOVER_PREFIX, PromptRequest, _handover_request
+
+    req = PromptRequest(message="fix it", model="m", provider="p", agent="general", reasoning_effort="high",
+                        workspace_type="code", work_mode=True)
+    follow = _handover_request(req, {"agent": "engineer", "summary": "Fix the 200k bug", "from": "general"})
+    assert follow.agent == "engineer"
+    assert follow.message.startswith(HANDOVER_PREFIX + "general handed this request over to you")
+    assert follow.message.endswith("Fix the 200k bug")
+    assert (follow.model, follow.provider, follow.reasoning_effort, follow.work_mode) == ("m", "p", "high", True)
+
+
+def test_handover_chains_stop_after_the_limit():
+    from crabagent.serve.api import prompt as prompt_api
+
+    prompt_api._handover_chain.clear()
+    # A user message always starts a new chain.
+    assert prompt_api._next_handover_depth("s", "please fix") == 1
+    prompt_api._handover_chain["s"] = 1
+    assert prompt_api._next_handover_depth("s", prompt_api.HANDOVER_PREFIX + "x") == 2
+    prompt_api._handover_chain["s"] = prompt_api.MAX_CHAINED_HANDOVERS
+    assert prompt_api._next_handover_depth("s", prompt_api.HANDOVER_PREFIX + "x") is None  # agents ping-ponging
+    assert prompt_api._next_handover_depth("s", "user again") == 1
+    prompt_api._handover_chain.clear()

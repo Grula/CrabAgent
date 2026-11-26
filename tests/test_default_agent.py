@@ -74,7 +74,7 @@ class TestRemovedBuiltins:
         async with agents_db() as session:
             rows = {r.name: r for r in (await session.execute(select(db.AgentProfile))).scalars()}
         assert set(rows) == {
-            "general", "architect", "coder", "tester", "ui_checker", "the_reviewer", "researcher", "scout"
+            "general", "engineer", "architect", "coder", "tester", "ui_checker", "the_reviewer", "researcher", "scout"
         }
         assert "plan" in json.loads(rows["architect"].skills)
         assert {"write-spec", "write-readme", "project-init", "design-patterns"} <= set(
@@ -347,3 +347,47 @@ def test_build_steps_are_part_of_done():
     architect = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")
     assert "every build or copy step the project's rules" in architect["goal"]
     assert "never leave it as an offer" in architect["goal"]
+
+
+def test_engineer_is_a_solo_fast_path():
+    # crabagent_bugfix through the architect: 3-5M tokens and 11-14 min for four small bugs.
+    from crabagent.serve.api.prompt import profile_tool_names
+
+    engineer = next(a for a in db.DEFAULT_AGENTS if a["name"] == "engineer")
+    tools = set(profile_tool_names(engineer))
+    assert {"read", "edit", "write", "bash", "run_tests", "diagnostics", "git_diff", "git_status",
+            "code_search", "switch_agent"} <= tools
+    # Solo: it can't fan out to the team, and has no browser or office tools.
+    assert not tools & {"delegate_task", "delegate_parallel", "run_pipeline", "handoff_to", "plan_task",
+                        "delegate_background", "collab_browser_open", "office_read"}
+    perms = engineer["tool_permissions"]
+    assert perms["edit"] == perms["bash"] == perms["run_tests"] == perms["diagnostics"] == "auto"
+    goal = engineer["goal"]
+    assert "Scope check first" in goal
+    assert 'switch_agent, agent_name "architect"' in goal
+    assert "reproduce it first" in goal and "failing without the fix" in goal
+    assert "every build or copy step" in goal
+    assert "is yours to fix, not to report" in goal
+
+
+def test_general_routes_contained_changes_to_the_engineer():
+    general = next(a for a in db.DEFAULT_AGENTS if a["name"] == "general")
+    assert '(agent_name "engineer") for a contained change' in general["goal"]
+    assert '(agent_name "architect") for big work' in general["goal"]
+    # Eval: General ran 21 commands (two approval prompts) on a change it then handed over.
+    assert "without investigating it first" in general["goal"]
+    assert "even when they touch both backend and frontend" in general["goal"]
+
+
+def test_architect_hands_contained_requests_to_the_engineer():
+    architect = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")
+    assert 'switch_agent to "engineer"' in architect["goal"]
+    assert "unless the user asked for the team" in architect["goal"]
+    assert architect["tool_permissions"].get("switch_agent", "auto") != "deny"
+
+
+def test_rebuilt_bundles_are_not_scope_creep():
+    # Engineer eval: it built the frontend but didn't copy it, calling ~55 renamed bundles "outside this change".
+    goals = {a["name"]: a["goal"] for a in db.DEFAULT_AGENTS}
+    assert "expected output, not scope creep" in goals["engineer"]
+    assert "expected output, not scope creep" in goals["coder"]

@@ -89,6 +89,39 @@ def _should_continue_goal(snapshot: dict | None, metadata: dict) -> bool:
     )
 
 
+HANDOVER_PREFIX = "[Handover] "
+# Handovers in a row without a user message in between (engineer -> architect ->
+# engineer ...): after this many the next agent waits for the user.
+MAX_CHAINED_HANDOVERS = 2
+_handover_chain: dict[str, int] = {}
+
+
+def _handover_request(request: PromptRequest, switched: dict) -> PromptRequest:
+    """The first turn of the agent a chat was just switched to, built from the handover summary."""
+    source = switched.get("from") or "the previous agent"
+    return PromptRequest(
+        message=f"{HANDOVER_PREFIX}{source} handed this request over to you:\n\n{switched.get('summary', '')}",
+        model=request.model,
+        provider=request.provider,
+        agent=switched["agent"],
+        reasoning_effort=request.reasoning_effort,
+        file_context=request.file_context,
+        workspace_type=request.workspace_type,
+        work_mode=request.work_mode,
+    )
+
+
+def _next_handover_depth(session_id: str, message: str) -> int | None:
+    """How many handovers in a row this one would be, or None when the chain is at its limit.
+
+    A message from the user (not a handover) starts a new chain.
+    """
+    depth = _handover_chain.get(session_id, 0) if (message or "").startswith(HANDOVER_PREFIX) else 0
+    if depth >= MAX_CHAINED_HANDOVERS:
+        return None
+    return depth + 1
+
+
 def _goal_continuation_request(request: PromptRequest) -> PromptRequest:
     """Keep the selected execution settings for an automatic Goal turn."""
     return PromptRequest(
@@ -569,6 +602,9 @@ async def prompt_async(
     )
     # Files read in an earlier turn of this chat can be edited in this one.
     from crabagent.core.agent.tools.file_state import session_tracker
+
+    # switch_agent's new agent starts right away here (see the end of _run).
+    context.metadata["_auto_handover"] = True
 
     context.file_state = session_tracker(session_id)
     try:
@@ -1313,6 +1349,27 @@ Use ordinary Markdown when a visualization is not helpful.
             _contexts.pop(session_id, None)
             _tasks.pop(session_id, None)
             _session_locks.pop(session_id, None)
+            # A switch_agent hands the chat over: start the new agent's turn now
+            # (as a goal continuation would) instead of waiting for the user.
+            switched = context.metadata.get("_switched_to")
+            if (
+                switched
+                and not context.metadata.get("_run_error")
+                and not context.metadata.get("_agent_error")
+                and not context.metadata.get("_run_cancelled")
+            ):
+                depth = _next_handover_depth(session_id, req.message)
+                if depth is not None:
+                    from crabagent.core.goals.scheduler import schedule_goal_continuation
+
+                    handover = _handover_request(req, switched)
+
+                    async def _continue_handover() -> None:
+                        _handover_chain[session_id] = depth
+                        async with async_session_factory() as handover_db:
+                            await prompt_async(session_id, handover, request, user, handover_db)
+
+                    schedule_goal_continuation(session_id, _continue_handover)
             try:
                 from crabagent.core.goals.scheduler import schedule_goal_continuation
                 from crabagent.core.goals.service import (

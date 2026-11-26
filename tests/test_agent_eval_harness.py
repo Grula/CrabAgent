@@ -30,7 +30,8 @@ def con(tmp_path):
         create table token_usage (session_id text, prompt_tokens int, completion_tokens int, cached_tokens int);
         create table tool_invocations (id integer primary key, run_id int, tool_name text, ok int, reason_class text);
         create table conversations (id integer primary key, session_id text);
-        create table messages (id integer primary key, conversation_id int, role text, content text);
+        create table messages (id integer primary key, conversation_id int, role text, content text,
+            tool_calls text, agent text);
         """
     )
     raw.commit()
@@ -228,3 +229,34 @@ def test_tool_trace_summarises_calls_and_failures():
              ("bash", 0, "nonzero_exit")]
     assert agent_eval._trace(calls) == "bash x4 (3 failed: timeout x2, nonzero_exit x1), read x1"
     assert agent_eval._trace([]) == ""
+
+
+def test_transcript_lists_main_agent_calls_readably(con):
+    _exec(con, "insert into conversations values (1, 's')")
+    calls = [
+        {"function": {"name": "bash", "arguments": json.dumps({"command": "cd frontend &&\n npx tsc -b"})}},
+        {"function": {"name": "read",
+                      "arguments": json.dumps({"files": [{"file_path": "a.py"}, {"file_path": "b.py"}]})}},
+        {"function": {"name": "edit",
+                      "arguments": json.dumps({"file_path": "a.py", "old_string": "x", "new_string": "y"})}},
+        {"function": {"name": "run_tests", "arguments": json.dumps({"command": "pytest", "target": "tests/t.py"})}},
+    ]
+    _exec(con, "insert into messages (conversation_id, role, content, tool_calls, agent) "
+          "values (1, 'assistant', '', ?, 'engineer')", json.dumps(calls))
+    assert agent_eval._transcript(con, "s") == [
+        "[engineer] bash: cd frontend && npx tsc -b",
+        "[engineer] read: a.py, b.py",
+        "[engineer] edit: a.py",
+        "[engineer] run_tests: pytest tests/t.py",
+    ]
+
+
+def test_settle_waits_out_a_handover_gap():
+    settle = agent_eval.Settle(polls=3)
+    assert not settle.observe(True, 2)    # the first agent finished...
+    assert not settle.observe(False, 3)   # ...and the handover started a new run
+    assert not settle.observe(True, 5)
+    assert not settle.observe(True, 5)
+    assert settle.observe(True, 5)        # finished on 3 polls with no new runs
+    fresh = agent_eval.Settle(polls=2)
+    assert not fresh.observe(True, 1) and not fresh.observe(True, 2) and fresh.observe(True, 2)

@@ -151,6 +151,7 @@ _TEAM_PROMPT_SHARED_LINES: tuple[str, ...] = (
 # enabled; otherwise the main agent would be sent to an agent that does not exist.
 _TEAM_PROMPT_AGENT_ROUTES: tuple[tuple[str, str], ...] = (
     ('scout', 'Finding where something is or how it works in the code -> `scout`'),
+    ('engineer', 'A contained code change done by one agent end to end, as the chat agent -> switch to `engineer`'),
     ('coder', 'Writing, fixing or refactoring code -> `coder`'),
     ('tester', 'Writing tests, reproducing a bug, verifying a change end to end -> `tester`'),
     ('ui_checker', 'Checking a user-facing change in the running app, in a real browser -> `ui_checker`'),
