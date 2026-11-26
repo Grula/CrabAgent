@@ -11,6 +11,8 @@ import { createCodeEditor, type CodeEditorHandle } from "./code-editor";
 import { diffLines } from "./code-editor/diff";
 
 type TabStatus = "loading" | "ready" | "error";
+/** Encoding that round-trips the file's bytes; echoed back on save. */
+type FileEncoding = NonNullable<filesApi.FileContent["encoding"]>;
 
 interface CodeTabState {
   path: string;
@@ -23,6 +25,8 @@ interface CodeTabState {
   errorMessage: string | null;
   binary: boolean;
   truncated: boolean;
+  /** Encoding the read reported; the save must write the same bytes back. */
+  encoding?: FileEncoding;
   /**
    * mtime_ms of the disk copy this buffer was read from (or last saved as).
    * Sent as expected_mtime_ms on save so the server rejects a stale write with
@@ -172,6 +176,8 @@ export function CodePanel({
     path: string;
     tool: string;
     diskContent: string;
+    /** Encoding the disk copy was decoded with, adopted when the user reloads. */
+    encoding?: FileEncoding;
     /** mtime_ms of the disk copy, adopted by the tab when the user reloads. */
     mtimeMs?: number;
   } | null>(null);
@@ -227,6 +233,9 @@ export function CodePanel({
         status: "ready",
         binary,
         truncated: res?.truncated === true,
+        // Keep the decoding the read used; re-encoding a latin-1 file as UTF-8
+        // would change every byte >= 0x80.
+        encoding: res?.encoding,
         // The version this buffer is based on; the next save sends it back.
         mtimeMs: res?.mtime_ms,
         errorMessage: null,
@@ -269,6 +278,8 @@ export function CodePanel({
       }
       return next;
     });
+    // The banner belongs to a path: dropping that tab drops its conflict too.
+    setConflict((current) => (current && current.path === path ? null : current));
   }, []);
 
   /** A dirty tab asks before its buffer is thrown away; a clean one just closes. */
@@ -297,6 +308,10 @@ export function CodePanel({
   const showStaleConflict = useCallback(async (path: string) => {
     try {
       const res = await filesApi.readFile(path, isAbsolutePath(path), { sessionId: sessionIdRef.current });
+      // The tab may have been closed or reverted while the read was in flight;
+      // a banner with nothing left to resolve must not appear.
+      const tab = tabsRef.current.find((t) => t.path === path);
+      if (!tab || !tab.modified) return;
       if (res.binary || res.truncated) {
         setError("The file changed on disk. Reload it before saving.");
         return;
@@ -305,6 +320,7 @@ export function CodePanel({
         path,
         tool: "another process",
         diskContent: res.content ?? "",
+        encoding: res.encoding,
         mtimeMs: res.mtime_ms,
       });
       setError(null);
@@ -324,19 +340,25 @@ export function CodePanel({
     savingRef.current = true;
     setSaving(true);
     try {
-      const result = await filesApi.saveFile(tab.path, content, isAbsolutePath(tab.path), {
+      const options: filesApi.SaveFileOptions = {
         sessionId: sessionIdRef.current,
         // The disk version this buffer was read from: the server answers 409
         // when another writer replaced it, instead of silently overwriting.
         expectedMtimeMs: tab.mtimeMs,
-      });
+      };
+      // Write the bytes back in the encoding the file was read with; the server
+      // defaults to UTF-8, which would corrupt every byte >= 0x80 of latin-1.
+      if (tab.encoding) options.encoding = tab.encoding;
+      const result = await filesApi.saveFile(tab.path, content, isAbsolutePath(tab.path), options);
       selfSaveRef.current = { path: tab.path, mtimeMs: result?.mtime_ms };
+      // Typing may have continued while the request was in flight. Only `content`
+      // reached the disk, so compare against the live buffer (`t` is the current
+      // tab state, not the pre-await closure): the newer text stays dirty.
       setTabs((prev) => prev.map((t) => (
         t.path === tab.path ? {
           ...t,
-          content,
           originalContent: content,
-          modified: false,
+          modified: t.content !== content,
           // The written file's mtime is what the next save must expect.
           mtimeMs: result?.mtime_ms ?? tab.mtimeMs,
         } : t
@@ -369,7 +391,7 @@ export function CodePanel({
 
   // ── External changes (agent tool, another client) ─────────────
   /** Discard the buffer and adopt the disk copy, keeping the caret on its text. */
-  const applyDiskContent = useCallback((path: string, diskContent: string, mtimeMs?: number) => {
+  const applyDiskContent = useCallback((path: string, diskContent: string, mtimeMs?: number, encoding?: FileEncoding) => {
     if (activePathRef.current === path) {
       handleRef.current?.replaceContent(diskContent, { preserveSelection: true });
     }
@@ -381,6 +403,7 @@ export function CodePanel({
           originalContent: diskContent,
           modified: false,
           status: "ready",
+          encoding: encoding ?? t.encoding,
           mtimeMs: mtimeMs ?? t.mtimeMs,
         }
         : t
@@ -406,47 +429,55 @@ export function CodePanel({
 
     const seq = externalChange.seq;
     const tool = externalChange.tool || "another process";
-    const buffer = activePathRef.current === tab.path && handleRef.current
-      ? handleRef.current.getContent()
-      : tab.content;
+    const path = tab.path;
     void (async () => {
       let next: string;
       let diskMtimeMs: number | undefined;
+      let diskEncoding: FileEncoding | undefined;
       try {
-        const res = await filesApi.readFile(tab.path, isAbsolutePath(tab.path), {
+        const res = await filesApi.readFile(path, isAbsolutePath(path), {
           sessionId: sessionIdRef.current,
         });
         // A non-text payload has no editable content to sync.
         if (res.binary || res.truncated) return;
         next = res.content ?? "";
         diskMtimeMs = res.mtime_ms;
+        diskEncoding = res.encoding;
       } catch {
         return; // A failed re-read leaves the buffer exactly as it was.
       }
       if (lastChangeSeqRef.current !== seq) return; // a newer event superseded this one
+      // The tab may have been closed, or its buffer may have been typed into
+      // while this re-read was in flight: decide on the live tab, never on the
+      // pre-await copy.
+      const current = tabsRef.current.find((t) => t.path === path);
+      if (!current || current.status !== "ready" || current.binary || current.truncated) return;
+      const buffer = activePathRef.current === path && handleRef.current
+        ? handleRef.current.getContent()
+        : current.content;
       // Identical content: no transaction, so no cursor jump and no echo loop.
       if (next === buffer) {
         // Even an identical rewrite moved the mtime: remember it, or the next
         // save would be rejected as stale for no reason.
         setTabs((prev) => prev.map((t) => (
-          t.path === tab.path
-            ? { ...t, ...(tab.modified ? { content: next, originalContent: next, modified: false } : {}), mtimeMs: diskMtimeMs ?? t.mtimeMs }
+          t.path === path
+            ? { ...t, ...(t.modified ? { content: next, originalContent: next, modified: false, encoding: diskEncoding ?? t.encoding } : {}), mtimeMs: diskMtimeMs ?? t.mtimeMs }
             : t
         )));
-        setConflict((current) => (current && current.path === tab.path ? null : current));
+        setConflict((cur) => (cur && cur.path === path ? null : cur));
         return;
       }
-      if (tab.modified) {
+      if (current.modified) {
         // Never overwrite unsaved work — offer reload or a diff instead.
-        setConflict({ path: tab.path, tool, diskContent: next, mtimeMs: diskMtimeMs });
+        setConflict({ path, tool, diskContent: next, encoding: diskEncoding, mtimeMs: diskMtimeMs });
         return;
       }
-      if (activePathRef.current === tab.path) {
+      if (activePathRef.current === path) {
         handleRef.current?.replaceContent(next, { preserveSelection: true });
       }
       setTabs((prev) => prev.map((t) => (
-        t.path === tab.path
-          ? { ...t, content: next, originalContent: next, modified: false, status: "ready", mtimeMs: diskMtimeMs }
+        t.path === path
+          ? { ...t, content: next, originalContent: next, modified: false, status: "ready", encoding: diskEncoding ?? t.encoding, mtimeMs: diskMtimeMs }
           : t
       )));
     })();
@@ -598,7 +629,7 @@ export function CodePanel({
         </div>
       ) : (
         <div className="flex-1 flex flex-col min-h-0">
-          {conflict && (
+          {conflict && conflict.path === activeTab.path && (
             <div
               data-testid="code-external-change"
               className="flex items-center gap-2 px-3 py-1.5 text-[11px] shrink-0 bg-[var(--warning-bg)] text-[var(--warning)] border-b border-[var(--warning-border)]"
@@ -607,7 +638,7 @@ export function CodePanel({
               <span className="min-w-0 truncate">Changed on disk by {conflict.tool}</span>
               <span className="flex-1" />
               <button
-                onClick={() => applyDiskContent(conflict.path, conflict.diskContent, conflict.mtimeMs)}
+                onClick={() => applyDiskContent(conflict.path, conflict.diskContent, conflict.mtimeMs, conflict.encoding)}
                 className="px-2 py-0.5 rounded border border-[var(--warning-border)] hover:bg-[var(--bg-tertiary)] transition-colors"
               >
                 Reload
@@ -664,6 +695,15 @@ export function CodePanel({
           {activeTab && (
             <span className="text-[10px] font-mono text-[var(--text-tertiary)]">{activeTab.language}</span>
           )}
+          {activeTab?.encoding && (
+            <span
+              data-testid="code-encoding"
+              className="text-[10px] font-mono text-[var(--text-tertiary)]"
+              title="File encoding used when saving"
+            >
+              {activeTab.encoding}
+            </span>
+          )}
           {activeTab?.truncated && (
             <span className="text-[10px] text-[var(--warning)]">Read-only (truncated)</span>
           )}
@@ -710,7 +750,7 @@ export function CodePanel({
                 Keep my buffer
               </button>
               <button
-                onClick={() => applyDiskContent(conflict.path, conflict.diskContent, conflict.mtimeMs)}
+                onClick={() => applyDiskContent(conflict.path, conflict.diskContent, conflict.mtimeMs, conflict.encoding)}
                 className="px-2.5 py-1 rounded text-[11px] bg-[var(--brand)] text-[var(--text-on-brand)] hover:bg-[var(--brand-hover)] transition-colors"
               >
                 Reload from disk

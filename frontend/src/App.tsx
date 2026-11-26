@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api/client";
 import LoginPage from "./pages/LoginPage";
 import ChatPage from "./pages/ChatPage";
@@ -32,6 +32,111 @@ export function routeFromHash(): { page: PageId; tab?: WorkTab } | null {
   if (!pageIds.includes(first as PageId)) return null;
   const tab = first === "work" && workTabs.includes(second as WorkTab) ? second as WorkTab : undefined;
   return { page: first as PageId, tab };
+}
+
+/** A route the address bar or the nav bar asks the app to show. */
+export interface AppRoute {
+  page: PageId;
+  tab?: WorkTab;
+}
+
+/**
+ * ChatPage's answer to "may I leave Work?". It runs the move itself when nothing
+ * is dirty and returns true; when a discard confirmation is pending it returns
+ * false and keeps the run for its Discard button, so the caller leaves the view
+ * (and the address bar) where it is until the user decides.
+ */
+export type LeaveWorkGuard = (run: () => void) => boolean;
+
+/**
+ * ChatPage's answer to "may I leave this Work tab?". It runs the switch itself
+ * when nothing is dirty and returns true; with a discard confirmation pending it
+ * returns false, so a hash route holds the tab (and the URL) where it is.
+ */
+export type WorkTabGuard = (tab: WorkTab) => boolean;
+
+/**
+ * Run a page move through the leave-work guard when it leaves Work, and say
+ * whether the move went through. Inside Work, or away from a clean editor, the
+ * move just runs.
+ */
+export function runMoveThroughLeaveWorkGuard(args: {
+  currentPage: PageId;
+  nextPage: PageId;
+  guard: LeaveWorkGuard | null;
+  move: () => void;
+}): boolean {
+  if (args.currentPage === "work" && args.nextPage !== "work" && args.guard) {
+    return args.guard(args.move);
+  }
+  args.move();
+  return true;
+}
+
+/**
+ * Apply a route the address bar asked for, asking the pages that would lose work
+ * first — the same questions the in-app controls ask. Answers whether the route
+ * was applied; a held route leaves the view and the hash where they are.
+ */
+export function applyRouteThroughGuards(args: {
+  route: AppRoute;
+  currentPage: PageId;
+  /** Work tab shown right now. */
+  currentWorkTab: WorkTab;
+  guard: LeaveWorkGuard | null;
+  /** ChatPage's Work-tab guard; null before that page has mounted. */
+  workTabGuard: WorkTabGuard | null;
+  apply: (route: AppRoute) => void;
+}): boolean {
+  // Leaving Work unmounts the editors: the same guard the nav bar uses decides.
+  if (args.route.page !== "work" || args.currentPage !== "work") {
+    return runMoveThroughLeaveWorkGuard({
+      currentPage: args.currentPage,
+      nextPage: args.route.page,
+      guard: args.guard,
+      move: () => args.apply(args.route),
+    });
+  }
+  // A route inside Work may name another tab, which unmounts the Documents
+  // panels just as clicking the tab does — so it asks the same guard.
+  const tab = args.route.tab;
+  if (tab !== undefined && tab !== args.currentWorkTab && args.workTabGuard) {
+    if (!args.workTabGuard(tab)) return false;
+  }
+  args.apply(args.route);
+  return true;
+}
+
+/**
+ * Apply a route that came from the address bar (browser Back/Forward, a typed
+ * URL). It passes the same guards as the nav bar and the tab strip, because a
+ * route to another Work tab unmounts the editors just as surely as a click. A
+ * cancelled move is undone in the address bar too: no URL may show a page the
+ * app refused to open.
+ */
+export function applyHashRoute(args: {
+  route: AppRoute;
+  currentPage: PageId;
+  /** Work tab shown right now; defaults to Documents, where nothing is mounted. */
+  currentWorkTab?: WorkTab;
+  /** The hash that matches what is on screen right now. */
+  shownHash: string;
+  guard: LeaveWorkGuard | null;
+  /** ChatPage's Work-tab guard; omitted when no page hosts one. */
+  workTabGuard?: WorkTabGuard | null;
+  apply: (route: AppRoute) => void;
+}): void {
+  const accepted = applyRouteThroughGuards({
+    route: args.route,
+    currentPage: args.currentPage,
+    currentWorkTab: args.currentWorkTab ?? "documents",
+    guard: args.guard,
+    workTabGuard: args.workTabGuard ?? null,
+    apply: args.apply,
+  });
+  if (!accepted && window.location.hash !== args.shownHash) {
+    window.history.replaceState(null, "", args.shownHash);
+  }
 }
 
 function readStored<T extends string>(key: string, allowed: readonly T[]): T | null {
@@ -69,6 +174,15 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeBranch, setActiveBranch] = useState<string | undefined>();
   const [ftsStatus, setFtsStatus] = useState<FtsRebuild | null>(null);
+  // ChatPage registers its leave-work guard here: the page stays mounted, but
+  // the nav bar lives above it, so a move away from Work has to ask it first.
+  const leaveWorkGuardRef = useRef<LeaveWorkGuard | null>(null);
+  // ChatPage's Work-tab guard: a typed #/work/<other-tab> unmounts the same
+  // panels a tab click does, so App holds the route until the page agrees.
+  const workTabGuardRef = useRef<WorkTabGuard | null>(null);
+  // The hash that matches what is on screen: a hashchange the guard cancels is
+  // undone with it, so the address bar never disagrees with the view.
+  const shownHashRef = useRef<string>("");
 
   // Chat and Work share one ChatPage (same conversation); remember which one was open.
   useEffect(() => {
@@ -81,6 +195,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   // link) reopens the same page and tab. replaceState fires no hashchange.
   useEffect(() => {
     const hash = page === "work" ? `#/work/${workTab}` : `#/${page}`;
+    shownHashRef.current = hash;
     if (window.location.hash !== hash) window.history.replaceState(null, "", hash);
   }, [page, workTab]);
 
@@ -106,18 +221,43 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   }, [checkHealth]);
 
   const handleNavigate = useCallback((target: PageId) => {
-    setPage(target);
+    // Leaving Work unmounts the editors and the document panels, so ask the
+    // page through its guard: a dirty buffer (code or Markdown) confirms before
+    // the move. Inside Work, or with nothing to lose, the guard just runs.
+    runMoveThroughLeaveWorkGuard({
+      currentPage: page,
+      nextPage: target,
+      guard: leaveWorkGuardRef.current,
+      move: () => setPage(target),
+    });
+  }, [page]);
+
+  /** Show a route without asking: the guard already said yes. */
+  const applyRoute = useCallback((route: AppRoute) => {
+    setPage(route.page);
+    if (route.tab) setWorkTab(route.tab);
   }, []);
+
   useEffect(() => {
     const handleHashChange = () => {
       const route = routeFromHash();
       if (!route) return;
-      setPage(route.page);
-      if (route.tab) setWorkTab(route.tab);
+      // Back/Forward goes through the same guards as the nav bar and the tab
+      // strip; if one holds the move, the address bar is put back on the page
+      // and tab that are still shown.
+      applyHashRoute({
+        route,
+        currentPage: page,
+        currentWorkTab: workTab,
+        shownHash: shownHashRef.current,
+        guard: leaveWorkGuardRef.current,
+        workTabGuard: workTabGuardRef.current,
+        apply: applyRoute,
+      });
     };
     window.addEventListener("hashchange", handleHashChange);
     return () => window.removeEventListener("hashchange", handleHashChange);
-  }, []);
+  }, [page, workTab, applyRoute]);
 
   // Notify when FTS completes
   const ftsInProgress = ftsStatus?.in_progress;
@@ -151,11 +291,13 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
         <div className={cn("absolute inset-0", !isChatOrWork && "hidden")}>
           <ChatPage
             view={page === "work" ? "work" : "chat"}
-            onViewChange={setPage}
+            onViewChange={handleNavigate}
             workTab={workTab}
             onWorkTabChange={setWorkTab}
             onActiveSessionChange={setActiveSessionId}
             onActiveBranchChange={setActiveBranch}
+            leaveWorkGuardRef={leaveWorkGuardRef}
+            workTabGuardRef={workTabGuardRef}
           />
         </div>
         {page === "agents" && <div className="absolute inset-0"><AgentsPage /></div>}

@@ -58,6 +58,12 @@ def _drain(*queues: asyncio.Queue) -> list:
     return events
 
 
+def _staged_copies(ws: Path, name: str) -> list[Path]:
+    """Every copy of `name` staged for a molt flush, whatever batch dir holds it."""
+    root = ws / ".crabagent" / "molts" / "_staging"
+    return sorted(root.rglob(name)) if root.exists() else []
+
+
 def _patch_conversation(monkeypatch: pytest.MonkeyPatch, conv: SimpleNamespace | None) -> None:
     from crabagent.serve.services import conversation as conv_svc
 
@@ -278,6 +284,141 @@ async def test_paged_read_starting_past_eof_does_not_invert_the_range(backends, 
 
 
 @pytest.mark.asyncio
+async def test_paged_read_of_a_single_huge_line_stays_bounded(backends, monkeypatch):
+    """start_line/end_line must not materialise a huge single-line file."""
+    from crabagent.serve.api import files
+
+    line = "a" * (4 * 1024 * 1024)  # one 4 MB line: far above the page byte cap
+    big = backends.chat / "oneline.txt"
+    big.write_text(line, encoding="utf-8")
+    _patch_conversation(monkeypatch, SimpleNamespace(user_id=7, workspace=str(backends.chat)))
+
+    counter = {"bytes": 0}
+    real_open = Path.open
+
+    class _CountingFile:
+        def __init__(self, handle):
+            self._handle = handle
+
+        def __enter__(self):
+            self._handle.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._handle.__exit__(*args)
+
+        def readline(self, *args):
+            data = self._handle.readline(*args)
+            counter["bytes"] += len(data)
+            return data
+
+        def __getattr__(self, name):
+            return getattr(self._handle, name)
+
+    def counting_open(self, *args, **kwargs):
+        handle = real_open(self, *args, **kwargs)
+        return _CountingFile(handle) if self == big else handle
+
+    monkeypatch.setattr(Path, "open", counting_open)
+
+    page = await files.read_file(
+        path="oneline.txt",
+        absolute=False,
+        start_line=1,
+        end_line=1,
+        session_id="sess-1",
+        user=_user(),
+        db=None,
+    )
+
+    assert page["start_line"] == 1
+    assert page["end_line"] == 1
+    assert page["binary"] is False
+    assert page["truncated"] is True
+    assert page["content"].startswith("a")
+    assert len(page["content"]) == files.MAX_TEXT_BYTES
+    # Only the bounded prefix was read; the 4 MB file never landed in memory.
+    assert counter["bytes"] <= files.MAX_TEXT_BYTES + 2
+
+
+@pytest.mark.asyncio
+async def test_paged_read_with_start_line_does_not_buffer_an_earlier_huge_line(
+    backends, monkeypatch
+):
+    """start_line > 1 still pages: the skipped prefix is capped like the body."""
+    from crabagent.serve.api import files
+
+    target = backends.chat / "skip_oneline.txt"
+    target.write_text("a" * (4 * 1024 * 1024), encoding="utf-8")  # one 4 MB line
+    _patch_conversation(monkeypatch, SimpleNamespace(user_id=7, workspace=str(backends.chat)))
+
+    counter = {"bytes": 0}
+    real_open = Path.open
+
+    class _CountingFile:
+        def __init__(self, handle):
+            self._handle = handle
+
+        def __enter__(self):
+            self._handle.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._handle.__exit__(*args)
+
+        def readline(self, *args):
+            data = self._handle.readline(*args)
+            counter["bytes"] += len(data)
+            return data
+
+        def __getattr__(self, name):
+            return getattr(self._handle, name)
+
+    def counting_open(self, *args, **kwargs):
+        handle = real_open(self, *args, **kwargs)
+        return _CountingFile(handle) if self == target else handle
+
+    monkeypatch.setattr(Path, "open", counting_open)
+
+    page = await files.read_file(
+        path="skip_oneline.txt",
+        absolute=False,
+        start_line=2,
+        end_line=2,
+        session_id="sess-1",
+        user=_user(),
+        db=None,
+    )
+
+    # The skipped 4 MB line never landed in memory and the page is reported as
+    # truncated, exactly like a byte-cap cut inside the page body.
+    assert counter["bytes"] <= files.MAX_TEXT_BYTES + 2
+    assert page["truncated"] is True
+    assert page["binary"] is False
+    assert page["content"] == ""
+    assert page["start_line"] == 2
+    assert page["end_line"] >= page["start_line"]
+    assert page["has_more"] is False
+
+    # Normal skipping still works: the same page path returns the right lines.
+    lines = backends.chat / "lines.txt"
+    lines.write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    normal = await files.read_file(
+        path="lines.txt",
+        absolute=False,
+        start_line=3,
+        end_line=4,
+        session_id="sess-1",
+        user=_user(),
+        db=None,
+    )
+    assert normal["content"] == "three\nfour\n"
+    assert normal["start_line"] == 3
+    assert normal["end_line"] == 4
+    assert normal["truncated"] is False
+
+
+@pytest.mark.asyncio
 async def test_non_utf8_read_round_trips_through_write(backends, monkeypatch):
     from crabagent.serve.api import files
 
@@ -378,6 +519,55 @@ async def test_ui_write_creates_molt_row_and_rollback_restores(backends, molt_fa
     restored = await rollback(molts[0]["molt_id"], backends.chat)
     assert restored == ["app.py"]
     assert target.read_text(encoding="utf-8") == "before\n"
+
+
+@pytest.mark.asyncio
+async def test_editor_save_does_not_destroy_an_agent_staged_snapshot(backends, molt_factory, monkeypatch):
+    """A save in the editor must not wipe a snapshot an agent staged but not flushed."""
+    from crabagent.core.agent.tools.registry import registry as tool_registry
+    from crabagent.core.molt.store import get_snapshot_content, list_molts
+    from crabagent.serve.api import files
+
+    target = backends.chat / "shared.py"
+    target.write_text("agent version\n", encoding="utf-8")
+    _patch_conversation(monkeypatch, SimpleNamespace(user_id=7, workspace=str(backends.chat)))
+
+    # The agent's write tool has staged the pre-edit copy, but its confirmation
+    # is still pending, so the molt has not been flushed yet.
+    agent_ctx = SimpleNamespace(workspace=backends.chat, metadata={})
+    await tool_registry._take_molt_snapshot("write", {"path": str(target)}, agent_ctx)
+    assert [p.read_text(encoding="utf-8") for p in _staged_copies(backends.chat, "shared.py")] == [
+        "agent version\n"
+    ]
+
+    # Meanwhile the user saves the same file from the editor.
+    request, _queue = _fake_request("sess-1")
+    await files.write_file(
+        files.WriteFileRequest(path="shared.py", content="user version\n", session_id="sess-1"),
+        request,
+        user=_user(),
+        db=None,
+    )
+    assert target.read_text(encoding="utf-8") == "user version\n"
+
+    staged = _staged_copies(backends.chat, "shared.py")
+    assert staged, "the editor save deleted the agent's staged snapshot"
+    assert any(p.read_text(encoding="utf-8") == "agent version\n" for p in staged)
+
+    # The agent's snapshot is still flushable and keeps the pre-edit text.
+    await tool_registry._flush_molt_snapshot(agent_ctx)
+    async with molt_factory() as db:
+        editor_molts = await list_molts(db, "sess-1")
+        # agent_ctx carries no session_id, so only the agent's own flush lands in "".
+        agent_molts = await list_molts(db, "")
+    assert len(agent_molts) == 1, "the agent's flush produced no molt of its own"
+    agent_molt_id = agent_molts[0]["molt_id"]
+    # The editor's molt also holds "agent version\n" (the pre-save text), so only
+    # this exact id proves that the agent's *staged* copy survived the save.
+    assert agent_molt_id not in {m["molt_id"] for m in editor_molts}
+    assert (
+        get_snapshot_content(agent_molt_id, "shared.py", backends.chat) == "agent version\n"
+    )
 
 
 @pytest.mark.asyncio

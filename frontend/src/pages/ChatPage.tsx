@@ -24,7 +24,7 @@ import {
   Activity,
   Calendar as CalendarIcon,
 } from "lucide-react";
-import type { WorkTab } from "../App";
+import type { LeaveWorkGuard, WorkTab, WorkTabGuard } from "../App";
 import CalendarPage from "./CalendarPage";
 import * as goalsApi from "../api/goals";
 import { Goal as GoalData, GoalDraft } from "../types/Goal";
@@ -82,8 +82,13 @@ import BrowserPanel from "../components/BrowserPanel";
 import { SSEEvent } from "../api/events";
 import * as documentsApi from "../api/documents";
 import {
+  closeDocDiscardPrompt,
+  forgetDiscardedMarkdownEdits,
   hasUnsavedEditorEdits,
   isAbsolutePath,
+  needsDiscardConfirmForDocClose,
+  needsDiscardConfirmForDocSwitch,
+  needsDiscardConfirmForLeaveWork,
   needsDiscardConfirmForSessionSwitch,
   needsDiscardConfirmForWorkTabSwitch,
   needsOfficePreview,
@@ -105,6 +110,20 @@ interface Props {
   onWorkTabChange: (tab: WorkTab) => void;
   onActiveSessionChange?: (sessionId: string | null) => void;
   onActiveBranchChange?: (branch: string) => void;
+  /**
+   * Filled with this page's leave-work guard. The nav bar lives above the page,
+   * so going from Work to any other page asks the page first: with unsaved
+   * editor work it must confirm instead of unmounting the editors. It answers
+   * false while the confirmation is pending, so the caller can undo the move
+   * (a browser Back also restores its hash).
+   */
+  leaveWorkGuardRef?: React.MutableRefObject<LeaveWorkGuard | null>;
+  /**
+   * Filled with this page's Work-tab guard. A hash route (#/work/timeline, typed
+   * or restored) is not the tab bar, but it unmounts the Documents panels just
+   * the same, so App asks the page first and holds the route on a no.
+   */
+  workTabGuardRef?: React.MutableRefObject<WorkTabGuard | null>;
 }
 
 const WORK_TABS: { id: WorkTab; label: string; icon: React.ReactNode }[] = [
@@ -122,7 +141,7 @@ const STARTER_PROMPTS = [
   { icon: <MessageSquare size={14} />, label: "Write a doc", prompt: "Write a document about " },
 ];
 
-export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange, onActiveSessionChange, onActiveBranchChange }: Props) {
+export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange, onActiveSessionChange, onActiveBranchChange, leaveWorkGuardRef, workTabGuardRef }: Props) {
   const mode = view;
   const [workspace, setWorkspace] = useState<string>("");
   const [goal, setGoal] = useState<GoalData | null>(null);
@@ -179,6 +198,10 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   // per keystroke is exactly what the panel's editor seam avoids.
   const editorHandleRef = useRef<CodeEditorHandle | null>(null);
   const editorStateRef = useRef<CodePanelState | null>(null);
+  // Dirty Markdown documents by path. A ref, not state: MarkdownPanel reports
+  // false on every mount, so a state variable would flicker clean while DOC B
+  // opens although DOC A still holds unsaved text. Cleared when a doc closes.
+  const markdownDirtyRef = useRef<Set<string>>(new Set());
   const [externalFileChange, setExternalFileChange] = useState<ExternalFileChange | null>(null);
   const fileChangeSeqRef = useRef(0);
 
@@ -224,10 +247,24 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   const [lastCodePath, setLastCodePath] = useState<string | null>(null);
   // A dirty code buffer plus a click on another Work tab (Timeline/Chat/...): hold
   // the switch until the user confirms, because the tab change unmounts the panel.
-  const [pendingWorkTab, setPendingWorkTab] = useState<{ tab: WorkTab; dirtyName: string } | null>(null);
+  // One pending "discard what Documents shows" confirmation. Leaving the area
+  // (another Work tab) and swapping the visible document both unmount a panel
+  // that may hold unsaved edits, so both hold the move here until the user
+  // confirms. `run` is the unguarded switch the dialog lets through.
+  type PendingDiscard = {
+    run: () => void;
+    dirtyName: string;
+    description: string;
+    body: string;
+    confirmTestId: string;
+  };
+  const [pendingDiscard, setPendingDiscard] = useState<PendingDiscard | null>(null);
   // A dirty code buffer plus a chat switch: the buffer would land in another
   // workspace, so hold the switch until the user confirms.
   const [pendingSessionSwitch, setPendingSessionSwitch] = useState<{ run: () => void; dirtyName: string } | null>(null);
+  // Leaving Work (for Chat, or for any other page in the nav bar) unmounts the
+  // editors, so a dirty code or Markdown buffer holds the move until confirmed.
+  const [pendingLeaveWork, setPendingLeaveWork] = useState<{ run: () => void; dirtyName: string } | null>(null);
   // Kind of file open in the Documents tab. `image` keeps its own branch so the
   // office preview and the code editor are never asked to render one.
   type WorkspaceType = "document" | "code" | "prototype" | "markdown" | "image";
@@ -249,31 +286,57 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   // +1 after each finished iteration (LLM call done, token usage persisted) to drive the stats bar refresh
   const [statsTick, setStatsTick] = useState(0);
 
-  /** The unguarded tab switch: only for callers that already hold a yes. */
+  /**
+   * The unguarded tab switch: only for callers that already hold a yes.
+   * Leaving Documents unmounts every panel there, so their dirty reports are
+   * stale once the user accepted the discard — forgetting them here keeps a
+   * later leave-Work from asking about text that is already gone.
+   */
   const commitWorkTab = useCallback((tab: WorkTab) => {
+    if (workTab === "documents" && tab !== "documents") {
+      forgetDiscardedMarkdownEdits(markdownDirtyRef.current, [...markdownDirtyRef.current]);
+    }
     onWorkTabChange(tab);
-  }, [onWorkTabChange]);
+  }, [onWorkTabChange, workTab]);
 
   /**
    * The single entry point for changing the Work tab. Leaving the Documents tab
    * unmounts CodePanel, which drops every open buffer: while the editor is dirty
    * the change waits for a confirmation and Cancel keeps both the tab and the
-   * buffer. The tab bar, the agent timeline, "Start meeting" and opening a
-   * document all come through here; a clean editor switches straight away.
+   * buffer. The tab bar, the agent timeline, "Start meeting", opening a document
+   * and a hash route all come through here; a clean editor switches straight
+   * away. Answers false while the confirmation is pending, so App can hold the
+   * route (and its hash) until the user decides.
    */
-  const handleWorkTabClick = useCallback((tab: WorkTab) => {
+  const requestWorkTabSwitch = useCallback((tab: WorkTab): boolean => {
     const editor = editorStateRef.current;
+    const codeDirty = hasUnsavedEditorEdits(editor);
+    const markdownDirtyPaths = [...markdownDirtyRef.current];
     if (needsDiscardConfirmForWorkTabSwitch({
       currentTab: workTab,
       nextTab: tab,
-      codeDirty: hasUnsavedEditorEdits(editor),
+      codeDirty,
+      markdownDirty: markdownDirtyPaths.length > 0,
     })) {
-      const dirtyPath = editor?.openPath || currentDocPath || "";
-      setPendingWorkTab({ tab, dirtyName: dirtyPath.split("/").pop() || "this file" });
-      return;
+      const dirtyPath = (codeDirty ? editor?.openPath : markdownDirtyPaths[0]) || currentDocPath || "";
+      setPendingDiscard({
+        run: () => commitWorkTab(tab),
+        dirtyName: dirtyPath.split("/").pop() || "this file",
+        // Names the file: the dirty buffer may be a document, not the editor.
+        description: "Leaving Documents closes this file, and its unsaved edits would be thrown away.",
+        body: "Save with Ctrl/Cmd+S to keep your edits, or discard them and switch tabs.",
+        confirmTestId: "work-tab-discard-confirm",
+      });
+      return false;
     }
     commitWorkTab(tab);
+    return true;
   }, [workTab, currentDocPath, commitWorkTab]);
+
+  /** The tab bar and everything else that clicks a Work tab: the guard may hold it. */
+  const handleWorkTabClick = useCallback((tab: WorkTab) => {
+    requestWorkTabSwitch(tab);
+  }, [requestWorkTabSwitch]);
 
   /** Switch to the Work page, optionally on a given tab (the tab asks first). */
   const openWork = useCallback((tab?: WorkTab) => {
@@ -452,18 +515,71 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
 
   /**
    * A chat switch changes the workspace the editor writes to, so a dirty buffer
-   * confirms first. On discard the switch runs and CodePanel closes its tabs —
-   * a buffer from the old chat must never be saved into the new workspace.
+   * confirms first. Markdown counts too: the session-change effect drops the open
+   * documents and clears the dirty set, so a dirty .md would vanish silently.
+   * On discard the switch runs and CodePanel closes its tabs — a buffer from the
+   * old chat must never be saved into the new workspace.
    */
   const guardSessionSwitch = useCallback((run: () => void) => {
     const editor = editorStateRef.current;
-    if (!needsDiscardConfirmForSessionSwitch({ codeDirty: hasUnsavedEditorEdits(editor) })) {
+    const markdownDirtyPaths = [...markdownDirtyRef.current];
+    if (!needsDiscardConfirmForSessionSwitch({
+      codeDirty: hasUnsavedEditorEdits(editor),
+      markdownDirty: markdownDirtyPaths.length > 0,
+    })) {
       run();
       return;
     }
-    const dirtyPath = editor?.openPath || currentDocPath || "";
+    const dirtyPath = (hasUnsavedEditorEdits(editor) ? editor?.openPath : markdownDirtyPaths[0]) || currentDocPath || "";
     setPendingSessionSwitch({ run, dirtyName: dirtyPath.split("/").pop() || "this file" });
   }, [currentDocPath]);
+
+  /** Record every MarkdownPanel dirty report; a clean report clears its file. */
+  const handleMarkdownDirtyChange = useCallback((path: string, dirty: boolean) => {
+    if (!path) return;
+    if (dirty) markdownDirtyRef.current.add(path);
+    else markdownDirtyRef.current.delete(path);
+  }, []);
+
+  /**
+   * The one way out of Work: Chat in the nav bar, any other nav page and the
+   * Work sidebar's Sessions button all end up here through App's navigation.
+   * The page only holds code until CodePanel mounts; a dirty Markdown document
+   * counts too, because leaving Work drops that panel as well. Cancel keeps
+   * the page and both editors; Discard runs the move and drops the buffers.
+   */
+  const requestLeaveWork = useCallback((run: () => void): boolean => {
+    const editor = editorStateRef.current;
+    const codeDirty = hasUnsavedEditorEdits(editor);
+    const markdownDirtyPaths = [...markdownDirtyRef.current];
+    if (!needsDiscardConfirmForLeaveWork({ codeDirty, markdownDirty: markdownDirtyPaths.length > 0 })) {
+      run();
+      return true;
+    }
+    const dirtyPath = (codeDirty ? editor?.openPath : markdownDirtyPaths[0]) || currentDocPath || "";
+    setPendingLeaveWork({ run, dirtyName: dirtyPath.split("/").pop() || "this file" });
+    // The move is held: the caller keeps the page (and the URL) where it is.
+    return false;
+  }, [currentDocPath]);
+
+  // App owns the top-level page: hand it this guard so navigation asks first.
+  useEffect(() => {
+    if (!leaveWorkGuardRef) return;
+    leaveWorkGuardRef.current = requestLeaveWork;
+    return () => {
+      if (leaveWorkGuardRef.current === requestLeaveWork) leaveWorkGuardRef.current = null;
+    };
+  }, [leaveWorkGuardRef, requestLeaveWork]);
+
+  // App's hash routing asks the same question the tab bar asks: a typed
+  // #/work/timeline must not unmount the Documents panels behind its back.
+  useEffect(() => {
+    if (!workTabGuardRef) return;
+    workTabGuardRef.current = requestWorkTabSwitch;
+    return () => {
+      if (workTabGuardRef.current === requestWorkTabSwitch) workTabGuardRef.current = null;
+    };
+  }, [workTabGuardRef, requestWorkTabSwitch]);
 
   const {
     sessions,
@@ -520,6 +636,8 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
     setCodeStarted(false);
     setLastCodePath(null);
     setWorkspaceType("document");
+    // The panels are gone with the previous chat's workspace: forget their dirt.
+    markdownDirtyRef.current.clear();
   }, [activeSession?.session_id]);
 
   // ── Open a file from the tree into the Documents tab ──────────
@@ -591,13 +709,62 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   }, [activeSession?.workspace, workspace, openWork]);
 
   /**
-   * The tree's "Open in workspace". Nothing is lost by opening another kind of
-   * file any more: the code editor stays mounted with its tabs and buffers while
-   * a document takes the visible area, so this never needs a discard prompt.
+   * Closing a document (its tab's X or its panel's X) drops the tab and unmounts
+   * the panel, so a dirty Markdown buffer confirms first. The close itself
+   * forgets the closed path's dirty report, so it must run only after a yes —
+   * deleting it before the guard would make the guard see a clean document and
+   * the text would vanish without a question. Cancel keeps the tab and the text.
+   */
+  const guardDocClose = useCallback((closingPath: string | null, run: () => void) => {
+    if (!needsDiscardConfirmForDocClose({
+      closingPath,
+      markdownDirtyPaths: markdownDirtyRef.current,
+    })) {
+      run();
+      return;
+    }
+    setPendingDiscard({ run, ...closeDocDiscardPrompt(closingPath) });
+  }, []);
+
+  /**
+   * The one way to swap the visible document. Every document panel is keyed by
+   * path, so a path change remounts it and throws the old buffer away: while the
+   * document on screen is dirty the change waits here and Cancel keeps it.
+   * The tab strip and the file tree both come through here; a clean document
+   * switches straight away, with no prompt and no extra render.
+   */
+  const guardDocSwitch = useCallback((nextPath: string | null, run: () => void) => {
+    if (!needsDiscardConfirmForDocSwitch({
+      currentPath: currentDocPath,
+      nextPath,
+      markdownDirtyPaths: markdownDirtyRef.current,
+    })) {
+      run();
+      return;
+    }
+    const leaving = currentDocPath;
+    setPendingDiscard({
+      run: () => {
+        // The panel being left is gone with its edits: forget its report, or the
+        // stale path would ask again on the next document or chat switch.
+        if (leaving) markdownDirtyRef.current.delete(leaving);
+        run();
+      },
+      dirtyName: (leaving || "").split("/").pop() || "this file",
+      description: "Switching documents closes this one, and its unsaved edits would be thrown away.",
+      body: "Save with Ctrl/Cmd+S to keep your edits, or discard them and switch documents.",
+      confirmTestId: "doc-switch-discard-confirm",
+    });
+  }, [currentDocPath]);
+
+  /**
+   * The tree's "Open in workspace". The code editor keeps its tabs and buffers
+   * while a document takes the visible area, but another document replaces the
+   * one on screen — a dirty Markdown buffer confirms first.
    */
   const handleOpenDoc = useCallback((path: string, name: string) => {
-    return openDocInPanel(path, name);
-  }, [openDocInPanel]);
+    guardDocSwitch(path, () => { void openDocInPanel(path, name); });
+  }, [guardDocSwitch, openDocInPanel]);
 
   /** The tab strip: the code chip (once the editor started) then the documents. */
   const docTabItems: DocTab[] = buildDocTabItems({
@@ -610,29 +777,32 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
 
   /** Show an open document chip; an office preview reloads when another one is cached. */
   const activateDoc = useCallback((path: string, name: string) => {
-    if (needsOfficePreview(name)) {
-      // One office preview at a time: another document re-runs the load.
-      if (docState?.filePath === path) {
-        setCurrentDocPath(path);
+    guardDocSwitch(path, () => {
+      if (needsOfficePreview(name)) {
+        // One office preview at a time: another document re-runs the load.
+        if (docState?.filePath === path) {
+          setCurrentDocPath(path);
+          return;
+        }
+        void openDocInPanel(path, name);
         return;
       }
-      void openDocInPanel(path, name);
-      return;
-    }
-    // Markdown and HTML panels are keyed by path and cheap to remount.
-    setDocState(null);
-    setCurrentDocPath(path);
-  }, [docState?.filePath, openDocInPanel]);
+      // Markdown and HTML panels are keyed by path and cheap to remount.
+      setDocState(null);
+      setCurrentDocPath(path);
+    });
+  }, [docState?.filePath, guardDocSwitch, openDocInPanel]);
 
   const handleSelectDocTab = useCallback((path: string) => {
     if (codeStarted && path === lastCodePath) {
       // Enough on its own: workspaceType recomputes and the code wrapper unhides.
-      setCurrentDocPath(path);
+      // The document on screen still unmounts, so a dirty one confirms first.
+      guardDocSwitch(path, () => setCurrentDocPath(path));
       return;
     }
     const doc = openDocs.find((item) => item.path === path);
     if (doc) activateDoc(doc.path, doc.name);
-  }, [codeStarted, lastCodePath, openDocs, activateDoc]);
+  }, [codeStarted, lastCodePath, openDocs, activateDoc, guardDocSwitch]);
 
   /**
    * Close one document tab. The code chip takes over when the editor ever
@@ -642,26 +812,31 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   const handleCloseDocTab = useCallback((path: string) => {
     const index = openDocs.findIndex((doc) => doc.path === path);
     if (index < 0) return;
-    setOpenDocs(openDocs.filter((doc) => doc.path !== path));
-    // The cached office preview goes with its tab.
-    if (docState?.filePath === path) setDocState(null);
-    if (codeActive || currentDocPath !== path) return;
-    const fallback = fallbackAfterClose({
-      openDocs,
-      closedPath: path,
-      codePath: codeStarted ? lastCodePath : null,
+    // The guard runs this close unchanged, or only after the user said discard.
+    guardDocClose(path, () => {
+      setOpenDocs(openDocs.filter((doc) => doc.path !== path));
+      // A closed panel is unmounted, so its dirty report is stale.
+      markdownDirtyRef.current.delete(path);
+      // The cached office preview goes with its tab.
+      if (docState?.filePath === path) setDocState(null);
+      if (codeActive || currentDocPath !== path) return;
+      const fallback = fallbackAfterClose({
+        openDocs,
+        closedPath: path,
+        codePath: codeStarted ? lastCodePath : null,
+      });
+      if (!fallback) {
+        setCurrentDocPath(null);
+        setDocState(null);
+        return;
+      }
+      if (fallback.kind === "code") {
+        setCurrentDocPath(fallback.path);
+        return;
+      }
+      activateDoc(fallback.path, fallback.name);
     });
-    if (!fallback) {
-      setCurrentDocPath(null);
-      setDocState(null);
-      return;
-    }
-    if (fallback.kind === "code") {
-      setCurrentDocPath(fallback.path);
-      return;
-    }
-    activateDoc(fallback.path, fallback.name);
-  }, [openDocs, docState?.filePath, codeActive, currentDocPath, codeStarted, lastCodePath, activateDoc]);
+  }, [guardDocClose, openDocs, docState?.filePath, codeActive, currentDocPath, codeStarted, lastCodePath, activateDoc]);
 
   /**
    * A panel's own close button: drop its tab and hand the area to what the
@@ -677,27 +852,31 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
       setDocState(null);
       return;
     }
-    setOpenDocs((prev) => prev.filter((doc) => doc.path !== closing));
-    // Only the closed document's cached preview goes; a neighbour's can be reused.
-    if (docState?.filePath === closing) setDocState(null);
-    const fallback = fallbackAfterClose({
-      openDocs,
-      closedPath: closing,
-      codePath: codeStarted ? lastCodePath : null,
+    guardDocClose(closing, () => {
+      setOpenDocs((prev) => prev.filter((doc) => doc.path !== closing));
+      // The panel being closed is unmounted: forget its dirty report.
+      markdownDirtyRef.current.delete(closing);
+      // Only the closed document's cached preview goes; a neighbour's can be reused.
+      if (docState?.filePath === closing) setDocState(null);
+      const fallback = fallbackAfterClose({
+        openDocs,
+        closedPath: closing,
+        codePath: codeStarted ? lastCodePath : null,
+      });
+      if (!fallback) {
+        setCurrentDocPath(null);
+        setDocState(null);
+        return;
+      }
+      if (fallback.kind === "code") {
+        // The editor takes the area: no document preview belongs to it.
+        setDocState(null);
+        setCurrentDocPath(fallback.path);
+        return;
+      }
+      activateDoc(fallback.path, fallback.name);
     });
-    if (!fallback) {
-      setCurrentDocPath(null);
-      setDocState(null);
-      return;
-    }
-    if (fallback.kind === "code") {
-      // The editor takes the area: no document preview belongs to it.
-      setDocState(null);
-      setCurrentDocPath(fallback.path);
-      return;
-    }
-    activateDoc(fallback.path, fallback.name);
-  }, [currentDocPath, openDocs, docState?.filePath, codeStarted, lastCodePath, activateDoc]);
+  }, [currentDocPath, guardDocClose, openDocs, docState?.filePath, codeStarted, lastCodePath, activateDoc]);
 
   // Sync active session ID to parent (for NavBar language switcher reset)
   useEffect(() => {
@@ -1957,6 +2136,7 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                         key={currentDocPath}
                         filePath={currentDocPath}
                         sessionId={activeSession?.session_id}
+                        onDirtyChange={(dirty) => handleMarkdownDirtyChange(currentDocPath, dirty)}
                         onClose={closeActiveDoc}
                       />
                     ) : workspaceType === "image" && currentDocPath ? (
@@ -2461,17 +2641,17 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
           </div>
         </Modal>
       )}
-      {pendingWorkTab && (
+      {pendingDiscard && (
         <DiscardChangesDialog
-          fileName={pendingWorkTab.dirtyName}
-          description="Leaving Documents closes the editor, and its unsaved edits would be thrown away."
-          body="Save with Ctrl/Cmd+S to keep your edits, or discard them and switch tabs."
-          confirmTestId="work-tab-discard-confirm"
-          onCancel={() => setPendingWorkTab(null)}
+          fileName={pendingDiscard.dirtyName}
+          description={pendingDiscard.description}
+          body={pendingDiscard.body}
+          confirmTestId={pendingDiscard.confirmTestId}
+          onCancel={() => setPendingDiscard(null)}
           onDiscard={() => {
-            const next = pendingWorkTab;
-            setPendingWorkTab(null);
-            if (next) commitWorkTab(next.tab);
+            const next = pendingDiscard;
+            setPendingDiscard(null);
+            next?.run();
           }}
         />
       )}
@@ -2485,6 +2665,20 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
           onDiscard={() => {
             const next = pendingSessionSwitch;
             setPendingSessionSwitch(null);
+            next?.run();
+          }}
+        />
+      )}
+      {pendingLeaveWork && (
+        <DiscardChangesDialog
+          fileName={pendingLeaveWork.dirtyName}
+          description="Leaving Work closes the editor and its documents, and their unsaved edits would be thrown away."
+          body="Save with Ctrl/Cmd+S to keep your edits, or discard them and leave Work."
+          confirmTestId="leave-work-discard-confirm"
+          onCancel={() => setPendingLeaveWork(null)}
+          onDiscard={() => {
+            const next = pendingLeaveWork;
+            setPendingLeaveWork(null);
             next?.run();
           }}
         />

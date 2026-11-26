@@ -603,3 +603,144 @@ describe("CodePanel stale-write guard", () => {
     expect(saveFileMock).not.toHaveBeenCalled();
   });
 });
+
+describe("CodePanel save race", () => {
+  it("keeps typing that lands during a save dirty and keeps the newer text", async () => {
+    readFileMock.mockResolvedValue({
+      path: "/w/src/a.ts", content: "const a = 1;\n", truncated: false, mtime_ms: 1111,
+    });
+    const { host, handle, render, states } = await renderPanel();
+    act(() => { handle!.view.dispatch({ changes: { from: 0, insert: "// one\n" } }); });
+    await flush();
+
+    let resolveSave!: (value: { status: string; path: string; size: number; mtime_ms: number }) => void;
+    saveFileMock.mockImplementationOnce(() => new Promise((resolve) => { resolveSave = resolve; }));
+
+    pressSave();
+    await flush();
+    expect(saveFileMock).toHaveBeenCalledTimes(1);
+    expect(states[states.length - 1].dirty).toBe(true);
+
+    // More typing while the request is still in flight.
+    act(() => { handle!.view.dispatch({ changes: { from: 0, insert: "// two\n" } }); });
+    await flush();
+
+    await act(async () => {
+      resolveSave({ status: "ok", path: "/w/src/a.ts", size: 30, mtime_ms: 4000 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await flush();
+
+    // Only "// one\n..." reached the disk; the newer buffer is still unsaved.
+    expect(handle!.getContent()).toBe("// two\n// one\nconst a = 1;\n");
+    expect(states[states.length - 1].dirty).toBe(true);
+
+    // So a file_updated for the same path must not replace that newer text.
+    readFileMock.mockResolvedValueOnce({
+      path: "/w/src/a.ts", content: "// disk\n", truncated: false, mtime_ms: 5000,
+    });
+    await act(async () => { render({ externalChange: externalChange({ seq: 1 }) }); });
+    await flush();
+    expect(host.querySelector('[data-testid="code-external-change"]')).not.toBeNull();
+    expect(handle!.getContent()).toBe("// two\n// one\nconst a = 1;\n");
+  });
+});
+
+describe("CodePanel encoding", () => {
+  it("saves a latin-1 file with its own encoding and shows it", async () => {
+    readFileMock.mockResolvedValue({
+      path: "/w/src/a.ts", content: "café\n", truncated: false, encoding: "latin-1", mtime_ms: 1111,
+    });
+    const { host, handle } = await renderPanel();
+    expect(host.querySelector('[data-testid="code-encoding"]')!.textContent).toBe("latin-1");
+
+    act(() => { handle!.view.dispatch({ changes: { from: 0, insert: "// ü\n" } }); });
+    await flush();
+    pressSave();
+    await flush();
+
+    expect(saveFileMock.mock.calls[0][1]).toBe("// ü\ncafé\n");
+    expect((saveFileMock.mock.calls[0][3] as { encoding?: string }).encoding).toBe("latin-1");
+  });
+
+  it("still saves a utf-8 file as utf-8", async () => {
+    readFileMock.mockResolvedValue({
+      path: "/w/src/a.ts", content: "café\n", truncated: false, encoding: "utf-8", mtime_ms: 1111,
+    });
+    const { host, handle } = await renderPanel();
+    expect(host.querySelector('[data-testid="code-encoding"]')!.textContent).toBe("utf-8");
+
+    act(() => { handle!.view.dispatch({ changes: { from: 0, insert: "// ü\n" } }); });
+    await flush();
+    pressSave();
+    await flush();
+
+    expect((saveFileMock.mock.calls[0][3] as { encoding?: string }).encoding).toBe("utf-8");
+  });
+});
+
+describe("CodePanel conflict banner binding", () => {
+  it("is hidden for a tab other than the one that conflicted", async () => {
+    readFileMock.mockImplementation((path: string) => Promise.resolve({
+      path,
+      content: path.endsWith("b.ts") ? "const b = 1;\n" : "const a = 1;\n",
+      truncated: false,
+      mtime_ms: path.endsWith("b.ts") ? 2222 : 1111,
+    }));
+    const { host, handle, handles, render } = await renderPanel();
+    act(() => { handle!.view.dispatch({ changes: { from: 0, insert: "// mine\n" } }); });
+    await flush();
+
+    // Another writer changes a.ts while its buffer is dirty: banner for a.ts.
+    readFileMock.mockResolvedValueOnce({
+      path: "/w/src/a.ts", content: "// outside\nconst a = 1;\n", truncated: false, mtime_ms: 3000,
+    });
+    await act(async () => { render({ externalChange: externalChange({ seq: 1 }) }); });
+    await flush();
+    expect(host.querySelector('[data-testid="code-external-change"]')).not.toBeNull();
+
+    // Switching to the clean b.ts must not carry a.ts's banner over it.
+    await act(async () => { render({ initialPath: "/w/src/b.ts" }); });
+    await waitForEditorContent(handles, "const b = 1;\n");
+    expect(host.querySelector('[data-testid="code-external-change"]')).toBeNull();
+
+    // Back on a.ts the banner is still there and its diff shows a.ts's buffer.
+    await act(async () => { render({ initialPath: "/w/src/a.ts" }); });
+    const editorA = await waitForEditorContent(handles, "// mine\nconst a = 1;\n");
+    const banner = host.querySelector('[data-testid="code-external-change"]');
+    expect(banner).not.toBeNull();
+    const showDiff = Array.from(banner!.querySelectorAll("button")).find((b) => b.textContent === "Show diff")!;
+    act(() => { showDiff.click(); });
+    await flush();
+    expect(document.body.textContent).toContain("Changes in a.ts");
+    expect(document.querySelector('[data-testid="code-diff-body"]')).not.toBeNull();
+    const keep = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Keep my buffer")!;
+    act(() => { keep.click(); });
+    await flush();
+
+    const reload = Array.from(banner!.querySelectorAll("button")).find((b) => b.textContent === "Reload")!;
+    await act(async () => { reload.click(); });
+    await flush();
+
+    // Only a.ts adopted the disk copy; b.ts was never touched.
+    expect(editorA.getContent()).toBe("// outside\nconst a = 1;\n");
+    expect(host.querySelector('[data-testid="code-external-change"]')).toBeNull();
+  });
+
+  it("clears the dirty flag after a save that races nothing", async () => {
+    readFileMock.mockResolvedValue({
+      path: "/w/src/a.ts", content: "const a = 1;\n", truncated: false, mtime_ms: 1111,
+    });
+    const { handle, states } = await renderPanel();
+    act(() => { handle!.view.dispatch({ changes: { from: 0, insert: "// one\n" } }); });
+    await flush();
+    expect(states[states.length - 1].dirty).toBe(true);
+
+    pressSave();
+    await flush();
+
+    expect(states[states.length - 1].dirty).toBe(false);
+    expect(states[states.length - 1].openPath).toBe("/w/src/a.ts");
+    expect(handle!.getContent()).toBe("// one\nconst a = 1;\n");
+  });
+});

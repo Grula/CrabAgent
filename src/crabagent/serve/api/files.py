@@ -486,17 +486,48 @@ def read_text_file(
     line_no = 0
     hit_byte_cap = False
     with target.open("rb") as fh:
-        for raw_line in fh:
-            line_no += 1
-            if line_no < first:
-                continue
-            if last >= 0 and line_no > last:
+        # Lines before `first` still have to be consumed: the only way to find
+        # where line `first` starts is to read up to its newline. Each read is
+        # capped like a page, so a huge single-line file cannot be materialised
+        # here; a skipped line over the page cap therefore ends the read as
+        # truncated (line `first` cannot be located without buffering it).
+        while line_no < first - 1:
+            raw_skip = fh.readline(MAX_TEXT_BYTES + 1)
+            if not raw_skip:
                 break
-            if total + len(raw_line) > MAX_TEXT_BYTES:
+            if len(raw_skip) > MAX_TEXT_BYTES:
+                info.update(
+                    start_line=first,
+                    end_line=first,
+                    truncated=True,
+                    message="An earlier line exceeds 1MB; read the file without start_line",
+                )
+                return info
+            line_no += 1
+        # From here every read is bounded by the remaining budget. Plain
+        # iteration would buffer a whole line first, so a 100 MB single-line
+        # file would be fully materialised before the byte cap is checked.
+        while last < 0 or line_no < last:
+            remaining = MAX_TEXT_BYTES - total
+            raw_line = fh.readline(remaining + 1)
+            if not raw_line:
+                break
+            line_no += 1
+            if len(raw_line) > remaining:
+                # The line alone is bigger than a page: return its bounded
+                # prefix and stop, exactly like a byte-cap cut between lines.
+                if remaining > 0:
+                    chunk.append(raw_line[:remaining])
+                    total += remaining
                 hit_byte_cap = True
                 break
             chunk.append(raw_line)
             total += len(raw_line)
+        has_more = hit_byte_cap
+        if not has_more and last >= 0 and line_no >= last:
+            # An end_line page must still report whether a next line exists;
+            # a single bounded byte is enough to tell.
+            has_more = bool(fh.readline(1))
     text, encoding, is_binary = decode_file_bytes(b"".join(chunk))
     if is_binary:
         info["binary"] = True
@@ -509,7 +540,7 @@ def read_text_file(
         # An empty chunk (start_line past EOF) must not report an inverted range.
         end_line=max(first, first + len(chunk) - 1),
         truncated=hit_byte_cap,
-        has_more=hit_byte_cap or (last >= 0 and line_no > last),
+        has_more=has_more,
     )
     return info
 

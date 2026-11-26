@@ -229,12 +229,13 @@ async def test_a_cancelled_test_run_kills_the_pytest_tree(tmp_path):
 # ── Cancel racing the auto-background hand-over ───────────────────────────────
 
 
-def _bg_logs() -> set[Path]:
-    return set(Path(tempfile.gettempdir()).glob("crabagent-bg-*.log*"))
+def _bg_logs(pid: int | str) -> list[Path]:
+    """The auto-background files of one job (logs are shared per /tmp, pids are not)."""
+    return sorted(Path(tempfile.gettempdir()).glob(f"crabagent-bg-{pid}.log*"))
 
 
-def _drop_bg_logs(seen: set[Path]) -> None:
-    for path in _bg_logs() - seen:
+def _drop_bg_logs(pid: int | str) -> None:
+    for path in _bg_logs(pid):
         path.unlink(missing_ok=True)
 
 
@@ -242,7 +243,7 @@ def _drop_bg_logs(seen: set[Path]) -> None:
 async def test_cancel_during_the_timeout_window_kills_instead_of_backgrounding(tmp_path):
     """A stop that lands while the timeout hands the job over must win over backgrounding."""
     pid_file = tmp_path / "child.pid"
-    logs_before = _bg_logs()
+    pid: int | None = None
     ctx = AgentContext(workspace=tmp_path)
     task = asyncio.ensure_future(
         bash_command(
@@ -256,9 +257,20 @@ async def test_cancel_during_the_timeout_window_kills_instead_of_backgrounding(t
         pid = await _read_pid(pid_file)
         assert _alive(pid)
 
+        # Synchronise on the hand-over itself instead of sleeping a fixed
+        # interval: _auto_background creates this log right after the timeout
+        # fires and right before it settles for a second before its next cancel
+        # re-check. Waiting for the file puts the cancel deterministically
+        # inside that window however loaded the machine is.
+        handover_log = Path(tempfile.gettempdir()) / f"crabagent-bg-{pid}.log"
+        handover_log.unlink(missing_ok=True)  # a stale one would make the wait a no-op
+        deadline = time.monotonic() + 10
+        while not handover_log.exists():
+            assert time.monotonic() < deadline, "the timeout never started the hand-over"
+            await asyncio.sleep(0.01)
+
         # Inside the window: the timeout already fired and _auto_background is
-        # starting (it sleeps a second) — the job is not tracked yet.
-        await asyncio.sleep(0.8)
+        # settling — the job is not tracked yet.
         started = time.monotonic()
         ctx.request_cancel()
         result = await asyncio.wait_for(task, timeout=10)
@@ -272,17 +284,17 @@ async def test_cancel_during_the_timeout_window_kills_instead_of_backgrounding(t
         assert "Traceback" not in result
         # No bookkeeping entry and no log for a job nobody can follow.
         assert [j for j in bash_tool._JOBS.values() if "sleep 30" in j.command] == []
-        assert _bg_logs() == logs_before
+        assert _bg_logs(pid) == []
         assert await _wait_gone(pid)
     finally:
         task.cancel()
-        _drop_bg_logs(logs_before)
+        if pid is not None:
+            _drop_bg_logs(pid)
 
 
 @pytest.mark.asyncio
 async def test_the_plain_timeout_still_moves_the_command_to_the_background(tmp_path):
     """Without a cancel the same timeout still backgrounds the job, and bash_stop ends it."""
-    logs_before = _bg_logs()
     ctx = AgentContext(workspace=tmp_path)
     result = await asyncio.wait_for(
         bash_command(
@@ -307,7 +319,7 @@ async def test_the_plain_timeout_still_moves_the_command_to_the_background(tmp_p
         assert await _wait_gone(pid)
     finally:
         bash_tool._JOBS.pop(pid, None)
-        _drop_bg_logs(logs_before)
+        _drop_bg_logs(pid)
 
 
 # ── Hard cancel (task.cancel) kills the group too ─────────────────────────────

@@ -4,6 +4,7 @@ import asyncio
 import copy
 import inspect
 import logging
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,24 @@ class ToolInfo:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _remove_staging_dir(staging: Path | None) -> None:
+    """Drop one snapshot batch's staging dir; never the shared parent.
+
+    ``_staging`` also holds other batches' files (another agent round, a pending
+    confirmation, a concurrent editor save), so only this batch's directory may
+    go. The parent is removed afterwards only when it is already empty.
+    """
+    if staging is None:
+        return
+    import shutil
+
+    shutil.rmtree(str(staging), ignore_errors=True)
+    try:
+        Path(staging).parent.rmdir()  # only succeeds when no other batch stages
+    except OSError:
+        pass
 
 # Built-ins whose success means a workspace file changed on disk. Every other
 # tool (MCP, shell, office) stays out: FILE_UPDATED drives editor reloads.
@@ -212,14 +231,24 @@ class ToolRegistry:
         if rel in pending:
             return  # Already captured before another tool in the same round
 
-        # Copy the file content NOW (before the tool modifies it)
+        # Copy the file content NOW (before the tool modifies it). Each snapshot
+        # batch stages under its own directory: an editor save in another
+        # request flushes (and removes) only its own batch, so it can never
+        # destroy a snapshot this tool has staged while its confirmation is
+        # still pending.
         import shutil
 
-        staging = ws / ".crabagent" / "molts" / "_staging"
         src = ws / rel
         if src.exists() and src.is_file():
             try:
-                dst = staging / rel
+                staging = context.metadata.get("_molt_staging_dir")
+                if staging is None:
+                    from crabagent.core.molt.store import mark_staging_owner
+
+                    staging = ws / ".crabagent" / "molts" / "_staging" / uuid.uuid4().hex
+                    mark_staging_owner(Path(staging))
+                    context.metadata["_molt_staging_dir"] = staging
+                dst = Path(staging) / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(src), str(dst))
             except Exception:
@@ -232,6 +261,7 @@ class ToolRegistry:
     async def _flush_molt_snapshot(self, context: Any) -> None:
         context.metadata.pop("_batch_molt", None)
         pending = context.metadata.pop("_pending_molt_files", None)
+        staging = context.metadata.pop("_molt_staging_dir", None)
         if not pending:
             return
         from crabagent.core.database import async_session_factory
@@ -241,20 +271,21 @@ class ToolRegistry:
         files = sorted(pending)
         desc = f"Before: {', '.join(files[:3])}" + (f" +{len(files) - 3} more" if len(files) > 3 else "")
         ws = context.workspace.resolve()
-        staging = ws / ".crabagent" / "molts" / "_staging"
 
-        # Check if any staged files exist
+        # Check if any staged files exist (only files this batch staged: the
+        # staging directory is per batch, so another request's staged files are
+        # invisible here and therefore safe).
         staged_files = []
         for fp in files:
-            staged = staging / fp
-            if staged.exists() and staged.is_file():
+            staged = Path(staging) / fp if staging is not None else None
+            if staged is not None and staged.exists() and staged.is_file():
                 staged_files.append(fp)
 
         if not staged_files:
             # All files were new (didn't exist before) — nothing to snapshot
             import shutil
 
-            shutil.rmtree(str(staging), ignore_errors=True)
+            _remove_staging_dir(Path(staging) if staging is not None else None)
             return
 
         # Create the molt directory and move staged files into it
@@ -294,16 +325,16 @@ class ToolRegistry:
 
             # Move staged files into molt directory
             for fp in staged_files:
-                src = staging / fp
+                src = Path(staging) / fp
                 dst = md / fp
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(src), str(dst))
 
-            # Clean up empty staging dir
-            shutil.rmtree(str(staging), ignore_errors=True)
+            # Clean up this batch's (now empty) staging dir only
+            _remove_staging_dir(Path(staging))
         except Exception:
             logger.warning("Failed to create molt snapshot directory", exc_info=True)
-            shutil.rmtree(str(staging), ignore_errors=True)
+            _remove_staging_dir(Path(staging) if staging is not None else None)
             shutil.rmtree(str(md), ignore_errors=True)
             return
 

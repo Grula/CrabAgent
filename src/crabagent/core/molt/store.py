@@ -13,6 +13,96 @@ from crabagent.core.timeutil import iso_utc
 
 logger = logging.getLogger(__name__)
 
+# A staging batch is only alive for the duration of one agent round or editor
+# save, so anything untouched for this long was left by a crashed session.
+_STAGING_STALE_SECONDS = 3600
+
+# Written into every batch dir at creation. Age alone cannot tell a crashed
+# batch from one still waiting on a tool call or a user confirmation, so the
+# owning pid decides: a live batch is never pruned however old it gets.
+_STAGING_MARKER = ".staging_owner.json"
+
+
+def mark_staging_owner(staging: Path) -> None:
+    """Record the owning process inside a staging batch directory."""
+    import json
+    import os
+    import time
+
+    try:
+        staging.mkdir(parents=True, exist_ok=True)
+        (staging / _STAGING_MARKER).write_text(
+            json.dumps({"pid": os.getpid(), "created_at": time.time()}), encoding="utf-8"
+        )
+    except OSError:
+        logger.debug("Could not write staging marker in %s", staging, exc_info=True)
+
+
+def _staging_owner_alive(entry: Path) -> bool | None:
+    """True/False from the batch marker, or None when it cannot be checked.
+
+    None covers a missing marker (older version), an unreadable one, and
+    platforms where a signal-0 probe is not safe: those fall back to age.
+    """
+    import json
+    import os
+
+    if os.name != "posix":  # os.kill(pid, 0) on Windows terminates the process
+        return None
+    try:
+        pid = int(json.loads((entry / _STAGING_MARKER).read_text(encoding="utf-8"))["pid"])
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+    if pid <= 0:
+        return None
+    try:
+        os.kill(pid, 0)  # signal 0 only probes existence; nothing is delivered
+    except ProcessLookupError:
+        return False  # no such process: the batch was abandoned
+    except PermissionError:
+        return True  # exists but owned by another user: still live
+    except OSError:
+        return None
+    return True
+
+
+def _prune_stale_staging(md_base: Path) -> int:
+    """Remove staging batches left behind by a crashed session.
+
+    Each in-flight batch stages under its own ``_staging/<id>`` directory, so a
+    fresh directory belongs to a live write and must survive. A batch that is
+    still live (its owning pid answers) survives regardless of age: a pending
+    confirmation can outlast the hour, and pruning it would destroy the snapshot
+    its later flush needs. Everything else is removed once untouched for an
+    hour.
+    """
+    staging = md_base / "_staging"
+    if not staging.is_dir():
+        return 0
+    import shutil
+    import time
+
+    cutoff = time.time() - _STAGING_STALE_SECONDS
+    pruned = 0
+    for entry in staging.iterdir():
+        if entry.is_dir() and _staging_owner_alive(entry):
+            continue
+        try:
+            if entry.stat().st_mtime >= cutoff:
+                continue
+        except OSError:
+            continue
+        if entry.is_dir():
+            shutil.rmtree(str(entry), ignore_errors=True)
+        else:
+            entry.unlink(missing_ok=True)
+        pruned += 1
+    try:
+        staging.rmdir()  # only when nothing is staging right now
+    except OSError:
+        pass
+    return pruned
+
 
 def molt_dir(workspace: Path | None = None) -> Path:
     ws = workspace.resolve() if workspace else settings.workspace.resolve()
@@ -104,11 +194,9 @@ async def prune_molts(workspace: Path | None = None) -> int:
     md_base = molt_dir(workspace)
     db_ids: set[str] = set()
 
-    # Clean up any stale staging directory from a previous crashed session
-    staging = md_base / "_staging"
-    if staging.exists():
-        shutil.rmtree(str(staging), ignore_errors=True)
-        pruned += 1
+    # Clean up staging left by a crashed session, but never a batch that is
+    # still in flight (and especially never the whole shared _staging dir).
+    pruned += _prune_stale_staging(md_base)
 
     async with async_session_factory() as db:
         # Prune old molts for THIS workspace only
@@ -135,11 +223,12 @@ async def prune_molts(workspace: Path | None = None) -> int:
             result2 = await db.execute(select(Molt.molt_id))
         db_ids = {row[0] for row in result2.fetchall()}
 
-    # Clean up orphaned directories (on disk but not in DB)
+    # Clean up orphaned directories (on disk but not in DB). `_staging` is not a
+    # molt but the live scratch area for in-flight writes: never an orphan.
     if md_base.exists():
         orphan_count = 0
         for d in md_base.iterdir():
-            if d.is_dir() and d.name not in db_ids:
+            if d.is_dir() and d.name != "_staging" and d.name not in db_ids:
                 shutil.rmtree(str(d), ignore_errors=True)
                 orphan_count += 1
         if orphan_count:
