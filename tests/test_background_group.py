@@ -3,12 +3,54 @@ import subprocess
 import sys
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from crabagent.core import database as db
 from crabagent.core.agent import agents, background, background_group
-from tests.test_background_delegation import context, session_factory  # noqa: F401
+from tests.test_background_delegation import context
+
+
+@pytest.fixture
+async def session_factory(tmp_path, monkeypatch):
+    """A database of this test's own, configured like the real one.
+
+    Groups, their jobs and the executor's watcher tasks all write through
+    ``db.async_session_factory`` while the test runs, so the bare engine used
+    by the shared fixture (SQLite's 5 s default busy timeout, rollback journal)
+    raised "database is locked" under ``-n auto`` CPU pressure. Production uses
+    ``timeout=30`` and WAL (see ``database.py``); mirror that here.
+    """
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
+    async with engine.begin() as conn:
+        await conn.execute(text("PRAGMA journal_mode=WAL"))
+        await conn.run_sync(db.Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    # ``background`` and ``background_group`` look the factory up on the
+    # database module at call time (they import ``database as db``), so this
+    # patch covers every module under test.
+    monkeypatch.setattr(db, "async_session_factory", factory)
+    async with factory() as session:
+        session.add(db.Conversation(session_id="session", user_id=1, active_branch="main"))
+        await session.commit()
+    yield factory
+    for job in list(background._jobs.values()):
+        job.cancel()
+        await asyncio.gather(job, return_exceptions=True)
+    if background._watcher_task is not None and background._watcher_task.get_loop() is asyncio.get_running_loop():
+        background._watcher_task.cancel()
+        await asyncio.gather(background._watcher_task, return_exceptions=True)
+    background._watcher_task = None
+    if background._owner_file is not None:
+        background._owner_file.close()
+        background._owner_file = None
+        background._owner_pid = None
+    background._recovery_task = None
+    background._reservations.clear()
+    await engine.dispose()
 
 
 @pytest.fixture(autouse=True)
@@ -72,6 +114,27 @@ async def test_validation_and_cancel(session_factory, monkeypatch):
     result = await background_group.cancel(context(), gid)
     assert result["steps"][0]["status"] == "cancelled"
     assert (await background.get(context(), result["steps"][0]["job_id"]))["status"] == "cancelled"
+
+
+async def test_group_start_waits_out_a_slow_writer_instead_of_locking(session_factory, monkeypatch):
+    """A concurrent writer does not turn a group start into 'database is locked'."""
+    async def agent(_): return {"name": "a"}
+    async def spawn(*args, **kwargs): await asyncio.sleep(10)
+    monkeypatch.setattr(agents, "get_agent", agent)
+    monkeypatch.setattr(agents, "spawn_sub_agent", spawn)
+    blocker = create_async_engine(session_factory.kw["bind"].url)
+    try:
+        async with blocker.connect() as raw:
+            await raw.exec_driver_sql("BEGIN IMMEDIATE")  # hold the write lock
+            starting = asyncio.create_task(background_group.start(
+                context(), [{"id": "a", "agent_name": "a", "task": "task"}]))
+            # Longer than SQLite's 5 s default busy timeout in a bare engine.
+            await asyncio.sleep(6)
+            await raw.exec_driver_sql("COMMIT")
+        gid = await asyncio.wait_for(starting, 25)
+    finally:
+        await blocker.dispose()
+    assert (await background_group.cancel(context(), gid))["status"] == "cancelled"
 
 
 async def test_cancel_during_start(session_factory, monkeypatch):

@@ -232,12 +232,17 @@ class ToolRegistry:
         if not raw:
             return
         try:
-            from pathlib import Path as _Path
+            from .path_utils import resolve_tool_path
 
-            resolved = _Path(raw).resolve()
-            ws = context.workspace.resolve()
+            # Resolve exactly like write/edit do: expanduser plus the workspace
+            # base, so a workspace-relative path stages the same file the tool
+            # will modify even when the process cwd is elsewhere.
+            resolved, error = resolve_tool_path(raw, context)
+            if resolved is None or error:
+                return  # Unresolvable: stage nothing rather than the wrong file
+            ws = Path(context.workspace).resolve()
             rel = str(resolved.relative_to(ws))
-        except (ValueError, Exception):
+        except Exception:
             return
 
         # Only snapshot each file once per round

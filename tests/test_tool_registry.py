@@ -410,3 +410,66 @@ async def test_valid_call_confirms_then_snapshots_exactly_once(tmp_path):
     staged = list((tmp_path / ".crabagent" / "molts" / "_staging").rglob("notes.txt"))
     assert len(staged) == 1
     assert staged[0].read_text(encoding="utf-8") == "old\n"
+
+
+# ── snapshot path resolution matches the tools ────────────────────────
+
+
+def _snapshot_ctx(workspace):
+    ctx = AgentContext(workspace=workspace)
+    ctx.tool_permissions["write"] = "auto"
+    ctx.metadata["_batch_molt"] = True
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_snapshot_stages_a_workspace_relative_path_when_cwd_differs(tmp_path, monkeypatch):
+    registry = ToolRegistry()
+    _write_tool(registry, [])
+    workspace = tmp_path / "workspace"
+    (workspace / "sub").mkdir(parents=True)
+    (workspace / "sub" / "notes.txt").write_text("old\n", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    ctx = _snapshot_ctx(workspace)
+
+    await registry.execute("write", {"file_path": "sub/notes.txt", "content": "new\n"}, context=ctx)
+
+    staged = list((workspace / ".crabagent" / "molts" / "_staging").rglob("notes.txt"))
+    assert len(staged) == 1
+    assert staged[0].read_text(encoding="utf-8") == "old\n"
+    assert "_pending_molt_files" in ctx.metadata
+
+
+@pytest.mark.asyncio
+async def test_snapshot_stages_a_home_relative_path_inside_the_workspace(tmp_path, monkeypatch):
+    registry = ToolRegistry()
+    _write_tool(registry, [])
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "notes.txt").write_text("old\n", encoding="utf-8")
+    ctx = _snapshot_ctx(tmp_path)
+
+    await registry.execute("write", {"file_path": "~/notes.txt", "content": "new\n"}, context=ctx)
+
+    staged = list((tmp_path / ".crabagent" / "molts" / "_staging").rglob("notes.txt"))
+    assert len(staged) == 1
+    assert staged[0].read_text(encoding="utf-8") == "old\n"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_stages_nothing_for_a_path_outside_the_workspace(tmp_path):
+    registry = ToolRegistry()
+    _write_tool(registry, [])
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("old\n", encoding="utf-8")
+    ctx = _snapshot_ctx(workspace)
+
+    for raw in ("../outside.txt", str(outside)):
+        result = await registry.execute("write", {"file_path": raw, "content": "new\n"}, context=ctx)
+
+        assert result == "ok"  # staging never raises
+        assert "_pending_molt_files" not in ctx.metadata
+    assert not (workspace / ".crabagent").exists()
