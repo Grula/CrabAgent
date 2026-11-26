@@ -370,13 +370,18 @@ def test_engineer_is_a_solo_fast_path():
     assert "is yours to fix, not to report" in goal
 
 
-def test_general_routes_contained_changes_to_the_engineer():
+def test_general_hands_any_change_over_at_once_to_the_engineer_by_default():
+    # Two evals: with a "contained vs big" judgement General investigated first (21 and 11 commands,
+    # approval prompts) and sent four small bug fixes to the architect, with a summary saying "hand to X".
     general = next(a for a in db.DEFAULT_AGENTS if a["name"] == "general")
-    assert '(agent_name "engineer") for a contained change' in general["goal"]
-    assert '(agent_name "architect") for big work' in general["goal"]
-    # Eval: General ran 21 commands (two approval prompts) on a change it then handed over.
-    assert "without investigating it first" in general["goal"]
-    assert "even when they touch both backend and frontend" in general["goal"]
+    first_line = general["goal"].split("\n", 1)[0]
+    assert "hand over at once with switch_agent" in first_line
+    assert "to the engineer by default" in first_line
+    assert "architect only for a project-sized feature or when the user asks for the team" in first_line
+    assert "don't weigh its size" in first_line
+    assert "without running a command or reading code first" in general["goal"]
+    assert 'not "hand this to X"' in general["goal"]
+    assert "who is taking over" in general["goal"]
 
 
 def test_architect_hands_contained_requests_to_the_engineer():
