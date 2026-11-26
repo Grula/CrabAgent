@@ -214,7 +214,8 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   const DOC_PANEL_DEFAULT = 520;
   const DOC_PANEL_STORAGE_KEY = "crabagent_doc_panel_width";
   const SESSION_LIST_W = 256; // w-64 = 16rem = 256px
-  const CHAT_MIN_W = 380;
+  // The composer and stats bar fit on one row from about 512px; below that they wrap.
+  const CHAT_MIN_W = 460;
 
   /** Dynamic max: viewport minus sidebar minus minimum chat width */
   const docPanelMax = () => window.innerWidth - SESSION_LIST_W - CHAT_MIN_W;

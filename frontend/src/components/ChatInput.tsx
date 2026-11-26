@@ -93,7 +93,7 @@ export default function ChatInput({
   );
 
   return (
-    <div className="composer" onClick={(e) => { if (e.target === e.currentTarget) inputRef.current?.focus(); }}>
+    <div className="composer @container" onClick={(e) => { if (e.target === e.currentTarget) inputRef.current?.focus(); }}>
       {attachments}
       <textarea
         ref={inputRef}
@@ -114,8 +114,11 @@ export default function ChatInput({
         autoFocus={autoFocus}
         className="composer__input"
       />
-      {/* Phones: pickers get their own row above the buttons; wider screens: one row */}
-      <div className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 sm:flex-nowrap">
+      {/* A narrow composer (a phone, or the chat column beside the Work panel) puts the
+          pickers on their own row above the buttons; a wide one keeps a single row.
+          Container queries (@lg), not viewport breakpoints: the column can be narrow
+          on a wide screen. */}
+      <div className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 @lg:flex-nowrap">
         <button
           type="button"
           onClick={onFileUpload}
@@ -151,11 +154,11 @@ export default function ChatInput({
           </button>
         )}
         {toolbar && (
-          <div className="order-first flex w-full min-w-0 items-center gap-0.5 overflow-x-auto scrollbar-none sm:order-none sm:ml-auto sm:w-auto sm:justify-end">
+          <div className="order-first flex w-full min-w-0 flex-wrap items-center gap-0.5 @lg:order-none @lg:ml-auto @lg:w-auto @lg:flex-nowrap @lg:justify-end">
             {toolbar}
           </div>
         )}
-        <span className={cn("ml-auto", !!toolbar && "sm:hidden")} />
+        <span className={cn("ml-auto", !!toolbar && "@lg:hidden")} />
         {sending && (
           <button
             type="button"

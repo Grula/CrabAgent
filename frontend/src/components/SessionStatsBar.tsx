@@ -90,7 +90,7 @@ export function SessionStatsBar({ sessionId, refreshKey = 0 }: Props) {
   const cacheGood = summary.cache_hit_rate >= 0.7;
 
   return (
-    <div className="flex items-center gap-3 overflow-x-auto pb-1.5 mb-1.5 scrollbar-none text-[11px]">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pb-1.5 mb-1.5 text-[11px]">
       <Stat
         icon={<Zap size={12} />}
         label="Total tokens"
