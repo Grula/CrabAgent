@@ -28,6 +28,7 @@ def con(tmp_path):
         create table task_requests (request_key text, session_id text, request_type text, question text,
             options text, status text);
         create table token_usage (session_id text, prompt_tokens int, completion_tokens int, cached_tokens int);
+        create table tool_invocations (id integer primary key, run_id int, tool_name text, ok int, reason_class text);
         create table conversations (id integer primary key, session_id text);
         create table messages (id integer primary key, conversation_id int, role text, content text);
         """
@@ -220,3 +221,10 @@ def test_a_patch_that_does_not_apply_stops_the_eval(tmp_path):
     )
     with pytest.raises(SystemExit, match="does not apply"):
         agent_eval._prepare_workspace(task, tmp_path / "out", {"setup_patch": "bugs.patch"})
+
+
+def test_tool_trace_summarises_calls_and_failures():
+    calls = [("bash", 1, "ok"), ("bash", 0, "timeout"), ("read", 1, "ok"), ("bash", 0, "timeout"),
+             ("bash", 0, "nonzero_exit")]
+    assert agent_eval._trace(calls) == "bash x4 (3 failed: timeout x2, nonzero_exit x1), read x1"
+    assert agent_eval._trace([]) == ""

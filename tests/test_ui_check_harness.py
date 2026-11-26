@@ -42,3 +42,15 @@ def test_sigterm_becomes_systemexit_so_cleanup_runs(tmp_path, monkeypatch):
         for signum, handler in old.items():
             signal.signal(signum, handler)
     assert len(stopped) == 1
+
+
+def test_the_database_to_copy_follows_crab_db_url(tmp_path, monkeypatch):
+    # Inside an eval, HOME is fake: ~/.crabagent has no database, CRAB_DB_URL names the real one.
+    db = tmp_path / "db.sqlite"
+    db.write_bytes(b"")
+    monkeypatch.setenv("CRAB_DB_URL", f"sqlite+aiosqlite:///{db}")
+    assert ui_check._source_db() == db
+    monkeypatch.setenv("CRAB_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'missing.sqlite'}")
+    assert ui_check._source_db() == Path.home() / ".crabagent" / "crabagent.db"
+    monkeypatch.delenv("CRAB_DB_URL")
+    assert ui_check._source_db() == Path.home() / ".crabagent" / "crabagent.db"

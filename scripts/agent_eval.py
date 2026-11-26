@@ -259,6 +259,28 @@ def _checks(spec: dict) -> list[dict]:
     return checks
 
 
+def _trace(calls) -> str:
+    """"read x5, bash x20 (3 failed: timeout x2, error x1)": what a run spent its steps on."""
+    from collections import Counter
+
+    counts: Counter = Counter()
+    failed: Counter = Counter()
+    reasons: dict[str, Counter] = {}
+    for name, ok, reason in calls:
+        counts[name] += 1
+        if not ok:
+            failed[name] += 1
+            reasons.setdefault(name, Counter())[reason or "error"] += 1
+    parts = []
+    for name, n in counts.most_common():
+        part = f"{name} x{n}"
+        if failed[name]:
+            why = ", ".join(f"{r} x{c}" for r, c in reasons[name].most_common(3))
+            part += f" ({failed[name]} failed: {why})"
+        parts.append(part)
+    return ", ".join(parts)
+
+
 def _collect(con: sqlite3.Connection, session_id: str) -> dict:
     runs = [dict(r) for r in con.execute(
         "select id, parent_run_id, agent_name, model, status, iterations, tokens_used, tool_calls, elapsed, "
@@ -271,6 +293,11 @@ def _collect(con: sqlite3.Connection, session_id: str) -> dict:
     final = con.execute(
         "select content from messages where conversation_id = (select id from conversations where session_id = ?) "
         "and role = 'assistant' and coalesce(content, '') != '' order by id desc limit 1", (session_id,)).fetchone()
+    for run in runs:
+        calls = con.execute(
+            "select tool_name, ok, reason_class from tool_invocations where run_id = ? order by id", (run["id"],)
+        ).fetchall()
+        run["tool_trace"] = _trace(calls)
     step_cap = [r for r in runs if r["iterations"] and r["agent_name"] not in ("main", "pipeline")
                 and r["iterations"] >= 80]
     return {
@@ -311,6 +338,10 @@ def _report_md(report: dict) -> str:
         start, end = (_clock(run.get(k)) for k in ("started_at", "finished_at"))
         lines.append(f"| {run['id']} | {run['agent_name']} | {run['status']} | {run['iterations']} | "
                      f"{run['tokens_used']} | {start} | {end} | {task} |")
+    traced = [r for r in report["metrics"].get("runs", []) if r.get("tool_trace")]
+    if traced:
+        lines += ["", "## Tool use per run", ""]
+        lines += [f"- {r['id']} {r['agent_name']}: {r['tool_trace']}" for r in traced]
     if report["interventions"]:
         lines += ["", "## Interventions (auto-answered)", ""]
         lines += [f"- {i['type']}: {i['question'][:200]!r} -> {i['answer'][:120]!r}" for i in report["interventions"]]

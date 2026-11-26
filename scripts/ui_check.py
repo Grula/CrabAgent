@@ -53,7 +53,20 @@ from pathlib import Path
 
 MAX_EXPECTATIONS = 8
 REPO = Path(__file__).resolve().parent.parent
-LIVE_DB = Path.home() / ".crabagent" / "crabagent.db"
+def _source_db() -> Path:
+    """The database to copy: the current server's (CRAB_DB_URL), else ~/.crabagent's.
+
+    Inside an agent run, CRAB_DB_URL names the database the server really uses; a
+    preview or eval server runs with a fake HOME, where ~/.crabagent has no database.
+    """
+    url = os.environ.get("CRAB_DB_URL", "")
+    for prefix in ("sqlite+aiosqlite:///", "sqlite:///"):
+        if url.startswith(prefix) and Path(url[len(prefix):]).is_file():
+            return Path(url[len(prefix):])
+    return Path.home() / ".crabagent" / "crabagent.db"
+
+
+LIVE_DB = _source_db()
 KEY_FILE = Path.home() / ".crabagent" / "encryption_key"
 PREVIEW_PASSWORD = "ui-check-preview"
 
@@ -257,6 +270,7 @@ def _start_server(tmp: Path, port: int) -> subprocess.Popen:
     if KEY_FILE.exists():
         # Without the real key the copy can't decrypt saved provider keys (401s).
         env["CRAB_ENCRYPTION_KEY"] = KEY_FILE.read_text().strip()
+    # else: a CRAB_ENCRYPTION_KEY already in the environment (nested preview) is kept.
     (tmp / "home" / ".crabagent").mkdir(parents=True, exist_ok=True)  # the server logs there
     log = open(tmp / "server.log", "wb")  # noqa: SIM115 - closed with the process
     return subprocess.Popen(
