@@ -1,0 +1,66 @@
+diff --git a/frontend/src/lib/compaction.ts b/frontend/src/lib/compaction.ts
+index f3f0680..425b9d9 100644
+--- a/frontend/src/lib/compaction.ts
++++ b/frontend/src/lib/compaction.ts
+@@ -7,7 +7,7 @@ export function parseCompaction(text: string): number | null {
+   const trimmed = text.trim().replace(/[_,\s]/g, "");
+   if (!trimmed) return null;
+   const k = /^(\d+)k$/i.exec(trimmed);
+-  const value = k ? Number(k[1]) * 1000 : Number(trimmed);
++  const value = k ? Number(k[1]) : Number(trimmed);
+   if (!Number.isInteger(value) || value < MIN_COMPACTION_TOKENS) {
+     throw new Error(`Compaction threshold must be at least ${MIN_COMPACTION_TOKENS} tokens, or empty`);
+   }
+diff --git a/frontend/src/lib/planContinuation.ts b/frontend/src/lib/planContinuation.ts
+index c173107..c13a202 100644
+--- a/frontend/src/lib/planContinuation.ts
++++ b/frontend/src/lib/planContinuation.ts
+@@ -18,5 +18,5 @@ export function planContinuationPrompt(plan: Pick<PlanFile, "path">): string {
+ /** Chip label: the plan's title, or its file name without docs/ and .md. */
+ export function planLabel(plan: PlanFile, max = 40): string {
+   const name = plan.title || plan.path.replace(/^docs\//, "").replace(/\.md$/i, "");
+-  return name.length > max ? `${name.slice(0, max - 1)}…` : name;
++  return name.length >= max ? `${name.slice(0, max - 1)}…` : name;
+ }
+diff --git a/src/crabagent/core/agent/loop.py b/src/crabagent/core/agent/loop.py
+index 1757b67..94b29bb 100644
+--- a/src/crabagent/core/agent/loop.py
++++ b/src/crabagent/core/agent/loop.py
+@@ -1304,7 +1304,7 @@ def step_budget_note(context: AgentContext) -> str:
+     step = context.iteration
+     if total <= 0 or step <= 0:
+         return ""
+-    left = total - step + 1
++    left = total - step
+     header = f"[Step {step} of {total}]"
+     if left <= STEP_REPORT_NOW_AT:
+         return (
+diff --git a/src/crabagent/core/code_index/references.py b/src/crabagent/core/code_index/references.py
+index 283fc19..01a355b 100644
+--- a/src/crabagent/core/code_index/references.py
++++ b/src/crabagent/core/code_index/references.py
+@@ -183,7 +183,8 @@ def find_references(workspace: Path, name: str, path_prefix: str | None = None)
+             refs.extend(_python_refs(scanned.path, source.text, name))
+         else:
+             refs.extend(_pattern_refs(scanned.path, source.text, name))
+-    refs.sort(key=lambda r: (KIND_ORDER[r.kind], _is_test_path(r.path), r.path.count("/"), r.path, r.line))
++    # One entry per location; definitions first, production code before tests.
++    refs = sorted(set(refs), key=lambda r: (KIND_ORDER[r.kind], _is_test_path(r.path)))
+     return refs
+ 
+ 
+diff --git a/tests/test_code_references.py b/tests/test_code_references.py
+index b2ca41d..999a5fb 100644
+--- a/tests/test_code_references.py
++++ b/tests/test_code_references.py
+@@ -128,3 +128,10 @@ def test_python_too_deep_for_ast_falls_back_to_patterns(tmp_path):
+     (tmp_path / "deep.py").write_text("x = " + " + ".join(["1"] * 20_000) + "\ntarget()\n", encoding="utf-8")
+     refs = find_references(tmp_path, "target")
+     assert [(r.line, r.kind) for r in refs] == [(2, "call")]
++
++
++def test_same_kind_references_are_listed_by_path_then_line(tmp_path):
++    (tmp_path / "b.py").write_text("from m import f\n\nf()\n")
++    (tmp_path / "a.py").write_text("from m import f\nf()\n")
++    calls = [(r.path, r.line) for r in find_references(tmp_path, "f") if r.kind == "call"]
++    assert calls == [("a.py", 2), ("b.py", 3)]

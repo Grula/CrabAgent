@@ -13,8 +13,13 @@ A task folder holds:
   task.json      {"agent": "architect", "timeout_minutes": 60, "project_test_command": [...]}, or
                  "checks": [{"label", "command", "cwd"?, "env"?, "timeout"?, "copy"?: [from, to]}]
                  run in order; "copy" puts hidden tests in place for that check only.
-                 "symlinks": {"in/workspace": "in/repo"} links large read-only folders
-                 (node_modules) instead of copying them.
+                 "private_copies": {"in/workspace": "in/repo"} gives the workspace its own copy
+                 of a large folder (node_modules: ~5 s), so caches the tools write there
+                 (vitest, vite) never touch the real one; deleted again after scoring.
+                 ("symlinks" still works for folders nothing ever writes to.)
+                 "setup_patch": "bugs.patch" is applied (git apply) and "setup_commands"
+                 [{"label", "command", "cwd"?}] run before the starting commit, so a
+                 bug-fix task starts from a broken state that git history doesn't reveal.
 
 What happens:
 1. a preview server starts on a copy of ~/.crabagent/crabagent.db (scripts/ui_check.py
@@ -131,18 +136,32 @@ def _prepare_workspace(task: Path, out: Path, spec: dict | None = None) -> Path:
         _copy_repo(workspace)
     else:
         shutil.copytree(task / "project", workspace)
+    for dest, source_rel in (spec.get("private_copies") or {}).items():
+        source = (ui_check.REPO / source_rel).resolve()
+        if source.is_dir() and not (workspace / dest).exists():
+            (workspace / dest).parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["cp", "-a", str(source), str(workspace / dest)], check=True)
     for link, target in (spec.get("symlinks") or {}).items():
         source = (ui_check.REPO / target).resolve()
         if source.exists() and not (workspace / link).exists():
             (workspace / link).parent.mkdir(parents=True, exist_ok=True)
             (workspace / link).symlink_to(source)
     _git(workspace, "init", "-q", "-b", "main")
+    if spec.get("setup_patch"):
+        applied = subprocess.run(["git", "apply", "--whitespace=nowarn", str(task / spec["setup_patch"])],
+                                 cwd=workspace, capture_output=True, text=True)
+        if applied.returncode != 0:
+            raise SystemExit(f"setup error: {spec['setup_patch']} does not apply: {applied.stderr.strip()}")
+    for step in spec.get("setup_commands") or []:
+        done = subprocess.run(step["command"], cwd=workspace / step.get("cwd", ""), capture_output=True, text=True)
+        if done.returncode != 0:
+            raise SystemExit(f"setup error: {step.get('label', step['command'])}: {(done.stderr or done.stdout)[-800:]}")
     ignore = workspace / ".gitignore"
     extra = "__pycache__/\n.pytest_cache/\n.eval_acceptance/\n"
     if spec.get("project") != "repo":
         extra += "*.json\n"  # data files the fixture's tests write
     ignore.write_text((ignore.read_text() if ignore.exists() else "") + "\n" + extra)
-    for link in spec.get("symlinks") or {}:
+    for link in list(spec.get("symlinks") or {}) + list(spec.get("private_copies") or {}):
         ignore.write_text(ignore.read_text() + f"/{link}\n")
     _git(workspace, "add", "-A")
     _git(workspace, "commit", "-q", "-m", "starting point")
@@ -399,6 +418,8 @@ def main(argv: list[str] | None = None) -> int:
     report["diff_stat"] = _git(workspace, "diff", "--cached", "--stat")
     (out / "changes.diff").write_text(_git(workspace, "diff", "--cached"))
     _score(task, spec, workspace, report)
+    for dest in spec.get("private_copies") or {}:
+        shutil.rmtree(workspace / dest, ignore_errors=True)  # 378 MB per run otherwise
 
     passed = report["run_status"] == "completed" and all(t["passed"] for t in report["tests"])
     report["verdict"] = "PASS" if passed else "FAIL"

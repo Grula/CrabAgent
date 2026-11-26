@@ -1,0 +1,29 @@
+{
+  "agent": "architect",
+  "timeout_minutes": 90,
+  "project": "repo",
+  "private_copies": {"frontend/node_modules": "frontend/node_modules"},
+  "setup_patch": "bugs.patch",
+  "setup_commands": [
+    {"label": "build the buggy UI into static/ (so the app shows the bugs)", "cwd": "frontend",
+     "command": ["bash", "-c", "npm run build >/dev/null && rm -rf ../src/crabagent/static/assets && cp -R dist/index.html dist/collab-browser.html dist/assets ../src/crabagent/static/"]}
+  ],
+  "checks": [
+    {"label": "acceptance (python)", "copy": ["acceptance/py", "tests/eval_acceptance"],
+     "command": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/eval_acceptance"],
+     "env": {"PYTHONPATH": "src"}},
+    {"label": "acceptance (frontend)", "copy": ["acceptance/ts", "frontend/src/lib/eval_acceptance"],
+     "command": ["npx", "vitest", "run", "--reporter=dot", "src/lib/eval_acceptance"], "cwd": "frontend"},
+    {"label": "flaky test kept and stable under 12 hash seeds",
+     "command": ["bash", "-c", "for s in $(seq 0 11); do PYTHONHASHSEED=$s python3 -m pytest -q -p no:cacheprovider 'tests/test_code_references.py::test_same_kind_references_are_listed_by_path_then_line' || exit 1; done"],
+     "env": {"PYTHONPATH": "src"}},
+    {"label": "python suite",
+     "command": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-n", "auto",
+                 "--deselect", "tests/test_semantic_summary_real_provider.py"],
+     "env": {"PYTHONPATH": "src"}, "timeout": 900},
+    {"label": "tsc", "command": ["npx", "tsc", "-b"], "cwd": "frontend"},
+    {"label": "vitest", "command": ["npx", "vitest", "run", "--reporter=dot"], "cwd": "frontend"},
+    {"label": "served UI rebuilt (AGENTS.md build step)",
+     "command": ["bash", "-c", "! git diff --cached --quiet -- src/crabagent/static"]}
+  ]
+}

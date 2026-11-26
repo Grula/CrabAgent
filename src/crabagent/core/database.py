@@ -1300,7 +1300,7 @@ def _deny(*groups: tuple[str, ...]) -> dict[str, str]:
 
 _IMAGE_TOOLS = ("image_generate", "image_edit")
 _COMPUTER_CONTROL_TOOLS = ("computer_observe", "computer_act")
-# Building tools and maintaining AGENTS.md is the toolsmith's job.
+# Building tools and editing AGENTS.md are left to the main assistant, never the team.
 _TOOLSMITH_TOOLS = ("create_tool", "update_tool", "delete_tool", "update_agents_md")
 
 _NOT_FOR_THE_TEAM = (

@@ -2,9 +2,6 @@
   "agent": "architect",
   "timeout_minutes": 90,
   "project": "repo",
-  "symlinks": {
-    "frontend/node_modules": "frontend/node_modules"
-  },
   "checks": [
     {
       "label": "acceptance (python)",
@@ -86,5 +83,8 @@
         "! git diff --cached --quiet -- src/crabagent/static"
       ]
     }
-  ]
+  ],
+  "private_copies": {
+    "frontend/node_modules": "frontend/node_modules"
+  }
 }

@@ -155,7 +155,8 @@ def test_repo_task_copies_the_working_tree_and_links_node_modules(tmp_path, monk
     agent_eval._git(repo, "commit", "-qm", "init")
     monkeypatch.setattr(agent_eval.ui_check, "REPO", repo)
 
-    spec = {"project": "repo", "symlinks": {"frontend/node_modules": "frontend/node_modules"}}
+    (repo / "frontend" / "node_modules" / "pkg" / "index.js").write_text("module.exports = 1\n")
+    spec = {"project": "repo", "private_copies": {"frontend/node_modules": "frontend/node_modules"}}
     workspace = agent_eval._prepare_workspace(tmp_path / "task", tmp_path / "out", spec)
 
     assert (workspace / "src" / "a.py").read_text() == "x = 1\n"
@@ -165,8 +166,11 @@ def test_repo_task_copies_the_working_tree_and_links_node_modules(tmp_path, monk
     assert (workspace / ".crabagent" / "skills" / "run-app" / "SKILL.md").exists()
     assert not (workspace / "scripts" / "evals").exists()  # the hidden tests never leak
     assert (workspace / "scripts" / "keep.py").exists()
-    assert (workspace / "frontend" / "node_modules").is_symlink()
-    assert agent_eval._git(workspace, "status", "--short") == ""  # the link is ignored too
+    copied = workspace / "frontend" / "node_modules"
+    assert copied.is_dir() and not copied.is_symlink()  # a private copy, not a link
+    (copied / ".vite").mkdir()                            # a cache written in the workspace...
+    assert not (repo / "frontend" / "node_modules" / ".vite").exists()  # ...never reaches the repo
+    assert agent_eval._git(workspace, "status", "--short") == ""  # and git ignores the copy
 
 
 def test_hidden_tests_are_removed_after_their_check(tmp_path):
@@ -190,3 +194,29 @@ def test_clock_formats_epoch_and_iso():
     assert agent_eval._clock(epoch) == "14:05:09"
     assert agent_eval._clock("2026-11-26 14:05:09.123") == "14:05:09"
     assert agent_eval._clock(None) == ""
+
+
+def test_setup_patch_is_applied_before_the_starting_commit(tmp_path):
+    task = tmp_path / "task"
+    (task / "project").mkdir(parents=True)
+    (task / "project" / "a.py").write_text("x = 1\n")
+    (task / "bugs.patch").write_text(
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n"
+    )
+    spec = {"setup_patch": "bugs.patch", "setup_commands": [{"label": "mark", "command": ["touch", "built.txt"]}]}
+    workspace = agent_eval._prepare_workspace(task, tmp_path / "out", spec)
+    assert (workspace / "a.py").read_text() == "x = 2\n"
+    assert (workspace / "built.txt").exists()
+    assert agent_eval._git(workspace, "status", "--short") == ""          # part of the starting point
+    assert agent_eval._git(workspace, "log", "--oneline").count("\n") == 1  # no history of the bug
+
+
+def test_a_patch_that_does_not_apply_stops_the_eval(tmp_path):
+    task = tmp_path / "task"
+    (task / "project").mkdir(parents=True)
+    (task / "project" / "a.py").write_text("y = 1\n")
+    (task / "bugs.patch").write_text(
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n"
+    )
+    with pytest.raises(SystemExit, match="does not apply"):
+        agent_eval._prepare_workspace(task, tmp_path / "out", {"setup_patch": "bugs.patch"})
