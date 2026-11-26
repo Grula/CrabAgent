@@ -27,6 +27,7 @@ export interface CatalogEntry {
   variants: CatalogVariant[];
   auth_type?: string; // "api_key" or "oauth"
   models?: string[];
+  api_key_required?: boolean;
 }
 
 export interface ModelInfo {

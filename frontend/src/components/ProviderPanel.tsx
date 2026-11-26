@@ -53,6 +53,7 @@ export default function ProviderPanel({
   const [formVariantId, setFormVariantId] = useState<string>("");
   const [formName, setFormName] = useState("");
   const [formKey, setFormKey] = useState("");
+  const [formBaseUrl, setFormBaseUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -296,9 +297,15 @@ export default function ProviderPanel({
       setError("Name and type are required");
       return;
     }
-    // OAuth-based providers don't need api_key
+    // OAuth-based providers don't need api_key, and neither do local/custom
+    // endpoints (the catalog marks those with api_key_required: false).
     const isOAuth = selectedCatalog?.auth_type === "oauth";
-    if (!isOAuth && !formKey) {
+    const keyRequired = !isOAuth && selectedCatalog?.api_key_required !== false;
+    if (needsCustomBaseUrl && !formBaseUrl.trim()) {
+      setError("Base URL is required");
+      return;
+    }
+    if (keyRequired && !formKey) {
       setError("API key is required");
       return;
     }
@@ -309,6 +316,7 @@ export default function ProviderPanel({
         display_name: formName,
         type: formType,
         api_key: formKey,
+        base_url: needsCustomBaseUrl ? formBaseUrl.trim() : undefined,
         variant_id: formVariantId || undefined,
       });
       toast.success("Provider added");
@@ -318,6 +326,7 @@ export default function ProviderPanel({
       setFormName("");
       setFormKey("");
       setFormVariantId("");
+      setFormBaseUrl("");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to add provider");
     } finally {
@@ -352,6 +361,9 @@ export default function ProviderPanel({
   const selectedCatalog = catalog.find((c) => c.type === formType);
   const selectedVariant = selectedCatalog?.variants.find((v) => v.id === formVariantId);
   const displayBaseUrl = selectedVariant?.base_url || selectedCatalog?.base_url;
+  // A catalog entry with no fixed base_url (local / custom endpoint) needs the
+  // user to type one; OAuth entries have no base URL at all.
+  const needsCustomBaseUrl = !!selectedCatalog && !selectedCatalog.base_url && selectedCatalog.auth_type !== "oauth";
 
   return (
     <>
@@ -876,10 +888,19 @@ export default function ProviderPanel({
                   </option>
                 ))}
               </select>
-              {selectedCatalog && (
-                <p className="text-[11px] text-[var(--text-tertiary)] font-mono">
-                  Base URL: {selectedCatalog.auth_type === "oauth" ? "OAuth (no Base URL needed)" : displayBaseUrl}
-                </p>
+              {needsCustomBaseUrl ? (
+                <Input
+                  label={"Base URL"}
+                  value={formBaseUrl}
+                  onChange={(e) => setFormBaseUrl(e.target.value)}
+                  placeholder={"http://127.0.0.1:8080/v1"}
+                />
+              ) : (
+                selectedCatalog && (
+                  <p className="text-[11px] text-[var(--text-tertiary)] font-mono">
+                    Base URL: {selectedCatalog.auth_type === "oauth" ? "OAuth (no Base URL needed)" : displayBaseUrl}
+                  </p>
+                )
               )}
             </div>
             {selectedCatalog && selectedCatalog.variants.length > 0 && (
@@ -921,10 +942,10 @@ export default function ProviderPanel({
               </div>
             ) : (
               <PasswordInput
-                label={"API Key"}
+                label={selectedCatalog?.api_key_required === false ? "API Key (optional)" : "API Key"}
                 value={formKey}
                 onChange={(e) => setFormKey(e.target.value)}
-                placeholder={"sk-…"}
+                placeholder={selectedCatalog?.api_key_required === false ? "not needed for a local server" : "sk-…"}
               />
             )}
           </div>

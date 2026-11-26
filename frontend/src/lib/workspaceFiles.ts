@@ -3,6 +3,9 @@
  *
  * The tree's "Open in workspace" action and ChatPage's panel routing both read
  * these sets, so a file can never be offered in the tree and then fail to open.
+ *
+ * This module stays dependency-free on purpose: api/files.ts imports from it,
+ * so anything here must run without a browser (the file tree's tests include it).
  */
 
 /** Code extensions handled by the editor (lowercase, no leading dot). */
@@ -20,8 +23,13 @@ export const MARKDOWN_EXTENSIONS: ReadonlySet<string> = new Set(["md"]);
 /** HTML prototypes rendered by PrototypePanel. */
 export const PROTOTYPE_EXTENSIONS: ReadonlySet<string> = new Set(["html"]);
 
+/** Images rendered by ImagePanel (with the dot, as isImageFile in api/files.ts expects). */
+export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".bmp", ".avif",
+]);
+
 /** Panel that renders a file in the Documents tab. */
-export type WorkspaceFileKind = "code" | "markdown" | "prototype" | "document";
+export type WorkspaceFileKind = "code" | "markdown" | "prototype" | "document" | "image";
 
 /** Lowercase extension without the dot; "" for a name that has none. */
 export function fileExtension(name: string): string {
@@ -50,6 +58,8 @@ export function workspaceFileKind(name: string): WorkspaceFileKind | null {
   if (!ext) return null;
   if (PROTOTYPE_EXTENSIONS.has(ext)) return "prototype";
   if (MARKDOWN_EXTENSIONS.has(ext)) return "markdown";
+  // Images have their own panel; `.svg` must not fall through to code or document.
+  if (IMAGE_EXTENSIONS.has(`.${ext}`)) return "image";
   if (CODE_EXTENSIONS.has(ext)) return "code";
   if (OFFICE_EXTENSIONS.has(ext)) return "document";
   return null;
@@ -62,8 +72,8 @@ export function opensInWorkspace(name: string): boolean {
 
 /**
  * True for files that need an Office preview request before they can render:
- * the office documents and anything with no dedicated panel. Code, Markdown
- * and HTML render in their own panel and must not call the preview service.
+ * the office documents and anything with no dedicated panel. Code, Markdown,
+ * HTML and images render in their own panel and must not call the preview service.
  */
 export function needsOfficePreview(name: string): boolean {
   const kind = workspaceFileKind(name);

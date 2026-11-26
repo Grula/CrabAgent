@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { IMAGE_EXTENSIONS } from "../lib/workspaceFiles";
 
 export interface FileEntry {
   name: string;
@@ -94,8 +95,7 @@ export async function readFile(
   return api.get<FileContent>(`/files/read?${params}`);
 }
 
-const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".bmp", ".avif"]);
-
+/** Image extensions come from lib/workspaceFiles so the tree and this helper agree. */
 export function isImageFile(path: string): boolean {
   const ext = path.substring(path.lastIndexOf(".")).toLowerCase();
   return IMAGE_EXTENSIONS.has(ext);

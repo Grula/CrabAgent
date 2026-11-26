@@ -1,11 +1,10 @@
 import { useState, useEffect } from "react";
-import { PanelRightClose, X, RefreshCw, Search, Folder, FileText, ImageIcon, Copy, Check } from "lucide-react";
-import { FileEntry, FileContent } from "../api/files";
-import { getTree, readFile, searchFiles, isImageFile, getImageUrl } from "../api/files";
+import { PanelRightClose, X, RefreshCw, Search, Folder, FileText, ImageIcon } from "lucide-react";
+import { FileEntry } from "../api/files";
+import { getTree, searchFiles, isImageFile } from "../api/files";
 import FileTree from "./FileTree";
 import MoltTimeline from "./MoltTimeline";
 import GitChanges from "./GitChanges";
-import { Modal } from "./ui";
 import { cn } from "../lib/cn";
 
 interface Props {
@@ -20,8 +19,6 @@ interface Props {
 function useFileTree(workspace?: string) {
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [fileContent, setFileContent] = useState<string | null>(null);
-  const [fileError, setFileError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -32,7 +29,6 @@ function useFileTree(workspace?: string) {
     // Clear entries immediately to avoid showing stale files from previous workspace
     setEntries([]);
     setSelectedPath(null);
-    setFileContent(null);
     setLoading(true);
     getTree(rootPath, 2, isAbsolute)
       .then(setEntries)
@@ -44,97 +40,14 @@ function useFileTree(workspace?: string) {
 
   const clearSelected = () => {
     setSelectedPath(null);
-    setFileContent(null);
-    setFileError(null);
   };
 
-  const handleSelect = async (path: string) => {
+  // Single click only highlights the row; opening a file stays on double-click.
+  const handleSelect = (path: string) => {
     setSelectedPath(path);
-    setFileContent(null);
-    setFileError(null);
-    try {
-      const result: FileContent = await readFile(path, isAbsolute);
-      if (result.truncated) {
-        setFileContent(result.message || "(truncated)");
-      } else {
-        setFileContent(result.content);
-      }
-    } catch (e: unknown) {
-      setFileError(
-        "Failed to read file",
-      );
-    }
   };
 
-  return { entries, selectedPath, fileContent, fileError, loading, handleSelect, clearSelected, refresh, absolute: isAbsolute };
-}
-
-function FilePreview({
-  selectedPath,
-  fileContent,
-  fileError,
-  absolute,
-}: {
-  selectedPath: string | null;
-  fileContent: string | null;
-  fileError: string | null;
-  absolute: boolean;
-}) {
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const copyContent = async () => {
-    if (fileContent === null) return;
-    await navigator.clipboard.writeText(fileContent);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
-  };
-  if (!selectedPath) return null;
-
-  return (
-    <>
-      <div className="border-t border-[var(--border)] flex flex-col" style={{ maxHeight: "30%" }}>
-        <div className="flex items-center gap-1 border-b border-[var(--border)] p-2 text-xs font-medium text-[var(--accent)]">
-          <span className="min-w-0 flex-1 truncate">{selectedPath}</span>
-          {fileContent !== null && <button type="button" onClick={copyContent} className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]" title="Copy all content">{copied ? <Check size={13} className="text-[var(--success)]" /> : <Copy size={13} />}{copied ? "Copied" : "Copy all"}</button>}
-        </div>
-        <div className="overflow-y-auto p-2 flex-1">
-          {fileError ? (
-            <div className="text-xs text-[var(--danger)]">{fileError}</div>
-          ) : isImageFile(selectedPath) ? (
-            <img
-              src={getImageUrl(selectedPath, absolute)}
-              alt={selectedPath}
-              className="max-w-full max-h-[200px] object-contain rounded-lg mx-auto cursor-zoom-in"
-              onClick={() => setPreviewImage(getImageUrl(selectedPath, absolute))}
-            />
-          ) : fileContent !== null ? (
-            <pre className="text-xs leading-relaxed whitespace-pre-wrap text-[var(--text-primary)] font-mono">
-              {fileContent}
-            </pre>
-          ) : (
-            <div className="text-xs text-[var(--text-secondary)]">{"Loading…"}</div>
-          )}
-        </div>
-      </div>
-      <Modal
-        open={!!previewImage}
-        onOpenChange={(o) => !o && setPreviewImage(null)}
-        size="full"
-        hideClose
-        title={null}
-      >
-        <div
-          className="flex items-center justify-center -mx-5 -my-4 cursor-zoom-out"
-          onClick={() => setPreviewImage(null)}
-          style={{ minHeight: "70vh" }}
-        >
-          {previewImage && (
-            <img src={previewImage} alt="Preview" className="max-w-full max-h-[80vh] object-contain rounded-lg" />
-          )}
-        </div>
-      </Modal>
-    </>
-  );
+  return { entries, selectedPath, loading, handleSelect, clearSelected, refresh, absolute: isAbsolute };
 }
 
 // --- File Search Results (flat list) ---
@@ -370,14 +283,6 @@ export default function FileBrowser({
             />
           )}
         </div>
-
-        {/* File preview */}
-        <FilePreview
-          selectedPath={tree.selectedPath}
-          fileContent={tree.fileContent}
-          fileError={tree.fileError}
-          absolute={tree.absolute}
-        />
 
         {/* Git Changes */}
         <ErrorBoundary>

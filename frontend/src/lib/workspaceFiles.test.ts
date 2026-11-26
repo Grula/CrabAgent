@@ -25,6 +25,9 @@ describe("workspaceFiles", () => {
     expect(workspaceFileKind("slides.pptx")).toBe("document");
     expect(workspaceFileKind("note.md")).toBe("markdown");
     expect(workspaceFileKind("page.HTML")).toBe("prototype");
+    // `.svg` is an image, not code or a document.
+    expect(workspaceFileKind("diagram.svg")).toBe("image");
+    expect(workspaceFileKind("diagram.svg")).not.toBe("code");
   });
 
   it("only asks for an Office preview for office and unknown files", () => {
@@ -32,6 +35,8 @@ describe("workspaceFiles", () => {
     expect(needsOfficePreview("small.ts")).toBe(false);
     expect(needsOfficePreview("note.md")).toBe(false);
     expect(needsOfficePreview("page.html")).toBe(false);
+    // An image renders in ImagePanel, so no preview request either.
+    expect(needsOfficePreview("logo.png")).toBe(false);
     // Office documents still go through the preview service.
     expect(needsOfficePreview("report.docx")).toBe(true);
     // An extension no panel owns keeps the previous preview behaviour.
@@ -39,8 +44,17 @@ describe("workspaceFiles", () => {
     expect(needsOfficePreview("README")).toBe(true);
   });
 
+  it("classifies images as their own openable kind", () => {
+    for (const name of ["logo.png", "photo.jpg", "icon.svg", "banner.webp", "shot.JPEG"]) {
+      expect(opensInWorkspace(name)).toBe(true);
+      expect(workspaceFileKind(name)).toBe("image");
+      // An image must never be sent to the editor or the office preview.
+      expect(isCodeFile(name)).toBe(false);
+      expect(needsOfficePreview(name)).toBe(false);
+    }
+  });
+
   it("does not offer files it cannot open", () => {
-    expect(opensInWorkspace("logo.png")).toBe(false);
     expect(opensInWorkspace("archive.zip")).toBe(false);
     expect(fileExtension("small.ts")).toBe("ts");
     expect(fileExtension("SHEET.XLSX")).toBe("xlsx");

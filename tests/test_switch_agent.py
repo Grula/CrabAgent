@@ -119,6 +119,15 @@ class TestGeneralAgent:
         assert "edit files" not in caps
         assert "run commands (asks first)" in caps
 
+    def test_code_questions_go_to_code_search_then_grep(self):
+        goal = GENERAL["goal"]
+        assert "code_search first for a definition" in goal
+        assert "grep for exact strings" in goal
+        tools = {t.name for t in filter_tool_registry(
+            registry, tool_permissions=GENERAL["tool_permissions"], allow_delegation=True
+        ).list_tools()}
+        assert "code_search" in tools
+
     def test_goal_sends_dev_work_to_the_architect_by_switching(self):
         goal = GENERAL["goal"]
         first_line = goal.split("\n", 1)[0]

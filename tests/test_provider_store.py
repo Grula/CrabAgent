@@ -243,3 +243,42 @@ def test_resolve_model_for_provider_prefixes_bare_openai_compatible_model():
     )
 
     assert resolve_model_for_provider(groq, "llama-3.3-70b") == "openai/llama-3.3-70b"
+
+
+# ── Custom local OpenAI-compatible endpoint (llama.cpp, vLLM, LM Studio, ...) ──
+
+LOCAL_OPENAI_COMPATIBLE_BASE_URL = "http://127.0.0.1:8080/v1"
+
+
+def test_custom_catalog_entry_is_a_local_openai_compatible_endpoint():
+    assert "custom" in provider_store.PROVIDER_CATALOG
+    entry = provider_store.PROVIDER_CATALOG["custom"]
+
+    assert entry.get("display_name") == "OpenAI-compatible (local / custom)"
+    # No default URL: the user must type their own (e.g. llama-server's :8080/v1).
+    assert entry.get("base_url") == ""
+    # A purely local server needs no API key.
+    assert entry.get("api_key_required") is False
+    # Routes through litellm's openai provider, with no static model list.
+    assert "litellm_provider" not in entry
+    assert "models" not in entry
+
+
+def test_custom_provider_type_routes_through_openai():
+    assert provider_store.custom_llm_provider_for("custom") == "openai"
+    assert provider_store.model_prefix_for("custom") == "openai"
+
+
+def test_resolve_model_for_provider_prefixes_bare_custom_model():
+    local = ProviderInfo(
+        name="local-llama",
+        display_name="llama.cpp (local)",
+        provider_type="custom",
+        api_key="",
+        base_url=LOCAL_OPENAI_COMPATIBLE_BASE_URL,
+        is_default=False,
+        enabled=True,
+        extra={},
+    )
+
+    assert resolve_model_for_provider(local, "qwen2.5-coder-7b") == "openai/qwen2.5-coder-7b"

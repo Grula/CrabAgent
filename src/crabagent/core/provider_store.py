@@ -207,6 +207,14 @@ PROVIDER_CATALOG: dict[str, dict] = {
     "openrouter": {"base_url": "https://openrouter.ai/api/v1", "display_name": "OpenRouter"},
     "together": {"base_url": "https://api.together.xyz/v1", "display_name": "Together AI"},
     "cerebras": {"base_url": "https://api.cerebras.ai/v1", "display_name": "Cerebras"},
+    # Local or self-hosted OpenAI-compatible server (llama.cpp, vLLM, LM Studio, ...).
+    # No base_url on purpose: the user types their own, and the model list is
+    # fetched live from {base_url}/models.
+    "custom": {
+        "base_url": "",
+        "display_name": "OpenAI-compatible (local / custom)",
+        "api_key_required": False,
+    },
 }
 
 

@@ -190,3 +190,46 @@ describe("Documents tab model: closing the visible document falls back", () => {
     expect(chips()).toHaveLength(0);
   });
 });
+
+describe("Documents tab model: images are ordinary documents in the strip", () => {
+  const logo: OpenDocRef = { path: "images/logo.png", name: "logo.png" };
+
+  it("gives an image its own chip with its file name", () => {
+    const items = buildDocTabItems({
+      codeStarted: true,
+      lastCodePath: "src/app.ts",
+      codeActive: false,
+      openDocs: [docs[0], logo],
+      currentDocPath: logo.path,
+    });
+
+    // Same chip a Markdown document gets: the strip needs no image-specific rule.
+    expect(items.map((item) => item.kind)).toEqual(["code", "doc", "doc"]);
+    expect(items.find((item) => item.path === logo.path)).toMatchObject({
+      name: "logo.png",
+      active: true,
+    });
+    // The image kind never makes the editor the visible panel.
+    expect(isCodeActive(logo.path)).toBe(false);
+    expect(workspaceFileKind("logo.png")).toBe("image");
+  });
+
+  it("closes an image chip like any other document", () => {
+    const onClose = vi.fn();
+    const items = buildDocTabItems({
+      codeStarted: false,
+      lastCodePath: null,
+      codeActive: false,
+      openDocs: [logo],
+      currentDocPath: logo.path,
+    });
+    act(() => root!.render(<DocTabs tabs={items} onSelect={() => {}} onClose={onClose} />));
+
+    const [chip] = chips();
+    expect(chip.textContent).toContain("logo.png");
+    const close = chip.querySelector("button");
+    expect(close).not.toBeNull();
+    act(() => { close!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onClose).toHaveBeenCalledWith(logo.path);
+  });
+});

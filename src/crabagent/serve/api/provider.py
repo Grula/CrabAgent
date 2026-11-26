@@ -48,6 +48,7 @@ class CatalogEntry(BaseModel):
     variants: list[CatalogVariant] = []
     auth_type: str = "api_key"  # "api_key" or "oauth"
     models: list[str] = []
+    api_key_required: bool = True
 
 
 class CreateProviderRequest(BaseModel):
@@ -115,6 +116,7 @@ async def get_catalog(user: User = Depends(get_current_user)):
             base_url=v.get("base_url", ""),
             auth_type=v.get("auth_type", "api_key"),
             models=v.get("models", []),
+            api_key_required=v.get("api_key_required", True),
             variants=[
                 CatalogVariant(id=vv["id"], display_name=vv["display_name"], base_url=vv["base_url"])
                 for vv in v.get("variants", [])
@@ -144,6 +146,9 @@ async def create_provider_endpoint(req: CreateProviderRequest, user: User = Depe
     auth_type = catalog.get("auth_type", "api_key") if catalog else "api_key"
     if auth_type == "oauth":
         api_key = req.api_key or "oauth-managed"  # placeholder; auth handled externally
+    elif not req.api_key and catalog and catalog.get("api_key_required") is False:
+        # Local servers need no key, but litellm rejects an empty api_key.
+        api_key = "local-no-key"
     else:
         if not req.api_key:
             raise HTTPException(status_code=400, detail="API key is required")

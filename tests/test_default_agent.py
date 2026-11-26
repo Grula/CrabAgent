@@ -204,6 +204,21 @@ class TestDefaultTeamCapabilities:
         assert "go to scout, even when you could answer them yourself" in goal
 
 
+def test_architect_reviews_risky_changes_checks_claims_and_keeps_docs_with_the_change():
+    goal = next(a for a in db.DEFAULT_AGENTS if a["name"] == "architect")["goal"]
+    assert "send it to the_reviewer when it touches file paths, auth" in goal
+    assert "Passing tests are not a review" in goal
+    assert "claim about the environment" in goal and "say it is unverified" in goal
+    assert "Doc and plan updates go in the same task as the change" in goal
+
+
+def test_coder_proves_fixes_keeps_the_loop_free_and_checks_paths_properly():
+    goal = next(a for a in db.DEFAULT_AGENTS if a["name"] == "coder")["goal"]
+    assert "new test fails without the fix and passes with it" in goal
+    assert "never block the event loop" in goal and "asyncio.to_thread" in goal
+    assert "is_relative_to(base), never with a string prefix" in goal
+
+
 def test_switch_footer_allows_handing_work_to_a_teammate():
     msg = agents.build_agent_switch_msg({"name": "x", "display_name": "X", "goal": "g"})["content"]
     assert "hand it to a teammate" in msg

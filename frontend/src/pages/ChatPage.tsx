@@ -77,11 +77,13 @@ import type { CodeEditorHandle } from "../components/code-editor";
 import { PrototypePanel } from "../components/PrototypePanel";
 import { MeetingPanel } from "../components/MeetingPanel";
 import { MarkdownPanel } from "../components/MarkdownPanel";
+import { ImagePanel } from "../components/ImagePanel";
 import BrowserPanel from "../components/BrowserPanel";
 import { SSEEvent } from "../api/events";
 import * as documentsApi from "../api/documents";
 import {
   hasUnsavedEditorEdits,
+  isAbsolutePath,
   needsDiscardConfirmForSessionSwitch,
   needsDiscardConfirmForWorkTabSwitch,
   needsOfficePreview,
@@ -226,8 +228,9 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
   // A dirty code buffer plus a chat switch: the buffer would land in another
   // workspace, so hold the switch until the user confirms.
   const [pendingSessionSwitch, setPendingSessionSwitch] = useState<{ run: () => void; dirtyName: string } | null>(null);
-  // Kind of file open in the Documents tab.
-  type WorkspaceType = "document" | "code" | "prototype" | "markdown";
+  // Kind of file open in the Documents tab. `image` keeps its own branch so the
+  // office preview and the code editor are never asked to render one.
+  type WorkspaceType = "document" | "code" | "prototype" | "markdown" | "image";
   const [workspaceType, setWorkspaceType] = useState<WorkspaceType>("document");
   // The code editor is the visible panel: the active path is a code file. While
   // it is false CodePanel stays mounted but hidden behind the open document.
@@ -1954,6 +1957,14 @@ export default function ChatPage({ view, onViewChange, workTab, onWorkTabChange,
                         key={currentDocPath}
                         filePath={currentDocPath}
                         sessionId={activeSession?.session_id}
+                        onClose={closeActiveDoc}
+                      />
+                    ) : workspaceType === "image" && currentDocPath ? (
+                      <ImagePanel
+                        key={currentDocPath}
+                        path={currentDocPath}
+                        name={fileBaseName(currentDocPath)}
+                        absolute={isAbsolutePath(currentDocPath)}
                         onClose={closeActiveDoc}
                       />
                     ) : docState ? (

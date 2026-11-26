@@ -69,12 +69,18 @@ describe("FileTree open-in-workspace action", () => {
     expect(openAction("report.docx")).not.toBeNull();
   });
 
+  it("offers the action for images too: they open in their own tab", () => {
+    const onOpenDoc = renderTree([entry("logo.png", "logo.png")]);
+
+    expect(openAction("logo.png")).not.toBeNull();
+    doubleClickRow("logo.png");
+    expect(onOpenDoc).toHaveBeenCalledWith("logo.png", "logo.png");
+  });
+
   it("does not offer the action for files no panel can open", () => {
     renderTree([
-      entry("logo.png", "logo.png"),
       entry("archive.zip", "archive.zip"),
     ]);
-    expect(openAction("logo.png")).toBeNull();
     expect(openAction("archive.zip")).toBeNull();
   });
 
@@ -90,9 +96,9 @@ describe("FileTree open-in-workspace action", () => {
   });
 
   it("does not open a file no panel can open on double-click", () => {
-    const onOpenDoc = renderTree([entry("logo.png", "logo.png")]);
+    const onOpenDoc = renderTree([entry("archive.zip", "archive.zip")]);
 
-    doubleClickRow("logo.png");
+    doubleClickRow("archive.zip");
     expect(onOpenDoc).not.toHaveBeenCalled();
   });
 
