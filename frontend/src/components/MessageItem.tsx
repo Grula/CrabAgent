@@ -983,9 +983,10 @@ function MessageItemBase({
 
     case "stats":
       return (
-        <div className="mb-4 ml-3">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-mono bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text-secondary)]">
-            <CheckCircle2 size={12} className="text-[var(--success)]" />
+        <div className="mb-4 ml-3 max-w-full">
+          {/* Wraps whole parts onto a second line in a narrow column; a part never breaks inside. */}
+          <div className="inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1.5 rounded-2xl text-[11px] font-mono bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text-secondary)]">
+            <CheckCircle2 size={12} className="shrink-0 text-[var(--success)]" />
             {msg.stats && (() => {
               const s = msg.stats;
               const parts: string[] = [];
@@ -994,7 +995,7 @@ function MessageItemBase({
               if (s.tokens) parts.push(`${s.tokens.toLocaleString()} tokens`);
               if (s.iterations) parts.push(`${s.iterations} iter`);
               return parts.map((p, idx) => (
-                <span key={idx}>
+                <span key={idx} className="whitespace-nowrap">
                   {idx > 0 && <span className="text-[var(--border-strong)] mx-1">·</span>}
                   {p}
                 </span>

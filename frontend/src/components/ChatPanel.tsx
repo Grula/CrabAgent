@@ -439,7 +439,7 @@ function ExecutionTreeToggle({ sessionId }: { sessionId: string }) {
     <>
       <span className="text-[var(--border-strong)] mx-1">·</span>
       <button
-        className="inline-flex items-center gap-0.5 text-[var(--brand)] hover:underline"
+        className="inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-[var(--brand)] hover:underline"
         onClick={(e) => {
           e.stopPropagation();
           setOpen(!open);
