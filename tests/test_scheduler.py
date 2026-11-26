@@ -257,6 +257,70 @@ async def test_run_agent_reports_failure_and_resets_auto_approve(monkeypatch: py
 
 
 @pytest.mark.asyncio
+async def test_run_agent_records_a_provider_setup_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """The loop reports setup failures by returning normally with _run_error."""
+    service = SchedulerService()
+    task = SimpleNamespace(id=3, user_id=1, name="setup", prompt="go", model="")
+    captured = {}
+    settings_obj = SimpleNamespace(default_model="gpt-4o", max_iterations=5, auto_approve_tools=False, skill_discovery_dirs=lambda: [])
+
+    class FakeAsyncSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, statement):
+            return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("crabagent.serve.scheduler.async_session_factory", lambda: FakeAsyncSession())
+    monkeypatch.setattr("crabagent.core.database.async_session_factory", lambda: FakeAsyncSession())
+    monkeypatch.setattr("crabagent.serve.scheduler._generate_session_id", lambda: "sess-setup")
+    monkeypatch.setattr("crabagent.serve.scheduler._create_conversation", _async_return(99))
+    monkeypatch.setattr("crabagent.serve.services.persistence.PersistenceListener", lambda conversation_id, branch_id: SimpleNamespace(on_event=_async_noop))
+    monkeypatch.setattr("crabagent.core.agent.run_recorder.RunRecorder", lambda user_id, session_id, model, session_mode="interactive": SimpleNamespace(on_event=_async_noop))
+    monkeypatch.setattr("crabagent.core.tool_loader.discover_and_register_tools", lambda registry, workspace: None)
+    monkeypatch.setattr("crabagent.core.agent.skill.loader.discover_skills", lambda dirs: {})
+    monkeypatch.setattr("crabagent.core.agent.skill.loader.register_skill_tool", lambda registry, skills: None)
+    monkeypatch.setattr("crabagent.core.molt.tools.register_molt_tools", lambda registry: None)
+    monkeypatch.setattr("crabagent.core.todo.tools.register_todo_tools", lambda registry: None)
+    monkeypatch.setattr("crabagent.core.task.tools.register_task_tools", lambda registry: None)
+    monkeypatch.setattr("crabagent.core.meeting.tools.register_meeting_tools", lambda registry: None)
+    monkeypatch.setattr("crabagent.core.mail.tools.register_mail_tools", lambda registry: None)
+    monkeypatch.setattr("crabagent.core.calendar.tools.register_calendar_tools", lambda registry: None)
+    monkeypatch.setattr("crabagent.core.mcp.client.MCPClientManager", lambda: SimpleNamespace(start_all=_async_noop, stop_all=_async_noop))
+    monkeypatch.setattr("crabagent.core.mcp.tools.register_mcp_tools", lambda registry, manager: None)
+    monkeypatch.setattr("crabagent.core.config.settings", settings_obj)
+
+    async def setup_failed_run_agent(context, prompt):
+        from crabagent.core.event import AgentEvent, EventType
+
+        context.metadata["_run_error"] = True
+        await context.event_bus.emit(
+            AgentEvent(type=EventType.AGENT_ERROR, data={"error": "no provider", "stage": "provider_setup"})
+        )
+        return context.messages
+
+    async def fake_commit(task_id, conversation_id, error):
+        captured["commit"] = (task_id, conversation_id, str(error) if error else None)
+
+    async def fake_notification(user_id, title, body, conversation_id, category=""):
+        captured["notification"] = (user_id, title, body, conversation_id, category)
+
+    monkeypatch.setattr("crabagent.core.agent.loop.run_agent", setup_failed_run_agent)
+    monkeypatch.setattr(service, "_commit_task_status", fake_commit)
+    monkeypatch.setattr(service, "_create_notification", fake_notification)
+
+    assert await service._run_agent(task) == "sess-setup"
+
+    assert captured["commit"][2] is not None
+    assert captured["notification"][2].startswith("Execution failed")
+    assert "completed" not in captured["notification"][2].lower()
+
+
+@pytest.mark.asyncio
 async def test_run_agent_closes_mcp_manager_after_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     service = SchedulerService()
     task = SimpleNamespace(id=8, user_id=1, name="cleanup", prompt="ok", model="")

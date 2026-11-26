@@ -325,6 +325,9 @@ async def search_files(
         root = _resolve_path(workspace, path.lstrip("/"))
         if not root:
             raise HTTPException(status_code=400, detail="Path outside workspace")
+        # Same guard as the absolute branch and /tree: a relative path must not
+        # reach a denied directory (e.g. .crabagent under a $HOME workspace).
+        _require_allowed_path(root)
 
     if not root.exists() or not root.is_dir():
         raise HTTPException(status_code=404, detail="Directory not found")
@@ -704,14 +707,21 @@ async def write_file(
 
 
 async def _snapshot_before_ui_write(workspace: Path, target: Path, session_id: str | None) -> None:
-    """Snapshot a file before an editor save, reusing the agent tools' molt code."""
+    """Snapshot a file before an editor save, reusing the agent tools' molt code.
+
+    An unowned session (a foreign or missing session_id) gets no snapshot: a
+    molt row with an empty owner could never be listed or rolled back.
+    """
+    if not session_id:
+        return
+
     from types import SimpleNamespace
 
     from crabagent.core.agent.tools.registry import registry as tool_registry
 
     ctx = SimpleNamespace(
         workspace=workspace,
-        metadata={"session_id": session_id or "", "branch_id": "main"},
+        metadata={"session_id": session_id, "branch_id": "main"},
     )
     try:
         await tool_registry._take_molt_snapshot("write", {"path": str(target)}, ctx)

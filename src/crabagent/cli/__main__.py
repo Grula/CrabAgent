@@ -110,7 +110,7 @@ def main():
 
             asyncio.run(run_dual_tui(args))
     else:
-        asyncio.run(_run_single(args))
+        sys.exit(asyncio.run(_run_single(args)))
 
 
 def _dispatch_subcommand(args):
@@ -758,6 +758,10 @@ async def _run_single(args):
 
         async with async_session_factory() as db:
             await update_conversation(db, session_id_str)
+
+    # A setup failure is reported as AGENT_ERROR and returns normally; a failed
+    # run must not look like a successful one to a script.
+    return 1 if context.metadata.get("_run_error") else 0
 
 
 async def _ensure_provider_configured():

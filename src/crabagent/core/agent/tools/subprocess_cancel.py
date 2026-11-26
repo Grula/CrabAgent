@@ -94,6 +94,19 @@ def signal_process_group(proc: Any, *, kill: bool) -> None:
         pass
 
 
+def kill_process_group_if_running(proc: Any) -> bool:
+    """SIGKILL *proc*'s whole process group while the leader is still running.
+
+    For a hard cancel (``CancelledError``): no await, never raises, and
+    idempotent, so it is safe from a ``finally``. A reaped child or an
+    already-dead group is a no-op. Returns True when it signalled.
+    """
+    if proc is None or proc.returncode is not None:
+        return False
+    signal_process_group(proc, kill=True)
+    return True
+
+
 async def terminate_process_group(proc: Any, *, grace: float = _SIGTERM_GRACE) -> None:
     """SIGTERM the group, SIGKILL it after *grace* seconds, and reap the child.
 
@@ -197,6 +210,9 @@ async def run_subprocess_cancellable(
         except Exception:  # a survivor holding the pipe open; keep no partial bytes
             communicate.cancel()
     finally:
+        # A hard cancel (``task.cancel()``) skips every path above: kill the
+        # group here so no child or grandchild survives the aborted run.
+        kill_process_group_if_running(proc)
         if not communicate.done():
             communicate.cancel()
             try:

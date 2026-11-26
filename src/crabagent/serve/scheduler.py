@@ -350,6 +350,12 @@ class SchedulerService:
         finally:
             await usage.flush()
 
+        # A provider/setup failure is emitted as AGENT_ERROR and returns
+        # normally (no exception), so without this check the run would be
+        # recorded and announced as a success.
+        if agent_error is None and context.metadata.get("_run_error"):
+            agent_error = RuntimeError("Agent run failed (see the session for the error)")
+
         await self._commit_task_status(task.id, ctx_conv_id, agent_error)
 
         if agent_error:

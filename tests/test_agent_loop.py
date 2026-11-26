@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -788,3 +790,105 @@ def test_litellm_params_for_openai_compatible_provider_stays_openai():
     assert params["api_base"] == "https://api.deepseek.com/v1"
     assert params["api_key"] == "k"
 
+
+
+# ── Stop while a reply streams / a cancelled last iteration ───────────────────
+
+
+class _SlowCancellingStream:
+    """Yields a chunk every few ms and asks the context to stop after N chunks.
+
+    A bounded chunk count (300 x 10 ms = 3 s) keeps the revert-check finite: the
+    old code drains the whole stream, which is what the 5 s abort fallback waits on.
+    """
+
+    def __init__(self, context, cancel_after: int, chunks: int = 300, delay: float = 0.01):
+        self.context = context
+        self.cancel_after = cancel_after
+        self.chunks = chunks
+        self.delay = delay
+        self.sent = 0
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.closed or self.sent >= self.chunks:
+            raise StopAsyncIteration
+        await asyncio.sleep(self.delay)
+        self.sent += 1
+        if self.sent == self.cancel_after:
+            self.context.request_cancel()
+        return _chunk(delta=_delta(content="tok "), finish_reason=None)
+
+    async def aclose(self):
+        self.closed = True
+
+
+def _mock_streaming_provider(monkeypatch, stream):
+    async def fake_acompletion(**kwargs):
+        return stream
+
+    async def fake_provider(provider_name=None):
+        return SimpleNamespace(name="mock", provider_type="openai", api_key="k", base_url="", enabled=True)
+
+    monkeypatch.setattr(loop, "_resolve_provider", fake_provider)
+    monkeypatch.setattr(
+        loop, "litellm", SimpleNamespace(acompletion=fake_acompletion, exceptions=loop.litellm.exceptions)
+    )
+    monkeypatch.setattr("crabagent.core.proxy.resolve_llm_proxy", _async_return(""))
+
+
+@pytest.mark.asyncio
+async def test_a_stop_during_streaming_ends_the_round_at_once(monkeypatch):
+    context = AgentContext(workspace=Path.cwd(), model="gpt-4o", max_iterations=3)
+    events = []
+    context.event_bus.subscribe(lambda event: events.append(event))
+    stream = _SlowCancellingStream(context, cancel_after=5)
+    _mock_streaming_provider(monkeypatch, stream)
+
+    started = time.monotonic()
+    messages = await asyncio.wait_for(loop.run_agent(context, "hello"), timeout=10)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.0, elapsed  # not the 5 s abort fallback
+    assert stream.closed  # closed, not drained
+    assert context.metadata["_run_cancelled"] is True
+    ends = [event for event in events if event.type == EventType.AGENT_END]
+    assert len(ends) == 1
+    assert ends[0].data["cancelled"] is True
+    assert ends[0].data["reason"] == "Stopped by user"
+    assert not any(event.type == EventType.AGENT_ERROR for event in events)
+    assistant = [msg for msg in messages if msg["role"] == "assistant"]
+    assert len(assistant) == 1
+    assert assistant[0]["content"] == "tok " * 4  # the text that streamed before the Stop
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_last_iteration_skips_the_grace_call(monkeypatch):
+    context = AgentContext(workspace=Path.cwd(), model="gpt-4o", max_iterations=1)
+    events = []
+
+    def _stop_on_first_text(event):
+        events.append(event)
+        if event.type == EventType.TEXT_DELTA:
+            context.request_cancel()
+
+    context.event_bus.subscribe(_stop_on_first_text)
+    _mock_streaming_provider(
+        monkeypatch, _stream([_chunk(delta=_delta(content="done"), finish_reason="stop", usage=_usage())])
+    )
+    grace_calls = []
+
+    async def fake_grace(context_arg, llm, model):
+        grace_calls.append(1)
+
+    monkeypatch.setattr(loop, "_grace_call", fake_grace)
+
+    await asyncio.wait_for(loop.run_agent(context, "hello"), timeout=10)
+
+    assert context.budget_exhausted
+    assert context.cancelled
+    assert any(event.type == EventType.BUDGET_EXHAUSTED for event in events)
+    assert grace_calls == []

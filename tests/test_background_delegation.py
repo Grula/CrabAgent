@@ -1,6 +1,8 @@
 import asyncio
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -519,3 +521,108 @@ asyncio.run(main())
 
 async def _agent_async(name):
     return {"name": name}
+
+
+# ── A stop in the parent reaches the sub-agent ────────────────────────────────
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+async def _read_pid(path, deadline: float = 5.0) -> int:
+    end = time.monotonic() + deadline
+    while time.monotonic() < end:
+        try:
+            text = path.read_text().strip()
+            if text:
+                return int(text)
+        except (OSError, ValueError):
+            pass
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"no pid was written to {path}")
+
+
+async def _wait_gone(pid: int, timeout: float = 2.0) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if not _alive(pid):
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
+def _coder():
+    async def agent(_):
+        return {
+            "name": "coder", "display_name": "Coder", "role": "Code", "goal": "Code",
+            "backstory": "", "model": "", "allow_delegation": False, "tool_permissions": {},
+        }
+
+    return agent
+
+
+async def test_a_sub_agent_sees_the_parent_stop_flag(monkeypatch):
+    seen = {}
+
+    async def run(ctx, query):
+        seen["ctx"] = ctx
+        seen["cancelled"] = ctx.cancelled
+        ctx.messages.append({"role": "assistant", "content": "done"})
+
+    monkeypatch.setattr(agents, "get_agent", _coder())
+    monkeypatch.setattr("crabagent.core.agent.loop.run_agent", run)
+
+    parent = context()
+    parent.request_cancel()
+    await agents.spawn_sub_agent("coder", "task", parent, background=True)
+
+    assert seen["ctx"].cancel_event is parent.cancel_event
+    assert seen["cancelled"] is True
+
+
+async def test_a_delegated_bash_stops_when_the_parent_is_stopped(monkeypatch, tmp_path):
+    """A Stop must kill the sub-agent's running command, not leave its group alive."""
+    from crabagent.core.agent.tools.bash import bash_command
+    from crabagent.core.agent.tools.registry import ToolInfo
+    from crabagent.core.agent.tools.subprocess_cancel import CANCELLED_NOTE
+
+    pid_file = tmp_path / "child.pid"
+    seen = {}
+
+    async def run(ctx, query):
+        seen["ctx"] = ctx
+        bash = ctx.tool_registry.get("bash")
+        seen["out"] = await bash.handler(
+            command=f"sh -c 'echo $$ > {pid_file}; sleep 30'",
+            workdir=str(tmp_path),
+            context=ctx,
+        )
+
+    monkeypatch.setattr(agents, "get_agent", _coder())
+    monkeypatch.setattr("crabagent.core.agent.loop.run_agent", run)
+
+    parent = context()
+    parent.tool_registry._tools["bash"] = ToolInfo(
+        name="bash",
+        description="shell",
+        parameters={"type": "object", "properties": {}},
+        handler=bash_command,
+    )
+    job = asyncio.ensure_future(agents.spawn_sub_agent("coder", "task", parent, background=True))
+    pid = await _read_pid(pid_file)
+    assert _alive(pid)
+
+    started = time.monotonic()
+    parent.request_cancel()
+    await asyncio.wait_for(job, timeout=10)
+    elapsed = time.monotonic() - started
+
+    assert seen["ctx"].cancel_event is parent.cancel_event
+    assert CANCELLED_NOTE in seen["out"]
+    assert elapsed < 3, elapsed
+    assert await _wait_gone(pid), "the delegated command survived the parent's Stop"

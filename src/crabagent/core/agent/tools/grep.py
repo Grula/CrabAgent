@@ -182,6 +182,19 @@ def _is_escaping_symlink(path: str, real_root: str) -> bool:
     return not Path(os.path.realpath(path)).is_relative_to(real_root)
 
 
+def _escapes_via_symlinked_dir(path: str, real_root: str) -> bool:
+    """True when *path* is lexically inside ``real_root`` but resolves outside it.
+
+    An explicit path can escape through a symlinked *directory* component
+    (``linkdir/secret.txt``): the final component is a plain file, so
+    ``lstat`` alone sees nothing. Resolving the whole path catches it, while a
+    link pointing back inside the root still resolves inside and is kept.
+    """
+    if not Path(os.path.abspath(path)).is_relative_to(real_root):
+        return False
+    return not Path(os.path.realpath(path)).is_relative_to(real_root)
+
+
 @registry.register(
     name="grep",
     description=(
@@ -268,9 +281,10 @@ def grep_files(
     # ── Single-file mode: if *path* is a file, grep it directly ────────
     resolved = os.path.abspath(str(resolved_path))
     if os.path.isfile(resolved):
-        # The same rule as the directory walk: an explicit path that is itself a
-        # symlink resolving outside the workspace must not be read either, or
-        # ``grep path=notes.txt`` (a link to ../secret) would read past the root.
+        # The same rule as the directory walk: an explicit path that resolves
+        # outside the workspace (a symlink itself or a link in any directory
+        # component) must not be read either, or ``grep path=notes.txt`` would
+        # read past the root.
         workspace_root = get_workspace_root(context)
         if workspace_root is not None:
             requested = os.path.abspath(
@@ -278,7 +292,7 @@ def grep_files(
                 if os.path.isabs(os.path.expanduser(path))
                 else os.path.join(str(workspace_root), os.path.expanduser(path))
             )
-            if _is_escaping_symlink(requested, os.path.realpath(str(workspace_root))):
+            if _escapes_via_symlinked_dir(requested, os.path.realpath(str(workspace_root))):
                 return "No matches found."
         try:
             regex_inner = re.compile(pattern, flags)

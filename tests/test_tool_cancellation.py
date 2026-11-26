@@ -308,3 +308,60 @@ async def test_the_plain_timeout_still_moves_the_command_to_the_background(tmp_p
     finally:
         bash_tool._JOBS.pop(pid, None)
         _drop_bg_logs(logs_before)
+
+
+# ── Hard cancel (task.cancel) kills the group too ─────────────────────────────
+#
+# The cooperative path above goes through the cancel watcher. A hard cancel
+# (the abort fallback, a background delegation being cancelled) raises
+# CancelledError inside the tool, and nothing used to stop the process group.
+
+
+@pytest.mark.asyncio
+async def test_a_hard_cancel_kills_a_running_bash_group(tmp_path):
+    pid_file = tmp_path / "child.pid"
+    ctx = _ctx(tmp_path)
+    task = asyncio.ensure_future(
+        bash_command(
+            f"sh -c 'echo $$ > {pid_file}; sleep 30'",
+            workdir=str(tmp_path),
+            context=ctx,
+        )
+    )
+    pid = await _read_pid(pid_file)
+    assert _alive(pid)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert await _wait_gone(pid), "the shell survived the hard cancel"
+
+
+@pytest.mark.asyncio
+async def test_a_hard_cancel_kills_a_running_test_run(tmp_path):
+    probe = "test_cancellation_probe_hard_cancel"
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / f"{probe}.py").write_text(
+        "import time\n\ndef test_slow():\n    time.sleep(30)\n"
+    )
+    ctx = SimpleNamespace(
+        workspace=str(tmp_path), confirm_callback=None, cancel_event=asyncio.Event()
+    )
+    task = asyncio.ensure_future(
+        rt.run_tests(
+            command=PYTEST,
+            target=f"tests/{probe}.py",
+            workdir=str(tmp_path),
+            context=ctx,
+        )
+    )
+    await asyncio.sleep(1.5)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await asyncio.sleep(0.3)
+    found = subprocess.run(["pgrep", "-af", probe], capture_output=True, text=True).stdout.splitlines()
+    assert [line for line in found if "pgrep" not in line] == []

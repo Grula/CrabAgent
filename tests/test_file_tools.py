@@ -296,6 +296,27 @@ def test_grep_explicit_symlink_path_does_not_escape_the_workspace(tmp_path: Path
     assert "inside-secret-token" in grep_files("secret-token", path="alias.txt", context=context)
 
 
+def test_grep_explicit_path_through_a_symlinked_directory_stays_inside(tmp_path: Path):
+    """A link in a *directory* component must not carry an explicit path outside."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("outside-secret-token\n", encoding="utf-8")
+    (workspace / "linkdir").symlink_to(outside, target_is_directory=True)
+    inner = workspace / "innerdir"
+    inner.mkdir()
+    (inner / "code.txt").write_text("inside-secret-token\n", encoding="utf-8")
+    (workspace / "innerlink").symlink_to(inner, target_is_directory=True)
+    context = AgentContext(workspace=workspace)
+
+    result = grep_files("secret-token", path="linkdir/secret.txt", context=context)
+    assert "outside-secret-token" not in result
+    # An inside-pointing directory link still resolves inside the root and works.
+    result = grep_files("secret-token", path="innerlink/code.txt", context=context)
+    assert "inside-secret-token" in result
+
+
 def test_grep_files_nonexistent_path(tmp_path: Path):
     context = AgentContext(workspace=tmp_path)
     result = grep_files("x", path="./nonexistent", context=context)

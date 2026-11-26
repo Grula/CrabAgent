@@ -232,6 +232,7 @@ async def test_account_goal_usage_records_normal_turn_and_ignores_negative_token
         ({"status": "active", "auto_continue": True}, {}, True),
         ({"status": "active", "auto_continue": True}, {"_agent_error": True}, False),
         ({"status": "active", "auto_continue": True}, {"_run_error": True}, False),
+        ({"status": "active", "auto_continue": True}, {"_run_cancelled": True}, False),
         ({"status": "complete", "auto_continue": True}, {}, False),
     ],
 )
@@ -239,6 +240,14 @@ def test_goal_continuation_stops_after_failed_turn(snapshot, metadata, expected)
     from crabagent.serve.api.prompt import _should_continue_goal
 
     assert _should_continue_goal(snapshot, metadata) is expected
+
+
+def test_a_stopped_turn_does_not_finalize_the_goal():
+    from crabagent.serve.api.prompt import _should_finalize_goal
+
+    assert _should_finalize_goal({"goal_id": 1}) is True
+    assert _should_finalize_goal({"goal_id": 1, "_goal_status_updated": True}) is False
+    assert _should_finalize_goal({"goal_id": 1, "_run_cancelled": True}) is False
 
 
 def test_goal_continuation_preserves_selected_model_and_provider():

@@ -1054,6 +1054,10 @@ async def spawn_sub_agent(
         model=_sub_model,
         provider_name=_sub_provider,
         current_agent=agent_name,
+        # Share the parent's stop flag: a Stop during a delegated bash/run_tests
+        # must reach the sub-agent, otherwise the parent's 5 s grace wait ends in
+        # a hard cancel that leaves the subprocess group running.
+        cancel_event=parent_context.cancel_event,
         system_prompt=_build_system_prompt(
             agent_def,
             has_shared=has_shared,
@@ -1168,11 +1172,13 @@ async def spawn_sub_agent(
     _text_buffer = [""]
     _detail_lines: list[str] = []
 
-    _background_errors = []
+    # Every AGENT_ERROR means the run failed, also for a foreground sub-agent: a
+    # provider setup failure emits one and returns normally with no output.
+    _run_errors = []
 
     async def _bridge_events(event: AgentEvent):
-        if (background or structured_result) and event.type == EventType.AGENT_ERROR:
-            _background_errors.append(str(event.data.get("error", "Agent failed")))
+        if event.type == EventType.AGENT_ERROR:
+            _run_errors.append(str(event.data.get("error", "Agent failed")))
         if event.type in (EventType.TEXT_DELTA,):
             _text_buffer[0] += event.data.get("text", "")
             now = time.time()
@@ -1283,8 +1289,10 @@ async def spawn_sub_agent(
         t0 = time.time()
         await run_agent(sub_context, task)
         elapsed = round(time.time() - t0, 1)
-        if _background_errors:
-            raise RuntimeError(_background_errors[-1])
+        if _run_errors:
+            raise RuntimeError(_run_errors[-1])
+        if sub_context.metadata.get("_run_error"):
+            raise RuntimeError("the run reported an error")
         # Out of steps: the loop's grace call has asked the agent to summarise what it did
         # and what is left. That summary is its result; the run still counts as failed.
         exhausted = sub_context.budget_exhausted

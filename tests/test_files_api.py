@@ -466,6 +466,31 @@ async def test_absolute_tree_and_search_outside_home_are_forbidden(backends, mon
 
 
 @pytest.mark.asyncio
+async def test_relative_search_of_a_denied_directory_is_forbidden(backends, monkeypatch):
+    """A $HOME workspace must not expose .crabagent through the relative branch."""
+    from crabagent.core.config import settings
+    from crabagent.serve.api import files
+
+    monkeypatch.setattr(settings, "workspace", backends.home)
+    (backends.home / ".crabagent").mkdir()
+    (backends.home / ".crabagent" / "secret.db").write_text("x", encoding="utf-8")
+    (backends.home / "notes.txt").write_text("hello\n", encoding="utf-8")
+    user = _user()
+
+    with pytest.raises(HTTPException) as exc:
+        await files.search_files(
+            q="secret", path=".crabagent", absolute=False, limit=10, user=user, db=None
+        )
+    assert exc.value.status_code == 403
+
+    # A legitimate relative search inside the workspace still works.
+    result = await files.search_files(
+        q="notes", path="", absolute=False, limit=10, user=user, db=None
+    )
+    assert [entry["name"] for entry in result["results"]] == ["notes.txt"]
+
+
+@pytest.mark.asyncio
 async def test_absolute_tree_without_path_lists_home(backends, monkeypatch):
     """The workspace picker starts at home: no path means home, not the filesystem root."""
     from crabagent.serve.api import files
@@ -567,6 +592,10 @@ async def test_foreign_session_id_on_write_gets_no_broadcast_and_no_molt(
     )
     request, stream = _fake_request("sess-foreign")
     critical = request.app.state.event_queues["q"][1]
+    # An *existing* file: only then does the save try to take a molt snapshot,
+    # so a new file would make the "no molt" assertion pass vacuously.
+    target = backends.server / "plain.txt"
+    target.write_text("before\n", encoding="utf-8")
 
     result = await files.write_file(
         files.WriteFileRequest(path="plain.txt", content="mine\n", session_id="sess-foreign"),
@@ -577,7 +606,7 @@ async def test_foreign_session_id_on_write_gets_no_broadcast_and_no_molt(
 
     # The write itself still succeeds — it just no longer pretends to be that chat.
     assert result["status"] == "ok"
-    assert (backends.server / "plain.txt").read_text(encoding="utf-8") == "mine\n"
+    assert target.read_text(encoding="utf-8") == "mine\n"
     assert [e for e in _drain(critical, stream) if e.type == EventType.FILE_UPDATED] == []
     async with molt_factory() as db:
         total = (await db.execute(select(func.count()).select_from(Molt))).scalar_one()

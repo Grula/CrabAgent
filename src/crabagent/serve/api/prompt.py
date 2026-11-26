@@ -66,14 +66,26 @@ _contexts: dict[str, AgentContext] = {}
 _session_locks: dict[str, asyncio.Lock] = {}
 
 
+def _should_finalize_goal(metadata: dict) -> bool:
+    """Finalize the goal only for a turn that ran to completion.
+
+    A stopped turn leaves the goal open: the user stopped it, so it must not be
+    auto-completed or checkpointed behind their back.
+    """
+    from crabagent.core.goals.service import goal_finalization_required
+
+    return not metadata.get("_run_cancelled") and goal_finalization_required(metadata)
+
+
 def _should_continue_goal(snapshot: dict | None, metadata: dict) -> bool:
-    """Only continue healthy goal turns; failures require user intervention."""
+    """Only continue healthy goal turns; failures and stopped turns require the user."""
     return bool(
         snapshot
         and snapshot.get("status") == "active"
         and snapshot.get("auto_continue")
         and not metadata.get("_run_error")
         and not metadata.get("_agent_error")
+        and not metadata.get("_run_cancelled")
     )
 
 
@@ -1300,14 +1312,13 @@ Use ordinary Markdown when a visualization is not helpful.
                     checkpoint_goal,
                     finalization_checkpoint,
                     get_current_goal,
-                    goal_finalization_required,
                     goal_to_dict,
                 )
 
                 async with async_session_factory() as goal_db:
                     goal = await get_current_goal(goal_db, session_id)
                     if goal:
-                        if goal_finalization_required(context.metadata):
+                        if _should_finalize_goal(context.metadata):
                             final_reply = context.messages[-1].get("content", "")
                             evidence = automatic_completion_evidence(final_reply)
                             if evidence:

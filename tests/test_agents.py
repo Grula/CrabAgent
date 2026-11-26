@@ -518,6 +518,56 @@ class TestSpawnSubAgent:
         assert len(all_subs) == 1
         assert next(iter(all_subs.values()))["status"] == "error"
 
+    @pytest.mark.asyncio
+    async def test_spawn_sub_agent_reports_a_provider_setup_failure(self, monkeypatch: pytest.MonkeyPatch):
+        """A setup failure returns normally from the loop, but the run did fail."""
+        agent_def = {
+            "name": "coder",
+            "display_name": "Code Expert",
+            "role": "Write code",
+            "goal": "Clean code",
+            "backstory": "",
+            "model": "",
+            "allow_delegation": False,
+            "tool_permissions": {},
+        }
+        monkeypatch.setattr(agents_module, "get_agent", _async_return(agent_def))
+        monkeypatch.setattr(agents_module, "_classify_task", lambda task: "code")
+        monkeypatch.setattr(agents_module, "inject_agent_lessons", _async_return("prompt with lessons"))
+        monkeypatch.setattr(agents_module, "_load_shared_context", _async_return(""))
+        recorded = {}
+
+        async def fake_task_record(**kwargs):
+            recorded["task_record"] = kwargs
+
+        monkeypatch.setattr("crabagent.core.database.task_record_create", fake_task_record)
+        monkeypatch.setattr("crabagent.core.database.agent_memory_upsert", _async_return(None))
+        monkeypatch.setattr(agents_module, "_llm_reflect_lesson", _async_return(None))
+
+        async def setup_failed_run_agent(context, query):
+            from crabagent.core.event import AgentEvent, EventType
+
+            context.metadata["_run_error"] = True
+            await context.event_bus.emit(
+                AgentEvent(
+                    type=EventType.AGENT_ERROR,
+                    data={"error": "no provider configured", "stage": "provider_setup"},
+                )
+            )
+            return context.messages
+
+        monkeypatch.setattr("crabagent.core.agent.loop.run_agent", setup_failed_run_agent)
+
+        parent = AgentContext(workspace=Path.cwd())
+        parent.metadata["session_id"] = "sess-1"
+        parent.metadata["user_id"] = 1
+
+        result = await agents_module.spawn_sub_agent("coder", "fix the bug", parent)
+
+        assert "failed" in result
+        assert "no provider configured" in result
+        assert recorded["task_record"]["success"] is False
+
 
 def _async_return(value):
     async def inner(*args, **kwargs):

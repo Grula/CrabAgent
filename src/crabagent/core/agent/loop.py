@@ -558,6 +558,15 @@ async def _run_agent(
             response = await litellm.acompletion(**completion_params)
 
             async for chunk in response:
+                if context.cancelled:
+                    # Stop mid-stream: close the connection instead of draining a
+                    # reply nobody wants, and keep the text that already arrived.
+                    # A half-streamed tool call is unusable, so drop it; the loop
+                    # then takes the cooperative _finish_cancelled path.
+                    await _close_stream(response)
+                    tool_calls_list.clear()
+                    break
+
                 if hasattr(chunk, "usage") and chunk.usage is not None:
                     usage = chunk.usage
                     prompt_tokens = usage.prompt_tokens or 0
@@ -1237,7 +1246,9 @@ async def _run_agent(
         await context.event_bus.emit(
             AgentEvent(type=EventType.BUDGET_EXHAUSTED, data={"iterations": context.iteration})
         )
-        await _grace_call(context, llm, model)
+        # A stopped turn must not spend another LLM call on a summary.
+        if not context.cancelled:
+            await _grace_call(context, llm, model)
 
     # Fire middleware end hooks (reflect / title / etc.)
     context.metadata["_run_elapsed"] = round(time.time() - _t0, 1)
@@ -1272,6 +1283,17 @@ _ITERATION_BUDGET_NOTE = (
     "You have exhausted your iteration budget. "
     "Please summarize what you've done and any remaining steps."
 )
+
+
+async def _close_stream(response: object) -> None:
+    """Close a model stream early; best effort, some stream objects have no aclose."""
+    close = getattr(response, "aclose", None)
+    if close is None:
+        return
+    try:
+        await close()
+    except Exception:
+        logger.debug("closing the cancelled stream failed", exc_info=True)
 
 
 async def _grace_call(context: AgentContext, llm: dict, model: str):

@@ -18,6 +18,7 @@ from crabagent.core.agent.tools.registry import registry
 from crabagent.core.agent.tools.sandbox import truncate_output, validate_command
 from crabagent.core.agent.tools.subprocess_cancel import (
     CANCELLED_NOTE,
+    kill_process_group_if_running,
     spawn_cancellable,
     subprocess_kwargs,
     terminate_process_group,
@@ -441,6 +442,12 @@ async def bash_command(
                     full_out, full_err, proc.returncode, note=CANCELLED_NOTE
                 )
             return _format_result(full_out, full_err, proc.returncode)
+
+        except asyncio.CancelledError:
+            # Hard cancel: the watcher is cancelled too, so nothing else will
+            # stop the group. Kill it now, then let the cancellation propagate.
+            kill_process_group_if_running(proc)
+            raise
 
         except TimeoutError:
             # Process still running after timeout → auto-background, unless the
