@@ -379,7 +379,8 @@ def test_general_hands_any_change_over_at_once_to_the_engineer_by_default():
     assert "to the engineer by default" in first_line
     assert "architect only for a project-sized feature or when the user asks for the team" in first_line
     assert "don't weigh its size" in first_line
-    assert "without running a command or reading code first" in general["goal"]
+    # Milestone eval: still `pwd && ls` and a listing first, i.e. two approval prompts.
+    assert "as your first tool call: no command before it, not even pwd or ls" in general["goal"]
     assert 'not "hand this to X"' in general["goal"]
     assert "who is taking over" in general["goal"]
 
