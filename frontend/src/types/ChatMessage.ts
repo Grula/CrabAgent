@@ -23,6 +23,8 @@ export interface ChatMessage {
   tool_calls?: unknown[];
   isStreaming?: boolean;
   stats?: { elapsed: number; model: string; tokens: number; iterations: number };
+  /** role "auto_prompt": the folded note's one-line title (see lib/userMessageText.ts autoPrompt). */
+  auto_prompt_title?: string;
   confirm_id?: string;
   tool_name?: string;
   tool_call_id?: string;

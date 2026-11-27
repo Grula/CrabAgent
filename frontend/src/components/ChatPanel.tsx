@@ -320,7 +320,8 @@ const ChatPanel = forwardRef<HTMLDivElement, Props>(
           pendingResults.push(item);
           continue;
         }
-        if (!Array.isArray(item) && item.role === "user" && pendingResults.length > 0) {
+        const startsTurn = !Array.isArray(item) && (item.role === "user" || item.role === "auto_prompt");
+        if (startsTurn && pendingResults.length > 0) {
           ordered.push(...pendingResults);
           pendingResults = [];
         }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { SSEEvent } from "../api/events";
 import { ChatMessage } from "../types/ChatMessage";
-import { sseEventToMessages } from "./messageTransforms";
+import { Message } from "../api/sessions";
+import { dbMessagesToChat, sseEventToMessages } from "./messageTransforms";
 
 function resultCard(runId: number): ChatMessage {
   return {
@@ -63,5 +64,20 @@ describe("bash stream correlation", () => {
   it("does not route an unknown call to a different terminal", () => {
     const updated = sseEventToMessages({ type: "bash_output", timestamp: 0, data: { text: "lost", tool_call_id: "missing" } }, calls);
     expect(updated.every((call) => !call.bashStream)).toBe(true);
+  });
+});
+
+describe("dbMessagesToChat handovers", () => {
+  const row = (id: number, role: string, content: string): Message => ({ id, sequence: id, role, content, created_at: null });
+
+  it("turns a saved handover brief into a folded note, not a user bubble", () => {
+    const chat = dbMessagesToChat([
+      row(1, "user", "speed up llama.cpp"),
+      row(2, "assistant", "Software engineer is taking over."),
+      row(3, "user", "[Handover] general handed this request over to you:\n\nAnalyze and speed up inference."),
+      row(4, "assistant", "Let me investigate."),
+    ]);
+    expect(chat.map((m) => m.role)).toEqual(["user", "assistant", "auto_prompt", "assistant"]);
+    expect(chat[2]).toMatchObject({ auto_prompt_title: "general handed this over", content: "Analyze and speed up inference." });
   });
 });

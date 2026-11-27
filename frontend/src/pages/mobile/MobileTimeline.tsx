@@ -22,7 +22,7 @@ import { listAgentProfiles, AgentProfile } from "../../api/agents";
 import { connectSSE } from "../../api/events";
 import { BackgroundTasks } from "../../components/BackgroundTasks";
 import "./mobile.css";
-import { displayTitle, displayUserText } from "../../lib/userMessageText";
+import { autoPrompt, displayTitle, displayUserText } from "../../lib/userMessageText";
 
 interface LiveItem {
   id: string;
@@ -329,7 +329,20 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
         )}
         {sessionId && (
           <div className="flex flex-col gap-3">
-            {messages.map((m) => (
+            {messages.map((m) => {
+              // A handover brief or goal nudge the server sent: folded, not shown as "You".
+              const auto = m.role === "user" ? autoPrompt(m.content ?? "") : null;
+              if (auto) {
+                return (
+                  <details key={m.id} className="self-start max-w-[92%] text-[12px] text-zinc-400">
+                    <summary className="cursor-pointer select-none">↪ {auto.title}</summary>
+                    <div className="mt-1 rounded-xl px-3 py-2 bg-zinc-900/60 border border-zinc-800 whitespace-pre-wrap break-words">
+                      {auto.body}
+                    </div>
+                  </details>
+                );
+              }
+              return (
               <div key={m.id} className={m.role === "user" ? "self-end max-w-[85%]" : "self-start max-w-[92%]"}>
                 <div className="text-[10.5px] text-zinc-500 mb-0.5 font-semibold">
                   {m.role === "user" ? "You" : "CrabAgent"}
@@ -354,7 +367,8 @@ export function MobileTimeline({ sessionId, onSessionChange }: Props) {
                   <img src={m.image_data} alt="" className="mt-1.5 rounded-xl max-h-40" />
                 )}
               </div>
-            ))}
+              );
+            })}
 
             {/* Live events (not yet persisted) */}
             {live.map((item) =>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayTitle, displayUserText } from "./userMessageText";
+import { autoPrompt, displayTitle, displayUserText } from "./userMessageText";
 
 describe("displayUserText", () => {
   it("shows only what the user typed after a mention", () => {
@@ -37,5 +37,24 @@ describe("displayTitle", () => {
 
   it("leaves normal titles alone", () => {
     expect(displayTitle("Fix collab browser navigation")).toBe("Fix collab browser navigation");
+  });
+});
+
+describe("autoPrompt", () => {
+  it("folds a handover brief under who handed it over", () => {
+    const sent = "[Handover] general handed this request over to you:\n\nAnalyze llama.cpp.\n\n1) research";
+    expect(autoPrompt(sent)).toEqual({ title: "general handed this over", body: "Analyze llama.cpp.\n\n1) research" });
+  });
+
+  it("folds the goal-mode nudge", () => {
+    const sent =
+      "Continue the active goal from the latest checkpoint. Work on the next concrete unfinished step, then record progress or verified completion.";
+    expect(autoPrompt(sent)).toEqual({ title: "Goal mode started the next round", body: sent });
+  });
+
+  it("leaves what the user typed alone", () => {
+    expect(autoPrompt("why does [Handover] show up?")).toBeNull();
+    expect(autoPrompt("[Handover] notes from yesterday")).toBeNull();
+    expect(autoPrompt("Continue the active goal please")).toBeNull();
   });
 });

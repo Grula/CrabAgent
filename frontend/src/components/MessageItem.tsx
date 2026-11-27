@@ -23,6 +23,7 @@ import {
   Zap,
   Check,
   CheckCircle2,
+  CornerDownRight,
   XCircle,
   AlertTriangle,
   MessageSquare,
@@ -53,6 +54,8 @@ export interface ChatMessage {
   tool_calls?: unknown[];
   isStreaming?: boolean;
   stats?: { elapsed: number; model: string; tokens: number; iterations: number };
+  /** role "auto_prompt": the folded note's one-line title (see lib/userMessageText.ts autoPrompt). */
+  auto_prompt_title?: string;
   confirm_id?: string;
   tool_name?: string;
   tool_call_id?: string;
@@ -284,6 +287,40 @@ const ThinkingItem = memo(function ThinkingItem({
         <pre className="whitespace-pre-wrap font-mono text-[12px] text-[var(--text-secondary)] m-0 bg-transparent! p-0! border-0!">
           {msg.content}
         </pre>
+      </div>
+    </details>
+  );
+});
+
+/** A prompt the server sent by itself (an agent handover, a goal round), folded:
+ *  the user never typed it, but it is what the next agent was told. */
+const AutoPromptItem = memo(function AutoPromptItem({
+  msg,
+  onToggle,
+}: {
+  msg: ChatMessage;
+  onToggle?: () => void;
+}) {
+  const title = (
+    <>
+      <CornerDownRight size={12} className="shrink-0 text-[var(--accent)]" />
+      <span className="truncate">{msg.auto_prompt_title}</span>
+    </>
+  );
+  const pill = "py-1.5 px-3 text-xs rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text-secondary)] flex items-center gap-2";
+  if (!msg.content.trim()) {
+    return <div className="mb-3 ml-3 inline-flex max-w-full"><div className={pill}>{title}</div></div>;
+  }
+  return (
+    <details
+      className="mb-3 ml-3 rounded-lg overflow-hidden"
+      onToggle={(e) => { if (e.currentTarget.open) onToggle?.(); }}
+    >
+      <summary className={cn(pill, "cursor-pointer select-none list-none hover:border-[var(--border-strong)] transition-colors")}>
+        {title}
+      </summary>
+      <div className="mt-1.5 p-3 rounded-lg text-xs leading-relaxed bg-[var(--bg-secondary)] border border-[var(--border)] border-l-[3px] border-l-[var(--accent)] whitespace-pre-wrap break-words text-[var(--text-secondary)]">
+        {msg.content}
       </div>
     </details>
   );
@@ -1008,6 +1045,9 @@ function MessageItemBase({
 
     case "compress":
       return <CompressItem msg={msg} />;
+
+    case "auto_prompt":
+      return <AutoPromptItem msg={msg} onToggle={onToggle} />;
 
     case "notice":
       return <NoticeItem msg={msg} />;

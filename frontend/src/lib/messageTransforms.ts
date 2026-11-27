@@ -2,6 +2,7 @@ import { ChatMessage } from "../types/ChatMessage";
 import type { DiffPreview } from "../types/ChatMessage";
 import { SSEEvent } from "../api/events";
 import { Message } from "../api/sessions";
+import { autoPrompt } from "./userMessageText";
 
 /** Append `text` to the last message's `content` if `predicate` matches.
  *  Returns true when the message was updated (and the array slot now holds
@@ -709,6 +710,14 @@ export function dbMessagesToChat(msgs: Message[]): ChatMessage[] {
         }
       } catch {
         /* keep original content */
+      }
+    }
+    // A handover brief or goal nudge the server sent: a folded note, not the user's bubble.
+    if (m.role === "user") {
+      const auto = autoPrompt(base.content);
+      if (auto) {
+        result.push({ id: base.id, role: "auto_prompt", content: auto.body, auto_prompt_title: auto.title });
+        continue;
       }
     }
     // v0.9 — tool messages may carry list content (multimodal browser results).

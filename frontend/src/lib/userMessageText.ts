@@ -1,4 +1,29 @@
 /**
+ * A prompt the server sent by itself: the brief an agent leaves when it hands
+ * the chat to another agent (`switch_agent`), or the nudge that starts a goal's
+ * next round. It is saved as a user message because the next agent must read it
+ * as one, but the user never typed it, so the chat shows it as a folded note.
+ * The wording comes from `serve/api/prompt.py` (`_handover_request`,
+ * `_goal_continuation_request`).
+ */
+export interface AutoPrompt {
+  /** One line for the folded note, e.g. "general handed this over". */
+  title: string;
+  /** What the next agent was told; shown when the note is opened. */
+  body: string;
+}
+
+const HANDOVER = /^\[Handover\] (.+?) handed this request over to you:\n\n/;
+const GOAL_CONTINUATION = "Continue the active goal from the latest checkpoint.";
+
+export function autoPrompt(content: string): AutoPrompt | null {
+  const handover = content.match(HANDOVER);
+  if (handover) return { title: `${handover[1]} handed this over`, body: content.slice(handover[0].length) };
+  if (content.startsWith(GOAL_CONTINUATION)) return { title: "Goal mode started the next round", body: content };
+  return null;
+}
+
+/**
  * What the user actually typed, for a message the chat box wrapped in a
  * delegation instruction (an @agent mention becomes `[delegate_task] ...`).
  * The model needs the instruction; the chat should show the user's words.

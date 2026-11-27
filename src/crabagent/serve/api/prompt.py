@@ -89,6 +89,8 @@ def _should_continue_goal(snapshot: dict | None, metadata: dict) -> bool:
     )
 
 
+# The chat view recognizes the handover and goal-continuation wording below and
+# folds those messages (frontend/src/lib/userMessageText.ts autoPrompt): keep them in step.
 HANDOVER_PREFIX = "[Handover] "
 # Handovers in a row without a user message in between (engineer -> architect ->
 # engineer ...): after this many the next agent waits for the user.
