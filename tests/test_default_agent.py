@@ -416,10 +416,14 @@ def test_only_the_engineer_and_coder_commit_and_pull_requests_ask_first():
     assert "the batch's last coder task does it" in goals["architect"]
 
 
-def test_code_workers_are_pointed_at_exact_navigation():
+def test_code_nav_is_off_by_default():
+    # The refactor A/B eval: no agent called code_nav even where it should help; each request
+    # still carried its ~345-token definition. code_search kind="reference" keeps the exact path.
+    from pathlib import Path
+
+    core_init = (Path(db.__file__).parent / "__init__.py").read_text()
+    assert "import crabagent.core.agent.tools.code_nav" not in core_init
     goals = {a["name"]: a["goal"] for a in db.DEFAULT_AGENTS}
     for name in ("engineer", "coder", "scout"):
-        assert "code_nav" in goals[name] and "exact" in goals[name], name
-    perms = {a["name"]: a["tool_permissions"] for a in db.DEFAULT_AGENTS}
-    assert perms["researcher"]["code_nav"] == perms["ui_checker"]["code_nav"] == "deny"
-    assert "code_nav" not in perms["engineer"]  # read-only: allowed by default
+        assert "code_nav" not in goals[name], name
+        assert "exact for Python" in goals[name], name
