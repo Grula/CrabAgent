@@ -168,6 +168,7 @@ async def create_tool(
         "diagnostics",
         "git_status",
         "git_commit",
+        "code_nav",
         "create_pull_request",
         "list_agents",
         "skill",

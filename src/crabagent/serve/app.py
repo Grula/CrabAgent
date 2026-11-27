@@ -334,6 +334,14 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Language servers started for code navigation (code_search, code_nav).
+    try:
+        from crabagent.core.code_index.lsp import close_all
+
+        await close_all()
+    except Exception:
+        logger.debug("Failed to stop language servers", exc_info=True)
+
     # Stop the platform-neutral browser bridge if this process started it.
     try:
         from crabagent.core.computer.bridge_service import stop_browser_bridge

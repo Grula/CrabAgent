@@ -414,3 +414,12 @@ def test_only_the_engineer_and_coder_commit_and_pull_requests_ask_first():
     assert "Asked to commit: git_commit with exactly the files you changed" in goals["engineer"]
     assert "Commit only when the brief asks" in goals["coder"]
     assert "the batch's last coder task does it" in goals["architect"]
+
+
+def test_code_workers_are_pointed_at_exact_navigation():
+    goals = {a["name"]: a["goal"] for a in db.DEFAULT_AGENTS}
+    for name in ("engineer", "coder", "scout"):
+        assert "code_nav" in goals[name] and "exact" in goals[name], name
+    perms = {a["name"]: a["tool_permissions"] for a in db.DEFAULT_AGENTS}
+    assert perms["researcher"]["code_nav"] == perms["ui_checker"]["code_nav"] == "deny"
+    assert "code_nav" not in perms["engineer"]  # read-only: allowed by default

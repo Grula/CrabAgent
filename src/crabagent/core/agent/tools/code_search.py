@@ -18,7 +18,16 @@ from crabagent.core.agent.tools.path_utils import get_workspace_root
 from crabagent.core.agent.tools.registry import registry
 from crabagent.core.code_index import Match, ensure_indexed, iter_matches
 from crabagent.core.code_index.extract import SYMBOL_KINDS
-from crabagent.core.code_index.references import find_references, format_references, narrow_to_qualifier
+from crabagent.core.code_index.lsp import navigator_for
+from crabagent.core.code_index.references import (
+    Reference,
+    _qualifier_words,
+    find_references,
+    format_references,
+    narrow_to_qualifier,
+    python_definitions,
+)
+from crabagent.core.code_index.references import sort_key as reference_sort_key
 
 DEFAULT_LIMIT = 10
 MAX_LIMIT = 50
@@ -429,8 +438,87 @@ async def _references(workspace, query: str, path_prefix: str | None, limit: Any
     if isinstance(limit, bool) or not isinstance(limit, int) or limit == DEFAULT_LIMIT:
         limit = REFERENCE_DEFAULT_LIMIT
     limit = min(max(limit, 1), MAX_LIMIT)
-    refs = await asyncio.to_thread(find_references, Path(workspace), name, path_prefix)
+    root = Path(workspace)
+    refs = await asyncio.to_thread(find_references, root, name, path_prefix)
+    precise, note = await _precise_python_references(root, name, qualifier, refs, path_prefix)
+    if precise is not None:
+        return format_references(precise, name, limit, note=note)
     hidden = 0
     if qualifier:
         refs, hidden = narrow_to_qualifier(refs, qualifier)
-    return format_references(refs, name, limit, hidden, qualifier)
+    return format_references(refs, name, limit, hidden, qualifier, note=note)
+
+
+async def _precise_python_references(
+    root: Path, name: str, qualifier: str, by_name: list, path_prefix: str | None
+) -> tuple[list | None, str]:
+    """References from the Python language server when the name has exactly one Python definition.
+
+    Returns ``(references, note)``; ``references`` is None when name matching has to do
+    (no or several definitions, no server), and ``note`` then says why.
+    """
+    definitions = await asyncio.to_thread(python_definitions, root, name, qualifier)
+    if not definitions:
+        return None, ""
+    if len(definitions) > 1:
+        names = ", ".join(sorted({d.qualname for d in definitions})[:6])
+        return None, (
+            f"[by name: {len(definitions)} Python definitions are called '{name}' ({names}); "
+            f"search one as Class.{name} for precise results]"
+        )
+    navigator = navigator_for(root)
+    if navigator is None:
+        return None, "[by name: install basedpyright for precise Python results]"
+    target = definitions[0]
+    locations = await navigator.references(root / target.path, target.line, target.column)
+    if not locations:
+        return None, "[by name: the Python language server did not answer]"
+    kinds = {(r.path, r.line): r for r in by_name}
+    prefix = (path_prefix or "").strip().removeprefix("./")
+    lines_of: dict[Path, list[str]] = {}
+    precise = []
+    for location in locations:
+        try:
+            rel = location.path.resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            continue  # site-packages and other code outside the workspace
+        if prefix and not rel.startswith(prefix):
+            continue
+        known = kinds.get((rel, location.line))
+        if known is not None:
+            precise.append(known)
+            continue
+        if location.path not in lines_of:
+            lines_of[location.path] = await asyncio.to_thread(_read_lines, location.path)
+        lines = lines_of[location.path]
+        text = lines[location.line - 1] if 0 < location.line <= len(lines) else ""
+        kind = "definition" if (rel, location.line) == (target.path, target.line) else "reference"
+        precise.append(Reference(rel, location.line, kind, " ".join(text.split())[:160]))
+    unique = {(r.path, r.line): r for r in precise}
+    # The server can't see through untyped code (`def run(registry): registry.execute()`):
+    # keep name matches it didn't confirm, marked, so precision doesn't cost recall.
+    if qualifier:
+        # Strict here: only receivers named like the class (narrow_to_qualifier keeps
+        # everything when none is, which would put db.execute back).
+        words = _qualifier_words(qualifier)
+        candidates = [r for r in by_name if r.receiver and any(w in r.receiver.lower() for w in words)]
+    else:
+        candidates = by_name
+    extra = [
+        Reference(r.path, r.line, r.kind, f"(by name) {r.text}", r.receiver)
+        for r in candidates
+        if (r.path, r.line) not in unique and r.kind != "definition"
+        and (not prefix or r.path.startswith(prefix))
+    ]
+    note = f"[precise: {target.qualname}, via basedpyright"
+    if extra:
+        note += f"; {len(extra)} more matched by name only (types unknown), marked (by name)"
+    merged = sorted([*unique.values(), *extra], key=reference_sort_key)
+    return merged, note + "]"
+
+
+def _read_lines(path: Path) -> list[str]:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []

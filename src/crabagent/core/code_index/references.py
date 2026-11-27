@@ -164,6 +164,11 @@ def narrow_to_qualifier(refs: list[Reference], qualifier: str) -> tuple[list[Ref
     return kept, len(refs) - len(kept)
 
 
+def sort_key(ref: Reference) -> tuple:
+    """Definitions, calls, imports, other uses; production code before tests; then by location."""
+    return KIND_ORDER[ref.kind], _is_test_path(ref.path), ref.path.count("/"), ref.path, ref.line
+
+
 def find_references(workspace: Path, name: str, path_prefix: str | None = None) -> list[Reference]:
     """Every use of ``name`` in the workspace's code files: definitions, calls,
     imports, other references; production code before tests, then by location.
@@ -183,11 +188,13 @@ def find_references(workspace: Path, name: str, path_prefix: str | None = None) 
             refs.extend(_python_refs(scanned.path, source.text, name))
         else:
             refs.extend(_pattern_refs(scanned.path, source.text, name))
-    refs.sort(key=lambda r: (KIND_ORDER[r.kind], _is_test_path(r.path), r.path.count("/"), r.path, r.line))
+    refs.sort(key=sort_key)
     return refs
 
 
-def format_references(refs: list[Reference], name: str, limit: int, hidden: int = 0, qualifier: str = "") -> str:
+def format_references(
+    refs: list[Reference], name: str, limit: int, hidden: int = 0, qualifier: str = "", note: str = ""
+) -> str:
     if not refs:
         return f"No references to '{name}' in code files. Try grep for strings, configs or docs."
     counts = {kind: sum(1 for r in refs if r.kind == kind) for kind in KIND_ORDER}
@@ -201,6 +208,60 @@ def format_references(refs: list[Reference], name: str, limit: int, hidden: int 
             f". {hidden} uses on receivers not named like {qualifier} were left out "
             f"(matching is by name); search '{name}' alone to see them"
         )
+    if note:
+        header += f" {note}"
     out = [header]
     out += [f"{r.kind:<10} {r.path}:{r.line}  {r.text}" for r in shown]
     return "\n".join(out)
+
+
+@dataclass(frozen=True)
+class Definition:
+    path: str  # workspace-relative
+    line: int  # 1-based
+    column: int  # 0-based, where the name starts
+    qualname: str  # Class.method, function, or Outer.Inner
+
+
+def _definitions_in(path: str, text: str, name: str) -> list[Definition]:
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return []
+    lines = text.splitlines()
+    found: list[Definition] = []
+
+    def visit(node: ast.AST, scope: list[str]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if child.name == name and 0 < child.lineno <= len(lines):
+                    source = lines[child.lineno - 1]
+                    column = source.find(name, child.col_offset)
+                    if column >= 0:
+                        found.append(Definition(path, child.lineno, column, ".".join([*scope, name])))
+                # Methods are qualified by their class; a nested function by its parent.
+                visit(child, [*scope, child.name])
+            else:
+                visit(child, scope)
+
+    visit(tree, [])
+    return found
+
+
+def python_definitions(workspace: Path, name: str, qualifier: str = "") -> list[Definition]:
+    """Python functions, methods and classes called ``name`` (``qualifier`` narrows to ``Class.name``).
+
+    Blocking: call it through ``asyncio.to_thread``.
+    """
+    word = re.compile(rf"(?<![\w$]){re.escape(name)}(?![\w$])")
+    found: list[Definition] = []
+    for scanned in iter_files(workspace):
+        if scanned.lang != "python":
+            continue
+        source = read_source(Path(workspace) / scanned.path)
+        if source is None or not word.search(source.text):
+            continue
+        found.extend(_definitions_in(scanned.path, source.text, name))
+    if qualifier:
+        found = [d for d in found if d.qualname.endswith(f"{qualifier}.{name}")]
+    return found

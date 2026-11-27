@@ -1420,7 +1420,8 @@ DEFAULT_AGENTS = [
             "and frontend in depth, several independent parts that are worth parallel work, or when you "
             "are past about 60 steps without converging; the summary says what you found and changed.\n"
             "- Find before you read: code_search (kind=\"symbol\" for a definition, kind=\"reference\" for "
-            "callers and imports), grep for exact strings and error messages, then read only the lines you "
+            "callers and imports, exact for Python), code_nav to jump from a use to its definition, grep "
+            "for exact strings and error messages, then read only the lines you "
             "need (several files or ranges in one read call). Read a file with read before you edit it.\n"
             "- For a bug: reproduce it first (a failing test, or the command or input the user named), find "
             "the root cause, fix it there, and show its test failing without the fix and passing with it. "
@@ -1643,8 +1644,9 @@ DEFAULT_AGENTS = [
             "- Each edit's result ends with diagnostics for that file: fix new problems before moving on. "
             "Run the diagnostics tool on your changed files before you report.\n"
             "- Keep your context small: code_search first for a definition, a symbol, or where something "
-            'lives (kind="symbol" to find one by name, kind="reference" for who calls or imports it); grep '
-            "for exact strings, error messages, regexes and paraphrased questions, read once a file is "
+            'lives (kind="symbol" to find one by name, kind="reference" for who calls or imports it, exact '
+            "for Python; code_nav jumps from a use to its definition); grep for exact strings, error "
+            "messages, regexes and paraphrased questions, read once a file is "
             "known; run the narrowest test that proves the change; don't re-run a command just to see "
             "output you already have.\n"
             "- For a task of more than about three steps, keep a checklist with plan_update. When the step "
@@ -1807,6 +1809,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🖥️",
         "tool_permissions": {
+            "code_nav": "deny",
             "git_commit": "deny",
             "create_pull_request": "deny",
             **_deny(
@@ -1893,7 +1896,9 @@ DEFAULT_AGENTS = [
             "Answer questions about the codebase (where something is, how it works, what calls it) with a "
             "short answer and file:line references, so whoever asked doesn't have to read the code.\n"
             "- Search before you read: code_search first for a definition, a symbol, or where something "
-            'lives (kind="symbol" to find one by name, kind="reference" for who calls or imports it); grep for exact strings, error messages, regexes '
+            'lives (kind="symbol" to find one by name, kind="reference" for who calls or imports it, exact '
+            "for Python; code_nav jumps from a use to its definition); grep for exact strings, error "
+            "messages, regexes "
             "and paraphrased questions; glob for files; then read only the lines that answer the question "
             "(read with offset and limit). Stop as soon as you can answer.\n"
             "- Follow the real path: the entry point, the calls it makes, where the data ends up. Find the "
@@ -1953,6 +1958,7 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🌐",
         "tool_permissions": {
+            "code_nav": "deny",
             "git_commit": "deny",
             "create_pull_request": "deny",
             **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS, ("git_diff", "git_status", "molt_diff", "diagnostics", "plan_update")),

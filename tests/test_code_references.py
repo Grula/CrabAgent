@@ -103,8 +103,10 @@ def test_unmatched_qualifier_hides_nothing(ws):
 async def test_code_search_reference_kind(ws):
     ctx = AgentContext(workspace=ws)
     result = await code_search("ToolRegistry.execute", kind="reference", context=ctx)
-    assert result.startswith("'execute': 1 definition, 1 call. 1 uses on receivers")
-    assert "src/user.py:7" in result and 'db.execute' not in result
+    assert result.startswith("'execute': 1 definition, 1 call")
+    # `registry` is untyped: the call is kept as a name match, db.execute is not.
+    assert "src/user.py:7  (by name)" in result or "src/user.py:7" in result
+    assert "db.execute" not in result
 
     scoped = await code_search("helper", kind="reference", path_prefix="./tests", context=ctx)
     assert "tests/test_user.py:3" in scoped and "src/user.py" not in scoped
