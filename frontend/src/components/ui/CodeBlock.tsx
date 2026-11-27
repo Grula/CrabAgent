@@ -26,9 +26,13 @@ export function CodeBlock({
   const [expanded, setExpanded] = useState(false);
   const lines = code.split("\n");
   const shouldCollapse = lines.length > collapseAfter + 2;
-  const visibleCode = shouldCollapse && !expanded
-    ? lines.slice(0, collapseAfter).join("\n")
-    : code;
+  const collapsed = shouldCollapse && !expanded;
+  // Folding clips the block's height instead of slicing the text: Markdown passes
+  // its already-highlighted <code> as children, which cannot be cut by lines.
+  // Lines are 1.6em (13px * 1.6); 28px is the block's own top + bottom padding.
+  const collapsedStyle = collapsed
+    ? { maxHeight: `calc(${collapseAfter} * 1.6em + 28px)`, overflowY: "hidden" as const }
+    : undefined;
 
   const handleCopy = async () => {
     try {
@@ -78,15 +82,19 @@ export function CodeBlock({
           )}
         </div>
       )}
-      <pre className="m-0 bg-transparent! border-0! p-0!">
+      <pre className="relative m-0 bg-transparent! border-0! p-0!">
         <code
           className={cn(
             "block px-4 py-3 text-[13px] leading-[1.6] overflow-x-auto",
             "bg-transparent! border-0!",
           )}
+          style={collapsedStyle}
         >
-          {children ?? visibleCode}
+          {children ?? code}
         </code>
+        {collapsed && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-[var(--code-bg)] to-transparent" />
+        )}
       </pre>
       {shouldCollapse && (
         <button
