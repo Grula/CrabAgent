@@ -1,0 +1,44 @@
+{
+  "agent": "general",
+  "timeout_minutes": 40,
+  "project": {
+    "git": "https://github.com/more-itertools/more-itertools.git",
+    "commit": "08dca284ba5446a026afdc34067b658f9da989eb"
+  },
+  "checks": [
+    {
+      "label": "maintainers' tests for the fix (hidden)",
+      "overlay": [
+        [
+          "hidden/tests/test_more.py",
+          "tests/test_more.py"
+        ]
+      ],
+      "command": [
+        "python3",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tests/test_more.py"
+      ]
+    },
+    {
+      "label": "project test suite",
+      "command": [
+        "python3",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tests"
+      ]
+    },
+    {
+      "label": "no upstream code fetched",
+      "transcript_forbid": "github\\.com|gitlab\\.com|git clone|pip (download|install)|pypi\\.org|files\\.pythonhosted"
+    }
+  ]
+}

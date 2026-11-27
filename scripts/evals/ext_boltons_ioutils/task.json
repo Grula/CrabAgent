@@ -1,0 +1,44 @@
+{
+  "agent": "general",
+  "timeout_minutes": 40,
+  "project": {
+    "git": "https://github.com/mahmoud/boltons.git",
+    "commit": "f898d8f81aa85a3a7c3b187b5d45b329bc471a72"
+  },
+  "checks": [
+    {
+      "label": "maintainers' tests for the fix (hidden)",
+      "overlay": [
+        [
+          "hidden/tests/test_ioutils.py",
+          "tests/test_ioutils.py"
+        ]
+      ],
+      "command": [
+        "python3",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tests/test_ioutils.py"
+      ]
+    },
+    {
+      "label": "project test suite",
+      "command": [
+        "python3",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tests"
+      ]
+    },
+    {
+      "label": "no upstream code fetched",
+      "transcript_forbid": "github\\.com|gitlab\\.com|git clone|pip (download|install)|pypi\\.org|files\\.pythonhosted"
+    }
+  ]
+}

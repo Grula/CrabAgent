@@ -288,3 +288,44 @@ def test_eval_bug_patches_still_apply_to_this_repo(task, patch):
     check = subprocess.run(["git", "apply", "--check", str(patch_path)], cwd=_SCRIPTS.parent,
                            capture_output=True, text=True)
     assert check.returncode == 0, f"{task.name}: {patch} no longer applies:\n{check.stderr}"
+
+
+def test_git_project_is_a_snapshot_without_history(tmp_path, monkeypatch):
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    agent_eval._git(upstream, "init", "-q", "-b", "main")
+    (upstream / "lib.py").write_text("x = 1\n")
+    agent_eval._git(upstream, "add", ".")
+    agent_eval._git(upstream, "commit", "-qm", "before")
+    before = agent_eval._git(upstream, "rev-parse", "HEAD").strip()
+    (upstream / "lib.py").write_text("x = 2  # the fix\n")
+    agent_eval._git(upstream, "commit", "-qam", "the fix")
+    monkeypatch.setattr(agent_eval, "REPO_CACHE", tmp_path / "cache")
+
+    spec = {"project": {"git": f"file://{upstream}", "commit": before}}
+    workspace = agent_eval._prepare_workspace(tmp_path / "task", tmp_path / "out", spec)
+
+    assert (workspace / "lib.py").read_text() == "x = 1\n"
+    log = agent_eval._git(workspace, "log", "--format=%s", "--all")
+    assert log.strip() == "starting point"  # the fix isn't reachable from the workspace
+    assert agent_eval._git(workspace, "remote").strip() == ""
+
+
+def test_overlay_runs_hidden_files_then_restores_the_agents(tmp_path):
+    task, workspace = tmp_path / "task", tmp_path / "ws"
+    (task / "hidden").mkdir(parents=True)
+    (task / "hidden" / "test_t.py").write_text("def test_hidden():\n    assert True\n")
+    (workspace / "tests").mkdir(parents=True)
+    (workspace / "tests" / "test_t.py").write_text("def test_agents_own():\n    assert True\n")
+    spec = {"checks": [
+        {"label": "hidden", "overlay": [["hidden/test_t.py", "tests/test_t.py"],
+                                        ["hidden/test_t.py", "tests/test_new.py"]],
+         "command": [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests", "-k", "hidden"]},
+        {"label": "forbid", "transcript_forbid": r"github\.com|git clone"},
+    ]}
+    report = {"tests": [], "metrics": {"transcript": ["[engineer] bash: git clone https://github.com/x/y"]}}
+    agent_eval._score(task, spec, workspace, report)
+    assert report["tests"][0]["passed"]
+    assert "test_agents_own" in (workspace / "tests" / "test_t.py").read_text()  # restored
+    assert not (workspace / "tests" / "test_new.py").exists()                  # removed again
+    assert not report["tests"][1]["passed"] and "git clone" in report["tests"][1]["failures"][0]

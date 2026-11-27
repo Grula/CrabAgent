@@ -1,0 +1,46 @@
+{
+  "agent": "general",
+  "timeout_minutes": 40,
+  "project": {
+    "git": "https://github.com/pytoolz/toolz.git",
+    "commit": "1fb2b9f1b69ab664a264944f4eafc290acce127d"
+  },
+  "checks": [
+    {
+      "label": "maintainers' tests for the fix (hidden)",
+      "overlay": [
+        [
+          "hidden/toolz/tests/test_itertoolz.py",
+          "toolz/tests/test_itertoolz.py"
+        ]
+      ],
+      "command": [
+        "python3",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "toolz/tests/test_itertoolz.py"
+      ]
+    },
+    {
+      "label": "project test suite (test_has_version needs toolz pip-installed: excluded)",
+      "command": [
+        "python3",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "toolz/tests",
+        "--deselect",
+        "toolz/tests/test_package.py::test_has_version"
+      ]
+    },
+    {
+      "label": "no upstream code fetched",
+      "transcript_forbid": "github\\.com|gitlab\\.com|git clone|pip (download|install)|pypi\\.org|files\\.pythonhosted"
+    }
+  ]
+}

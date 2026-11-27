@@ -10,9 +10,14 @@ A task folder holds:
                  (tracked and untracked, not ignored files), for tasks on a large real codebase
   request.md     the feature request, sent as the first chat message
   acceptance/    hidden tests, copied in only after the agents finish
+                 or "project": {"git": URL, "commit": SHA}: that commit of another project, as
+                 plain files without history (for bugs from real open-source fixes)
   task.json      {"agent": "architect", "timeout_minutes": 60, "project_test_command": [...]}, or
                  "checks": [{"label", "command", "cwd"?, "env"?, "timeout"?, "copy"?: [from, to]}]
-                 or {"label", "reply_regex"} to check the agent's final reply (e.g. its verdict)
+                 or {"label", "reply_regex"} to check the agent's final reply (e.g. its verdict),
+                 {"label", "transcript_forbid"} to fail when a tool call matches (e.g. fetching
+                 upstream code), "overlay": [[from, to], ...] to put hidden versions of files
+                 in place for one check and restore the agent's afterwards
                  run in order; "copy" puts hidden tests in place for that check only.
                  "private_copies": {"in/workspace": "in/repo"} gives the workspace its own copy
                  of a large folder (node_modules: ~5 s), so caches the tools write there
@@ -128,13 +133,39 @@ def _copy_repo(workspace: Path) -> None:
             shutil.copy2(source, target)
 
 
+REPO_CACHE = Path(tempfile.gettempdir()) / "crabagent-eval-repos"
+
+
+def _export_git_snapshot(url: str, commit: str, workspace: Path) -> None:
+    """The project at ``commit`` as plain files: no history, no remotes.
+
+    With history the agents could read the fix from a later commit (or from the
+    remote's refs); a snapshot of one commit holds nothing after it. Clones are
+    cached between runs; nothing is ever pushed.
+    """
+    name = url.rstrip("/").removesuffix(".git").split("/")[-2:]
+    cache = REPO_CACHE / "__".join(name)
+    if not (cache / ".git").exists():
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "clone", "-q", url, str(cache)], check=True, timeout=600)
+    if subprocess.run(["git", "cat-file", "-e", f"{commit}^{{commit}}"], cwd=cache).returncode != 0:
+        subprocess.run(["git", "fetch", "-q", "origin"], cwd=cache, check=True, timeout=600)
+    workspace.mkdir(parents=True)
+    archive = subprocess.run(["git", "archive", "--format=tar", commit], cwd=cache, capture_output=True,
+                             check=True)
+    subprocess.run(["tar", "-x", "-C", str(workspace)], input=archive.stdout, check=True)
+
+
 def _prepare_workspace(task: Path, out: Path, spec: dict | None = None) -> Path:
     spec = spec or {}
     workspace = out / "workspace"
     if workspace.exists():
         shutil.rmtree(workspace)
-    if spec.get("project") == "repo":
+    project = spec.get("project")
+    if project == "repo":
         _copy_repo(workspace)
+    elif isinstance(project, dict) and project.get("git"):
+        _export_git_snapshot(project["git"], project["commit"], workspace)
     else:
         shutil.copytree(task / "project", workspace)
     for dest, source_rel in (spec.get("private_copies") or {}).items():
@@ -160,7 +191,7 @@ def _prepare_workspace(task: Path, out: Path, spec: dict | None = None) -> Path:
             raise SystemExit(f"setup error: {step.get('label', step['command'])}: {detail}")
     ignore = workspace / ".gitignore"
     extra = "__pycache__/\n.pytest_cache/\n.eval_acceptance/\n"
-    if spec.get("project") != "repo":
+    if not spec.get("project"):
         extra += "*.json\n"  # data files the fixture's tests write
     ignore.write_text((ignore.read_text() if ignore.exists() else "") + "\n" + extra)
     for link in list(spec.get("symlinks") or {}) + list(spec.get("private_copies") or {}):
@@ -266,6 +297,25 @@ def _score(task: Path, spec: dict, workspace: Path, report: dict) -> None:
                 "failures": [], "output_tail": "",
             })
             continue
+        if "transcript_forbid" in check:
+            # E.g. fetching the upstream project, which holds the fix: that's copying, not solving.
+            import re
+
+            lines = (report.get("metrics") or {}).get("transcript", [])
+            hits = [line for line in lines if re.search(check["transcript_forbid"], line, re.IGNORECASE)]
+            report["tests"].append({
+                "label": check["label"], "exit_code": 1 if hits else 0, "passed": not hits,
+                "summary": f"{len(hits)} forbidden call(s)" if hits else "none",
+                "failures": hits[:10], "output_tail": "",
+            })
+            continue
+        overlaid: list[tuple[Path, bytes | None]] = []
+        for source, dest in check.get("overlay") or []:
+            # The maintainers' version of a file, in place for this check only.
+            target = workspace / dest
+            overlaid.append((target, target.read_bytes() if target.exists() else None))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((task / source).read_bytes())
         copied = None
         if check.get("copy"):
             source, dest = check["copy"]
@@ -278,6 +328,11 @@ def _score(task: Path, spec: dict, workspace: Path, report: dict) -> None:
         finally:
             if copied is not None:
                 shutil.rmtree(copied, ignore_errors=True)
+            for target, original in reversed(overlaid):
+                if original is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.write_bytes(original)
 
 
 def _checks(spec: dict) -> list[dict]:
