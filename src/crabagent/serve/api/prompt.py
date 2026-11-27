@@ -93,6 +93,9 @@ HANDOVER_PREFIX = "[Handover] "
 # Handovers in a row without a user message in between (engineer -> architect ->
 # engineer ...): after this many the next agent waits for the user.
 MAX_CHAINED_HANDOVERS = 2
+# One counter per chat that handed over, so the map is capped: a long-lived
+# server must not keep an entry for every session it ever served.
+_MAX_TRACKED_HANDOVER_CHATS = 256
 _handover_chain: dict[str, int] = {}
 
 
@@ -114,12 +117,24 @@ def _handover_request(request: PromptRequest, switched: dict) -> PromptRequest:
 def _next_handover_depth(session_id: str, message: str) -> int | None:
     """How many handovers in a row this one would be, or None when the chain is at its limit.
 
-    A message from the user (not a handover) starts a new chain.
+    A message from the user (not a handover) starts a new chain and forgets the
+    chat's counter, so the next chat to hand over starts from one again.
     """
-    depth = _handover_chain.get(session_id, 0) if (message or "").startswith(HANDOVER_PREFIX) else 0
+    if (message or "").startswith(HANDOVER_PREFIX):
+        depth = _handover_chain.get(session_id, 0)
+    else:
+        _handover_chain.pop(session_id, None)
+        depth = 0
     if depth >= MAX_CHAINED_HANDOVERS:
         return None
     return depth + 1
+
+
+def _remember_handover_depth(session_id: str, depth: int) -> None:
+    """Record the chat's chain length, dropping the oldest chat past the cap."""
+    _handover_chain[session_id] = depth
+    while len(_handover_chain) > _MAX_TRACKED_HANDOVER_CHATS:
+        _handover_chain.pop(next(iter(_handover_chain)), None)
 
 
 def _goal_continuation_request(request: PromptRequest) -> PromptRequest:
@@ -1365,7 +1380,7 @@ Use ordinary Markdown when a visualization is not helpful.
                     handover = _handover_request(req, switched)
 
                     async def _continue_handover() -> None:
-                        _handover_chain[session_id] = depth
+                        _remember_handover_depth(session_id, depth)
                         async with async_session_factory() as handover_db:
                             await prompt_async(session_id, handover, request, user, handover_db)
 

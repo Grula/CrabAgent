@@ -181,3 +181,28 @@ def test_handover_chains_stop_after_the_limit():
     assert prompt_api._next_handover_depth("s", prompt_api.HANDOVER_PREFIX + "x") is None  # agents ping-ponging
     assert prompt_api._next_handover_depth("s", "user again") == 1
     prompt_api._handover_chain.clear()
+
+
+def test_a_user_message_forgets_the_chats_handover_counter():
+    """The map must not keep a chat's count after its chain ended (audit finding F4)."""
+    from crabagent.serve.api import prompt as prompt_api
+
+    prompt_api._handover_chain.clear()
+    prompt_api._remember_handover_depth("s", 2)
+
+    assert prompt_api._next_handover_depth("s", "user again") == 1
+    assert "s" not in prompt_api._handover_chain
+    prompt_api._handover_chain.clear()
+
+
+def test_the_handover_chain_map_is_capped():
+    from crabagent.serve.api import prompt as prompt_api
+
+    prompt_api._handover_chain.clear()
+    for index in range(prompt_api._MAX_TRACKED_HANDOVER_CHATS + 10):
+        prompt_api._remember_handover_depth(f"s{index}", 1)
+
+    assert len(prompt_api._handover_chain) == prompt_api._MAX_TRACKED_HANDOVER_CHATS
+    assert "s0" not in prompt_api._handover_chain  # oldest evicted
+    assert f"s{prompt_api._MAX_TRACKED_HANDOVER_CHATS + 9}" in prompt_api._handover_chain
+    prompt_api._handover_chain.clear()

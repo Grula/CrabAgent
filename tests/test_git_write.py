@@ -171,3 +171,36 @@ async def test_pull_request_refuses_the_default_branch_and_dirty_trees(repo, wit
     _git(repo, "switch", "-qc", "feat/dirty")
     (repo / "a.py").write_text("a = 9\n")
     assert "uncommitted changes" in await create_pull_request("T", "B", context=_ctx(repo))
+
+
+def test_git_env_pins_the_c_locale_and_keeps_the_rest(monkeypatch):
+    """git's output is parsed, so it must not be translated (audit finding F3)."""
+    monkeypatch.setenv("CRAB_TEST_MARKER", "1")
+
+    env = git_write._git_env()
+
+    assert env["LC_ALL"] == "C"
+    assert env["CRAB_TEST_MARKER"] == "1"
+
+
+async def test_git_commit_runs_git_in_the_c_locale(repo, monkeypatch):
+    """The secret guard reads `git add --dry-run` back: "add '" must stay English."""
+    seen = []
+
+    class _FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+    async def fake_exec(*cmd, **kwargs):
+        seen.append((cmd, kwargs))
+        return _FakeProcess()
+
+    monkeypatch.setattr(git_write.asyncio, "create_subprocess_exec", fake_exec)
+    (repo / "a.py").write_text("a = 2\n")
+
+    await git_commit("Change a", ["a.py"], branch="fix/locale", context=_ctx(repo))
+
+    assert seen, "git_commit should have run git"
+    assert all(kwargs.get("env", {}).get("LC_ALL") == "C" for _, kwargs in seen)

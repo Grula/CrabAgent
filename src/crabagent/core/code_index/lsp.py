@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 
 IDLE_SECONDS = 600
 REQUEST_TIMEOUT = 45
+# After a start that failed (a server that hangs on ``initialize``, a broken
+# install), later queries answer None without paying the timeout again for this
+# long, and without spawning another process.
+START_RETRY_SECONDS = 300
 _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache",
               ".ruff_cache", "dist", "build", ".crabagent", ".tox", "site-packages"}
 # LSP file-change kinds.
@@ -58,6 +62,16 @@ def server_command() -> list[str] | None:
 
 def _uri_to_path(uri: str) -> Path:
     return Path(unquote(urlparse(uri).path))
+
+
+def utf16_column(text: str, index: int) -> int:
+    """The LSP ``character`` offset of code-point *index* in *text*.
+
+    LSP positions count UTF-16 code units while Python indexes code points, so
+    one non-BMP character (an emoji) before the name would shift the position by
+    one and ask about the wrong token. A BMP accent counts as one unit either way.
+    """
+    return len(text[:index].encode("utf-16-le")) // 2
 
 
 class _Client:
@@ -134,13 +148,15 @@ class _Client:
         self._send({"jsonrpc": "2.0", "method": method, "params": params})
 
     async def close(self) -> None:
-        with contextlib.suppress(Exception):
+        # BaseException, not Exception: a start cancelled mid-``initialize``
+        # re-delivers CancelledError here, and the process must still be killed.
+        with contextlib.suppress(BaseException):
             await asyncio.wait_for(self.request("shutdown", {}, timeout=3), 4)
             self.notify("exit", {})
         if self.proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
                 self.proc.kill()
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(BaseException):
                 await asyncio.wait_for(self.proc.wait(), 3)
         self._reader.cancel()
 
@@ -155,6 +171,7 @@ class PythonNavigator:
         self._mtimes: dict[Path, int] = {}
         self._opened: set[Path] = set()
         self._warm = False
+        self._start_failed_at: float | None = None
         self.last_used = time.monotonic()
 
     def _settings(self) -> dict:
@@ -186,11 +203,17 @@ class PythonNavigator:
         )
         client = _Client(proc, self._settings())
         root = self.workspace.as_uri()
-        await client.request("initialize", {
-            "processId": os.getpid(), "rootUri": root,
-            "workspaceFolders": [{"uri": root, "name": self.workspace.name}],
-            "capabilities": {"workspace": {"configuration": True, "didChangeWatchedFiles": {}}},
-        })
+        try:
+            await client.request("initialize", {
+                "processId": os.getpid(), "rootUri": root,
+                "workspaceFolders": [{"uri": root, "name": self.workspace.name}],
+                "capabilities": {"workspace": {"configuration": True, "didChangeWatchedFiles": {}}},
+            })
+        except BaseException:
+            # Nothing references this process yet, so a failed or stopped start
+            # must stop it here: the caller only ever sees the exception.
+            await client.close()
+            raise
         client.notify("initialized", {})
         self._mtimes = await asyncio.to_thread(self._scan)
         self._opened.clear()
@@ -221,15 +244,38 @@ class PythonNavigator:
             "uri": path.as_uri(), "languageId": "python", "version": 1, "text": text}})
         self._opened.add(path)
 
+    async def _ensure_client(self) -> _Client | None:
+        """The live server, starting one when needed; None when it cannot start.
+
+        A failed start is remembered for :data:`START_RETRY_SECONDS`: retrying a
+        server that hangs on ``initialize`` would make every later query wait the
+        whole timeout again and spawn one more process each time.
+        """
+        if self._client is not None and self._client.alive:
+            return self._client
+        if self._start_failed_at is not None:
+            if time.monotonic() - self._start_failed_at < START_RETRY_SECONDS:
+                return None
+            self._start_failed_at = None
+        try:
+            self._client = await self._start()
+        except Exception:
+            # ``_start`` has already closed what it spawned. A cancellation is
+            # not a broken server: it propagates and sets no back-off.
+            self._start_failed_at = time.monotonic()
+            logger.debug("language server failed to start for %s", self.workspace, exc_info=True)
+            return None
+        if self._client is not None:
+            self._start_failed_at = None
+        return self._client
+
     async def _query(self, method: str, path: Path, line: int, column: int) -> list[Location] | None:
         async with self._lock:
             self.last_used = time.monotonic()
             try:
-                if self._client is None or not self._client.alive:
-                    self._client = await self._start()
-                    if self._client is None:
-                        return None
-                client = self._client
+                client = await self._ensure_client()
+                if client is None:
+                    return None
                 await self._sync(client)
                 self._open(client, path)
                 params = {"textDocument": {"uri": path.as_uri()},

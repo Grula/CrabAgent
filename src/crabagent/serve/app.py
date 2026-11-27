@@ -338,7 +338,11 @@ async def lifespan(app: FastAPI):
     try:
         from crabagent.core.code_index.lsp import close_all
 
-        await close_all()
+        # A running query holds its navigator's lock for up to the request
+        # timeout, so a stuck server must not hold the whole shutdown hostage.
+        await asyncio.wait_for(close_all(), timeout=15)
+    except TimeoutError:
+        logger.warning("Timed out stopping language servers; they exit with the process")
     except Exception:
         logger.debug("Failed to stop language servers", exc_info=True)
 

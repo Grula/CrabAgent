@@ -14,7 +14,7 @@ from typing import Any
 
 from crabagent.core.agent.tools.path_utils import get_workspace_root, resolve_tool_path
 from crabagent.core.agent.tools.registry import registry
-from crabagent.core.code_index.lsp import navigator_for
+from crabagent.core.code_index.lsp import navigator_for, utf16_column
 from crabagent.core.code_index.references import _is_test_path
 
 DEFAULT_LIMIT = 30
@@ -76,7 +76,9 @@ async def code_nav(
     matches = [m.start() for m in re.finditer(rf"(?<![\w]){re.escape(name)}(?![\w])", text)]
     if not matches:
         return f"Error: '{name}' doesn't appear on line {line} of {path}: {text.strip()[:160]!r}"
-    column = matches[min(max(occurrence, 1), len(matches)) - 1]
+    # LSP positions count UTF-16 units, not characters (an emoji before the name
+    # would otherwise point one token to the left).
+    column = utf16_column(text, matches[min(max(occurrence, 1), len(matches)) - 1])
 
     navigator = navigator_for(workspace)
     if navigator is None:

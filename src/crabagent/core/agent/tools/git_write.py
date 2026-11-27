@@ -67,8 +67,22 @@ async def _kill(proc: asyncio.subprocess.Process) -> None:
     await proc.wait()
 
 
+def _git_env() -> dict[str, str]:
+    """The environment git runs in: English messages, because they are parsed.
+
+    ``git add --dry-run`` is read back to see which files a folder would stage
+    (the secret guard), and ``git commit``'s "nothing to commit" decides the
+    result. A localized git prints neither in English, so the guard would pass a
+    ``.env`` inside a staged folder. The rest of the environment is kept: hooks
+    and ``gh`` still need the user's PATH, credentials and config.
+    """
+    env = dict(os.environ)
+    env["LC_ALL"] = "C"
+    return env
+
+
 async def _git(workspace: Path, *args: str, timeout: int = 60) -> tuple[int, str]:
-    return await _run([*_GIT, *args], workspace, timeout)
+    return await _run([*_GIT, *args], workspace, timeout, env=_git_env())
 
 
 def _looks_secret(rel: str) -> bool:
