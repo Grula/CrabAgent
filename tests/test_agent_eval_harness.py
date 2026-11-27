@@ -268,3 +268,23 @@ def test_reply_regex_checks_the_final_reply(tmp_path):
     report = {"tests": [], "metrics": {"final_reply": "Item 1: fail (shown with …)\nITEM 2: PASS"}}
     agent_eval._score(tmp_path, spec, tmp_path, report)
     assert [t["passed"] for t in report["tests"]] == [True, False]
+
+
+def _repo_patch_tasks():
+    root = _SCRIPTS / "evals"
+    for task_json in sorted(root.glob("*/task.json")):
+        spec = json.loads(task_json.read_text())
+        if spec.get("project") == "repo" and spec.get("setup_patch"):
+            yield pytest.param(task_json.parent, spec["setup_patch"], id=task_json.parent.name)
+
+
+@pytest.mark.parametrize("task, patch", list(_repo_patch_tasks()))
+def test_eval_bug_patches_still_apply_to_this_repo(task, patch):
+    # A code change that touches a patched line silently breaks the eval's setup
+    # ("bugs.patch does not apply"): regenerate the patch when this fails.
+    import subprocess
+
+    patch_path = (task / patch).resolve()
+    check = subprocess.run(["git", "apply", "--check", str(patch_path)], cwd=_SCRIPTS.parent,
+                           capture_output=True, text=True)
+    assert check.returncode == 0, f"{task.name}: {patch} no longer applies:\n{check.stderr}"

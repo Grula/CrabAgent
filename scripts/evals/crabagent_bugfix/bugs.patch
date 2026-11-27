@@ -36,24 +36,24 @@ index 1757b67..94b29bb 100644
      if left <= STEP_REPORT_NOW_AT:
          return (
 diff --git a/src/crabagent/core/code_index/references.py b/src/crabagent/core/code_index/references.py
-index 283fc19..01a355b 100644
+index 5e3391d..2ae1033 100644
 --- a/src/crabagent/core/code_index/references.py
 +++ b/src/crabagent/core/code_index/references.py
-@@ -183,7 +183,8 @@ def find_references(workspace: Path, name: str, path_prefix: str | None = None)
+@@ -188,7 +188,8 @@ def find_references(workspace: Path, name: str, path_prefix: str | None = None)
              refs.extend(_python_refs(scanned.path, source.text, name))
          else:
              refs.extend(_pattern_refs(scanned.path, source.text, name))
--    refs.sort(key=lambda r: (KIND_ORDER[r.kind], _is_test_path(r.path), r.path.count("/"), r.path, r.line))
+-    refs.sort(key=sort_key)
 +    # One entry per location; definitions first, production code before tests.
 +    refs = sorted(set(refs), key=lambda r: (KIND_ORDER[r.kind], _is_test_path(r.path)))
      return refs
  
  
 diff --git a/tests/test_code_references.py b/tests/test_code_references.py
-index b2ca41d..999a5fb 100644
+index fc0a157..4077160 100644
 --- a/tests/test_code_references.py
 +++ b/tests/test_code_references.py
-@@ -128,3 +128,10 @@ def test_python_too_deep_for_ast_falls_back_to_patterns(tmp_path):
+@@ -130,3 +130,10 @@ def test_python_too_deep_for_ast_falls_back_to_patterns(tmp_path):
      (tmp_path / "deep.py").write_text("x = " + " + ".join(["1"] * 20_000) + "\ntarget()\n", encoding="utf-8")
      refs = find_references(tmp_path, "target")
      assert [(r.line, r.kind) for r in refs] == [(2, "call")]
