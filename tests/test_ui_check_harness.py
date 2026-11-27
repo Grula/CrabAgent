@@ -122,4 +122,20 @@ def test_seed_file_needs_the_harness_server(tmp_path):
 
 def test_a_steps_file_or_explore_is_required(capsys):
     assert ui_check.main([]) == 2
-    assert "pass a steps file, or --explore ROUTE" in capsys.readouterr().err
+    assert "pass a steps file, --do CODE or --explore ROUTE" in capsys.readouterr().err
+
+
+def test_inline_steps_run_against_the_ui_object():
+    seen = []
+
+    class FakeUI:
+        def open(self, route):
+            seen.append(("open", route))
+
+        def inventory(self):
+            seen.append(("inventory",))
+
+    ui_check._inline_steps('ui.open("#/agents"); ui.inventory()')(FakeUI())
+    assert seen == [("open", "#/agents"), ("inventory",)]
+    with pytest.raises(SyntaxError):
+        ui_check._inline_steps("ui.open(")

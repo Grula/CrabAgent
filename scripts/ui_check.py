@@ -7,7 +7,13 @@ Usage (from the repository root):
 
 --explore ROUTE opens a page and prints its visible controls (buttons, links, fields with
 their labels, tabs, headings) with a ready-to-use way to target each one. Use it instead of
-reading the frontend source to find selectors.
+reading the frontend source to find selectors. For a dialog or a page behind clicks, run a
+few steps inline instead of writing a file:
+
+    PYTHONPATH=src python3 scripts/ui_check.py \\
+        --do 'ui.open("#/agents"); ui.click_button("Software Engineer"); ui.inventory()'
+
+This docstring is the whole API: there is no need to read the rest of the script.
 
 STEPS.py is a short file you write for one check, 5-15 lines:
 
@@ -142,9 +148,13 @@ _INVENTORY_JS = r"""
       if (el.disabled) how += "  (disabled)";
     }
     out.push(`${kind.padEnd(14)} ${how}`);
-    if (out.length >= 120) { out.push("... (more not shown)"); break; }
   }
-  return out;
+  // Repeated controls (e.g. one Auto/Confirm/Deny button set per tool row) are
+  // collapsed, so the list stays short enough to show the page's real actions.
+  const counts = new Map();
+  for (const line of out) counts.set(line, (counts.get(line) || 0) + 1);
+  const lines = [...counts].map(([line, n]) => (n > 1 ? `${line}  (x${n}; .first is the first)` : line));
+  return lines.length > 150 ? [...lines.slice(0, 150), `... ${lines.length - 150} more not shown`] : lines;
 }
 """
 
@@ -476,6 +486,16 @@ def _login(base_url: str, username: str, password: str) -> str:
         return json.loads(response.read())["access_token"]
 
 
+def _inline_steps(code: str):
+    """``--do 'ui.open(...); ui.inventory()'`` as a run(ui) function."""
+    compiled = compile(code, "<--do>", "exec")
+
+    def run(ui: UI) -> None:
+        exec(compiled, {"ui": ui})  # noqa: S102 - the caller's own steps, like a steps file
+
+    return run
+
+
 def _load_steps(path: Path):
     spec = importlib.util.spec_from_file_location("ui_check_steps", path)
     if spec is None or spec.loader is None:
@@ -535,6 +555,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("steps", type=Path, nargs="?", help="a .py file defining run(ui)")
     parser.add_argument("--explore", metavar="ROUTE", default=None,
                         help='print the visible controls of a page (e.g. "" or "#/agents") instead of running steps')
+    parser.add_argument("--do", metavar="CODE", default=None,
+                        help="steps inline, as Python statements using `ui` (instead of a steps file)")
     parser.add_argument("--out", type=Path, default=None, help="where screenshots go (default: a temp dir)")
     parser.add_argument("--port", type=int, default=0, help="preview server port (default: a free one)")
     parser.add_argument("--url", default="", help="check this running server instead of starting a preview")
@@ -550,8 +572,8 @@ def main(argv: list[str] | None = None) -> int:
         if port is None or port == 5210:
             print("setup error: --url needs an explicit port, and never 5210 (the user's live server)", file=sys.stderr)
             return 2
-    if args.explore is None and args.steps is None:
-        print("setup error: pass a steps file, or --explore ROUTE", file=sys.stderr)
+    if args.explore is None and args.steps is None and args.do is None:
+        print("setup error: pass a steps file, --do CODE or --explore ROUTE", file=sys.stderr)
         return 2
     # SIGTERM (bash_stop, a cancelled run) and SIGHUP must still run the finally
     # below: the server runs in its own session and would survive us, holding the
@@ -565,6 +587,12 @@ def main(argv: list[str] | None = None) -> int:
             ui.open(route)
             ui.inventory()
             ui.screenshot("explore")
+    elif args.do is not None:
+        try:
+            run_steps = _inline_steps(args.do)
+        except SyntaxError as exc:
+            print(f"setup error: --do is not valid Python: {exc}", file=sys.stderr)
+            return 2
     else:
         run_steps = _load_steps(args.steps.resolve())
     out_dir = (args.out or Path(tempfile.mkdtemp(prefix="ui-check-shots-"))).resolve()
@@ -597,7 +625,7 @@ def main(argv: list[str] | None = None) -> int:
         shutil.rmtree(tmp, ignore_errors=True)
 
     results = ui.results if ui else []
-    if args.explore is not None:
+    if args.explore is not None or (args.do is not None and not results):
         for shot in ui.screenshots if ui else []:
             print(f"screenshot {shot}")
         if error:
