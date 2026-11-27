@@ -77,3 +77,49 @@ def test_preview_server_env_does_not_point_agents_at_this_repo(tmp_path, monkeyp
     assert seen["cwd"] == str(tmp_path / "ws")
     assert seen["cmd"][1] == "-c" and seen["cmd"][3] == str(ui_check.REPO / "src")  # on sys.path only
     assert seen["cmd"][-3:] == ["--serve", "--port", "4321"]
+
+
+class _FakePage:
+    def on(self, *_args):
+        pass
+
+
+def _ui(workspace):
+    return ui_check.UI(_FakePage(), "http://127.0.0.1:1", "t", workspace / "shots", workspace)
+
+
+def test_seed_file_creates_and_cleanup_removes_only_what_it_made(tmp_path):
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "keep.md").write_text("mine\n")
+    ui = _ui(tmp_path)
+    ui.seed_file("docs/x-plan.md", "# X\n")
+    ui.seed_file("new/deep/y.md", "# Y\n")
+    assert (tmp_path / "docs" / "x-plan.md").read_text() == "# X\n"
+
+    ui_check._cleanup_seeded(ui)
+
+    assert not (tmp_path / "docs" / "x-plan.md").exists()
+    assert not (tmp_path / "new").exists()             # folders it created go too...
+    assert (tmp_path / "docs" / "keep.md").exists()    # ...nothing else does
+
+
+def test_seed_file_refuses_to_overwrite_or_escape(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("rules\n")
+    ui = _ui(tmp_path)
+    with pytest.raises(FileExistsError):
+        ui.seed_file("AGENTS.md", "clobbered")
+    with pytest.raises(ValueError):
+        ui.seed_file("../outside.md", "x")
+    assert (tmp_path / "AGENTS.md").read_text() == "rules\n"
+    assert not (tmp_path.parent / "outside.md").exists()
+
+
+def test_seed_file_needs_the_harness_server(tmp_path):
+    ui = ui_check.UI(_FakePage(), "http://127.0.0.1:1", "t", tmp_path, None)
+    with pytest.raises(RuntimeError, match="not --url"):
+        ui.seed_file("docs/x.md", "x")
+
+
+def test_a_steps_file_or_explore_is_required(capsys):
+    assert ui_check.main([]) == 2
+    assert "pass a steps file, or --explore ROUTE" in capsys.readouterr().err

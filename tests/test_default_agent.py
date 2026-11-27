@@ -263,6 +263,9 @@ def test_architect_checks_a_feature_the_way_the_user_will_use_it():
     ui_checker = next(a for a in db.DEFAULT_AGENTS if a["name"] == "ui_checker")
     assert "web-app-testing" in ui_checker["skills"]  # its fallback when a project has no harness
     assert "scripts/ui_check.py" in ui_checker["goal"]
+    # 30-52 steps and 1.2-2.1M tokens per check before --explore, seed_file and new_chat existed.
+    assert "--explore ROUTE" in ui_checker["goal"] and "Don't read the frontend source" in ui_checker["goal"]
+    assert "ui.seed_file" in ui_checker["goal"] and "ui.new_chat()" in ui_checker["goal"]
     assert "At most 8 expectations" in ui_checker["goal"]
 
 

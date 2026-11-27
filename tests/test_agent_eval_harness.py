@@ -260,3 +260,11 @@ def test_settle_waits_out_a_handover_gap():
     assert settle.observe(True, 5)        # finished on 3 polls with no new runs
     fresh = agent_eval.Settle(polls=2)
     assert not fresh.observe(True, 1) and not fresh.observe(True, 2) and fresh.observe(True, 2)
+
+
+def test_reply_regex_checks_the_final_reply(tmp_path):
+    spec = {"checks": [{"label": "item 1 fails", "reply_regex": r"ITEM 1:\s*FAIL"},
+                       {"label": "item 2 fails", "reply_regex": r"ITEM 2:\s*FAIL"}]}
+    report = {"tests": [], "metrics": {"final_reply": "Item 1: fail (shown with …)\nITEM 2: PASS"}}
+    agent_eval._score(tmp_path, spec, tmp_path, report)
+    assert [t["passed"] for t in report["tests"]] == [True, False]

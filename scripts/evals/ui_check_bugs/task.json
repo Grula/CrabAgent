@@ -1,0 +1,17 @@
+{
+  "agent": "ui_checker",
+  "timeout_minutes": 30,
+  "project": "repo",
+  "private_copies": {"frontend/node_modules": "frontend/node_modules"},
+  "setup_patch": "../crabagent_bugfix/bugs.patch",
+  "setup_commands": [
+    {"label": "build the buggy UI into static/ (so the app shows the bugs)", "cwd": "frontend",
+     "command": ["bash", "-c", "npm run build >/dev/null && rm -rf ../src/crabagent/static/assets && cp -R dist/index.html dist/collab-browser.html dist/assets ../src/crabagent/static/"]}
+  ],
+  "checks": [
+    {"label": "item 1 reported FAIL (the 40-char title is cut)", "reply_regex": "ITEM 1:\\s*FAIL"},
+    {"label": "item 2 reported FAIL (200k is rejected)", "reply_regex": "ITEM 2:\\s*FAIL"},
+    {"label": "workspace left clean (no files created or changed)",
+     "command": ["bash", "-c", "git diff --cached --quiet && test -z \"$(git status --porcelain)\""]}
+  ]
+}

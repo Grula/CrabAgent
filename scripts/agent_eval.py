@@ -12,6 +12,7 @@ A task folder holds:
   acceptance/    hidden tests, copied in only after the agents finish
   task.json      {"agent": "architect", "timeout_minutes": 60, "project_test_command": [...]}, or
                  "checks": [{"label", "command", "cwd"?, "env"?, "timeout"?, "copy"?: [from, to]}]
+                 or {"label", "reply_regex"} to check the agent's final reply (e.g. its verdict)
                  run in order; "copy" puts hidden tests in place for that check only.
                  "private_copies": {"in/workspace": "in/repo"} gives the workspace its own copy
                  of a large folder (node_modules: ~5 s), so caches the tools write there
@@ -253,6 +254,18 @@ def _run_tests(workspace: Path, command: list[str], label: str, timeout: int = 6
 def _score(task: Path, spec: dict, workspace: Path, report: dict) -> None:
     """Run every check; hidden tests are in place only while their own check runs."""
     for check in _checks(spec):
+        if "reply_regex" in check:
+            # A check on what the agent reported (e.g. a verdict), not on the workspace.
+            import re
+
+            reply = (report.get("metrics") or {}).get("final_reply", "")
+            found = re.search(check["reply_regex"], reply, re.IGNORECASE | re.DOTALL)
+            report["tests"].append({
+                "label": check["label"], "exit_code": 0 if found else 1, "passed": bool(found),
+                "summary": f"reply {'matches' if found else 'does not match'} {check['reply_regex']!r}",
+                "failures": [], "output_tail": "",
+            })
+            continue
         copied = None
         if check.get("copy"):
             source, dest = check["copy"]

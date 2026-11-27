@@ -2,16 +2,32 @@
 
 Usage (from the repository root):
 
+    PYTHONPATH=src python3 scripts/ui_check.py --explore "#/agents"     # look first
     PYTHONPATH=src python3 scripts/ui_check.py STEPS.py [--out DIR] [--port N] [--url URL]
+
+--explore ROUTE opens a page and prints its visible controls (buttons, links, fields with
+their labels, tabs, headings) with a ready-to-use way to target each one. Use it instead of
+reading the frontend source to find selectors.
 
 STEPS.py is a short file you write for one check, 5-15 lines:
 
     def run(ui):
-        ui.open("#/chat")                      # logged in already
-        ui.click("text=New chat")
-        ui.fill("textarea", "hello")
-        ui.expect_visible("text=hello")        # at most 8 expect_* per run
-        ui.screenshot("typed")
+        ui.seed_file("docs/x-plan.md", "# My plan\n")   # test data, removed afterwards
+        ui.new_chat()                                     # a fresh chat in this repo (logged in)
+        ui.expect_text("My plan")                         # at most 8 expect_* per run
+        ui.open("#/agents")
+        ui.click_button("Software Engineer")              # by what the user sees
+        ui.inventory()                                    # print the controls shown now
+
+The app reopens the user's most recent chat, which may be in another project: call
+ui.new_chat() first when a check depends on this repo's files.
+
+The ui API. Actions: new_chat(), open(route), click_text(text), click_button(name), fill_label(label,
+value), click(selector), fill(selector, text), type(selector, text), press(key),
+wait_for(selector), wait(ms), eval(js), api(method, path, body), seed_file(path, text),
+screenshot(name), inventory(). Expectations (recorded, the run continues): expect_text,
+expect_visible, expect_hidden, expect_count, expect_url_contains, expect_dialog,
+expect_eval, expect_value(label, value). ui.page is the Playwright page for anything else.
 
 What this script does for you, so a check never needs its own 200-line script:
 1. copies ~/.crabagent/crabagent.db (sqlite backup), sets a known password on the
@@ -75,10 +91,68 @@ class ExpectationBudget(Exception):
     pass
 
 
+# Every visible control on the page, with the way a steps file should target it.
+_INVENTORY_JS = r"""
+() => {
+  const visible = (el) => {
+    const r = el.getBoundingClientRect();
+    const s = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
+  };
+  const clip = (t) => (t || "").replace(/\s+/g, " ").trim().slice(0, 70);
+  const labelOf = (el) => {
+    if (el.labels && el.labels.length) return clip(el.labels[0].innerText);
+    const by = el.getAttribute("aria-labelledby");
+    if (by) { const l = document.getElementById(by); if (l) return clip(l.innerText); }
+    // A label right before the field (no htmlFor): the app's Input does this.
+    let node = el;
+    for (let i = 0; i < 3 && node; i++, node = node.parentElement) {
+      const prev = node.previousElementSibling;
+      if (prev && prev.tagName === "LABEL") return clip(prev.innerText);
+    }
+    return "";
+  };
+  const out = [];
+  const seen = new Set();
+  const query = "button, a[href], input, textarea, select, [role=button], [role=tab], [role=menuitem], " +
+                "[role=checkbox], [role=switch], h1, h2, h3";
+  for (const el of document.querySelectorAll(query)) {
+    if (!visible(el) || seen.has(el)) continue;
+    seen.add(el);
+    const tag = el.tagName.toLowerCase();
+    const aria = el.getAttribute("aria-label") || "";
+    const text = clip(el.innerText || el.value || "");
+    const placeholder = el.getAttribute("placeholder") || "";
+    let kind = tag, how = "";
+    if (/^h[1-3]$/.test(tag)) { kind = "heading"; how = `expect_text(${JSON.stringify(text)})`; }
+    else if (tag === "input" || tag === "textarea" || tag === "select") {
+      kind = tag === "input" ? `input[${el.type || "text"}]` : tag;
+      const label = labelOf(el);
+      if (label) how = `fill_label(${JSON.stringify(label)}, ...)`;
+      else if (aria) how = `fill('[aria-label=${JSON.stringify(aria)}]', ...)`;
+      else if (placeholder) how = `fill('[placeholder=${JSON.stringify(placeholder)}]', ...)`;
+      else how = `fill('${tag}', ...)  # no label`;
+      if (el.value) how += `  value=${JSON.stringify(clip(el.value))}`;
+    } else {
+      kind = el.getAttribute("role") || tag;
+      if (aria) how = `click('[aria-label=${JSON.stringify(aria)}]')`;
+      else if (text && (tag === "button" || kind === "button")) how = `click_button(${JSON.stringify(text)})`;
+      else if (text) how = `click_text(${JSON.stringify(text)})`;
+      else continue;
+      if (el.disabled) how += "  (disabled)";
+    }
+    out.push(`${kind.padEnd(14)} ${how}`);
+    if (out.length >= 120) { out.push("... (more not shown)"); break; }
+  }
+  return out;
+}
+"""
+
+
 class UI:
     """The small API a STEPS.py file uses. ``ui.page`` is the Playwright page for anything else."""
 
-    def __init__(self, page, base_url: str, token: str, out_dir: Path) -> None:
+    def __init__(self, page, base_url: str, token: str, out_dir: Path, workspace: Path | None = None) -> None:
         self.page = page
         self.base_url = base_url.rstrip("/")
         self.token = token
@@ -87,6 +161,8 @@ class UI:
         self.screenshots: list[Path] = []
         self.dialogs: list[str] = []
         self.dialog_policy = "accept"
+        self.workspace = workspace
+        self.seeded: list[Path] = []  # removed by main() after the run
         page.on("dialog", self._on_dialog)
 
     # ── actions (a failure here stops the run) ──
@@ -104,6 +180,71 @@ class UI:
 
     def click(self, selector: str) -> None:
         self.page.locator(selector).first.click()
+
+    def click_text(self, text: str, exact: bool = False) -> None:
+        """Click the first visible element showing this text."""
+        self.page.get_by_text(text, exact=exact).first.click()
+
+    def click_button(self, name: str) -> None:
+        """Click a button by its accessible name (its text or aria-label)."""
+        self.page.get_by_role("button", name=name).first.click()
+
+    def _field(self, label: str):
+        by_label = self.page.get_by_label(label, exact=True)
+        if by_label.count():
+            return by_label.first
+        # Labels without htmlFor: the first field after a <label> with this exact text.
+        quoted = json.dumps(label)
+        return self.page.locator(
+            f"xpath=//label[normalize-space(.)={quoted}]/following::*[self::input or self::textarea or "
+            "self::select][1]"
+        ).first
+
+    def fill_label(self, label: str, value: str) -> None:
+        """Fill the field whose label reads ``label`` (as --explore shows it)."""
+        self._field(label).fill(value)
+
+    def seed_file(self, path: str, text: str) -> Path:
+        """Create a test file in the preview server's workspace; it is deleted after the run.
+
+        Refuses to overwrite an existing file, so a check can never destroy real work.
+        """
+        if self.workspace is None:
+            raise RuntimeError("seed_file needs the preview server this script starts (not --url)")
+        root = self.workspace.resolve()
+        target = (root / path).resolve()
+        if not target.is_relative_to(root):
+            raise ValueError(f"seed_file path escapes the workspace: {path}")
+        if target.exists():
+            raise FileExistsError(f"seed_file won't overwrite an existing file: {path}")
+        missing = [p for p in [target.parent, *target.parent.parents] if not p.exists() and p.is_relative_to(root)]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        self.seeded.append(target)
+        self.seeded.extend(sorted(missing, key=lambda p: len(p.parts), reverse=True))  # new dirs, deepest first
+        return target
+
+    def new_chat(self) -> str:
+        """Open a fresh chat in the checked repo's workspace; returns its session id.
+
+        On load the app reopens the user's most recent chat, in whatever workspace
+        that one used (often another project). Start here when a check depends on
+        this repo's files, e.g. plans made with seed_file.
+        """
+        body = {"title": "ui check", "workspace": str(self.workspace)} if self.workspace else {"title": "ui check"}
+        session = self.api("POST", "/api/sessions", body)
+        if not isinstance(session, dict) or "session_id" not in session:
+            raise RuntimeError(f"new_chat: creating the chat failed: {str(session)[:200]}")
+        self.open("")  # the newest chat is the one the app opens
+        return session["session_id"]
+
+    def inventory(self) -> list[str]:
+        """Print (and return) the visible controls of the current page and how to target them."""
+        lines = self.page.evaluate(_INVENTORY_JS)
+        print(f"--- controls on {self.page.url} ---")
+        for line in lines:
+            print(line)
+        return lines
 
     def fill(self, selector: str, text: str) -> None:
         self.page.locator(selector).first.fill(text)
@@ -125,10 +266,13 @@ class UI:
 
     def api(self, method: str, path: str, body: dict | None = None):
         """Call the preview server's API as the logged-in user (e.g. to seed a session)."""
+        headers = {"Authorization": f"Bearer {self.token}"}
+        if body is not None:
+            headers["Content-Type"] = "application/json"  # without it FastAPI answers 422
         response = self.page.request.fetch(
             self.base_url + path,
             method=method.upper(),
-            headers={"Authorization": f"Bearer {self.token}"},
+            headers=headers,
             data=json.dumps(body) if body is not None else None,
         )
         try:
@@ -191,6 +335,11 @@ class UI:
         shown, self.dialogs = self.dialogs, []
         ok = any(contains in message for message in shown) if shown else False
         return self._expect(ok, label or f"dialog {contains!r}", f"dialogs seen: {shown}")
+
+    def expect_value(self, field_label: str, expected: str, label: str = "") -> bool:
+        """The field labelled ``field_label`` holds ``expected``."""
+        actual = self._field(field_label).input_value()
+        return self._expect(actual == expected, label or f"{field_label} == {expected!r}", f"got {actual!r}")
 
     def expect_eval(self, js: str, expected, label: str = "") -> bool:
         actual = self.page.evaluate(js)
@@ -339,7 +488,20 @@ def _load_steps(path: Path):
     return run
 
 
-def _run_browser(run_steps, base_url: str, token: str, out_dir: Path) -> tuple[UI | None, str]:
+def _cleanup_seeded(ui: UI | None) -> None:
+    """Delete the files seed_file created (and the folders it had to create)."""
+    for path in ui.seeded if ui else []:
+        try:
+            if path.is_dir():
+                path.rmdir()  # only if empty: never removes anything else
+            else:
+                path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _run_browser(run_steps, base_url: str, token: str, out_dir: Path,
+                 workspace: Path | None = None) -> tuple[UI | None, str]:
     from playwright.sync_api import sync_playwright
 
     error = ""
@@ -351,7 +513,7 @@ def _run_browser(run_steps, base_url: str, token: str, out_dir: Path) -> tuple[U
             page.goto(base_url + "/", wait_until="load")
             page.evaluate("token => localStorage.setItem('crab_token', token)", token)
             page.reload(wait_until="load")
-            ui = UI(page, base_url, token, out_dir)
+            ui = UI(page, base_url, token, out_dir, workspace)
             try:
                 run_steps(ui)
             except ExpectationBudget as exc:
@@ -364,12 +526,15 @@ def _run_browser(run_steps, base_url: str, token: str, out_dir: Path) -> tuple[U
                     pass
         finally:
             browser.close()
+            _cleanup_seeded(ui)
     return ui, error
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
-    parser.add_argument("steps", type=Path, help="a .py file defining run(ui)")
+    parser.add_argument("steps", type=Path, nargs="?", help="a .py file defining run(ui)")
+    parser.add_argument("--explore", metavar="ROUTE", default=None,
+                        help='print the visible controls of a page (e.g. "" or "#/agents") instead of running steps')
     parser.add_argument("--out", type=Path, default=None, help="where screenshots go (default: a temp dir)")
     parser.add_argument("--port", type=int, default=0, help="preview server port (default: a free one)")
     parser.add_argument("--url", default="", help="check this running server instead of starting a preview")
@@ -385,12 +550,23 @@ def main(argv: list[str] | None = None) -> int:
         if port is None or port == 5210:
             print("setup error: --url needs an explicit port, and never 5210 (the user's live server)", file=sys.stderr)
             return 2
+    if args.explore is None and args.steps is None:
+        print("setup error: pass a steps file, or --explore ROUTE", file=sys.stderr)
+        return 2
     # SIGTERM (bash_stop, a cancelled run) and SIGHUP must still run the finally
     # below: the server runs in its own session and would survive us, holding the
     # real encryption key, next to a DB copy with a known password.
     for signum in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(signum, _exit_on_signal)
-    run_steps = _load_steps(args.steps.resolve())
+    if args.explore is not None:
+        route = args.explore
+
+        def run_steps(ui: UI) -> None:
+            ui.open(route)
+            ui.inventory()
+            ui.screenshot("explore")
+    else:
+        run_steps = _load_steps(args.steps.resolve())
     out_dir = (args.out or Path(tempfile.mkdtemp(prefix="ui-check-shots-"))).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -406,7 +582,7 @@ def main(argv: list[str] | None = None) -> int:
             proc = _start_server(tmp, port)
         _wait_until_up(base_url, proc)
         token = _login(base_url, username, args.password)
-        ui, error = _run_browser(run_steps, base_url, token, out_dir)
+        ui, error = _run_browser(run_steps, base_url, token, out_dir, None if args.url else REPO)
     except SystemExit as exc:
         print(str(exc), file=sys.stderr)
         _print_log_tail(tmp)
@@ -421,6 +597,12 @@ def main(argv: list[str] | None = None) -> int:
         shutil.rmtree(tmp, ignore_errors=True)
 
     results = ui.results if ui else []
+    if args.explore is not None:
+        for shot in ui.screenshots if ui else []:
+            print(f"screenshot {shot}")
+        if error:
+            print("ERROR " + error)
+        return 1 if error else 0
     for ok, label in results:
         print(("PASS " if ok else "FAIL ") + label)
     if error:
