@@ -24,7 +24,7 @@ interface Props {
 
 export function AgentTimeline({ timeline, error, hasSession, agentFilter, onAgentFilterChange }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
-  const stickToBottom = useRef(true);
+  const stickToTop = useRef(true);
 
   const agents = useMemo(() => {
     const seen = new Map<string, { name: string; label: string; icon: string; count: number }>();
@@ -38,15 +38,17 @@ export function AgentTimeline({ timeline, error, hasSession, agentFilter, onAgen
     return [...seen.values()];
   }, [timeline]);
   const labels = useMemo(() => new Map(agents.map((a) => [a.name, a])), [agents]);
+  // Newest first: the API sends steps oldest first.
   const steps = useMemo(
-    () => (timeline?.steps ?? []).filter((s) => !agentFilter || s.agent === agentFilter),
+    () => (timeline?.steps ?? []).filter((s) => !agentFilter || s.agent === agentFilter).reverse(),
     [timeline, agentFilter],
   );
 
-  // Follow new steps the way a log does, unless the user has scrolled up to read.
+  // New steps arrive on top: stay at the top to see them. Someone who scrolled down to
+  // read keeps their place (the browser's scroll anchoring holds the rows in view).
   useEffect(() => {
     const el = listRef.current;
-    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
+    if (el && stickToTop.current) el.scrollTop = 0;
   }, [steps.length]);
 
   if (!hasSession) return <Empty text="Open a chat to see what its agents do." />;
@@ -79,7 +81,7 @@ export function AgentTimeline({ timeline, error, hasSession, agentFilter, onAgen
         ref={listRef}
         onScroll={(e) => {
           const el = e.currentTarget;
-          stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          stickToTop.current = el.scrollTop < 40;
         }}
         className="flex-1 min-h-0 overflow-y-auto py-1"
       >

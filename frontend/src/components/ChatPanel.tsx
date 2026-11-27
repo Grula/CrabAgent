@@ -374,8 +374,10 @@ const ChatPanel = forwardRef<HTMLDivElement, Props>(
         })}
 
         {sending && !replaying && (
-          <div className="flex items-center px-1 py-2" role="status" aria-label="Working">
-            <span className="text-lg animate-pulse select-none">🦀</span>
+          <div className="crab-walk-track px-1 py-2" role="status" aria-label="Working">
+            <span className="crab-walk" aria-hidden="true">
+              <span className="crab-walk-body text-lg select-none">🦀</span>
+            </span>
           </div>
         )}
 

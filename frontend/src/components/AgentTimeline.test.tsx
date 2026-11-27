@@ -89,13 +89,22 @@ describe("AgentTimeline", () => {
     expect(host.textContent).not.toContain("ledger.py");
   });
 
+  it("lists the newest step first", () => {
+    const host = render(<AgentTimeline timeline={timeline} hasSession agentFilter="" onAgentFilterChange={() => {}} />);
+    const rows = [...host.querySelectorAll('button[aria-expanded]')].map((r) => r.textContent ?? "");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toContain("Senior Developer"); // the running bash step, started last
+    expect(rows[1]).toContain("ledger.py");
+    expect(rows[2]).toContain("QA Engineer"); // the oldest step
+  });
+
   it("expands an edit into its diff and a command into its output", () => {
     const host = render(<AgentTimeline timeline={timeline} hasSession agentFilter="" onAgentFilterChange={() => {}} />);
     const rows = [...host.querySelectorAll('button[aria-expanded]')];
     act(() => (rows[1] as HTMLButtonElement).click());
     expect(host.textContent).toContain("- a = 1");
     expect(host.textContent).toContain("+ b = 3");
-    act(() => (rows[0] as HTMLButtonElement).click());
+    act(() => (rows[2] as HTMLButtonElement).click());
     expect(host.textContent).toContain("1 failed");
   });
 
