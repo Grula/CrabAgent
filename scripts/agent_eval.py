@@ -438,6 +438,19 @@ def _collect(con: sqlite3.Connection, session_id: str) -> dict:
     }
 
 
+def _deny_tools(db_path: Path, tools: list[str]) -> None:
+    """Deny ``tools`` to every agent profile in the eval's database copy (never the live one)."""
+    con = sqlite3.connect(db_path)
+    try:
+        for name, raw in con.execute("select name, tool_permissions from agent_profiles").fetchall():
+            perms = json.loads(raw or "{}")
+            perms.update({tool: "deny" for tool in tools})
+            con.execute("update agent_profiles set tool_permissions = ? where name = ?", (json.dumps(perms), name))
+        con.commit()
+    finally:
+        con.close()
+
+
 def _clock(value) -> str:
     """HH:MM:SS of a run timestamp, stored as epoch seconds or an ISO string."""
     if value in (None, ""):
@@ -451,7 +464,8 @@ def _clock(value) -> str:
 
 
 def _report_md(report: dict) -> str:
-    lines = [f"# Eval {report['task']} ({report.get('agent', 'architect')}): {report['verdict']}", ""]
+    denied = f", denied: {report['denied']}" if report.get("denied") else ""
+    lines = [f"# Eval {report['task']} ({report.get('agent', 'architect')}{denied}): {report['verdict']}", ""]
     lines.append(f"- status: {report['run_status']} after {report['elapsed_s']} s; interventions: "
                  f"{len(report['interventions'])}; step-cap hits: {report['metrics'].get('step_cap_hits')}")
     tokens = report["metrics"].get("tokens", {})
@@ -486,6 +500,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--model", default="", help="chat model override (default: the app's default)")
     parser.add_argument("--timeout-minutes", type=float, default=None)
+    parser.add_argument("--deny", default="",
+                        help="comma-separated tools denied to every agent, in the eval's DB copy only (A/B runs)")
     parser.add_argument("--agent", default="",
                         help="agent that gets the request (default: task.json's, else architect)")
     args = parser.parse_args(argv)
@@ -503,7 +519,8 @@ def main(argv: list[str] | None = None) -> int:
     for signum in (ui_check.signal.SIGTERM, ui_check.signal.SIGHUP):
         ui_check.signal.signal(signum, ui_check._exit_on_signal)
 
-    report: dict = {"task": task.name, "agent": spec.get("agent", "architect"), "workspace": str(workspace),
+    report: dict = {"task": task.name, "agent": spec.get("agent", "architect"), "denied": args.deny,
+                    "workspace": str(workspace),
                     "interventions": [], "tests": [],
                     "metrics": {}, "run_status": "not started", "elapsed_s": 0}
     tmp = Path(tempfile.mkdtemp(prefix="agent-eval-"))
@@ -511,6 +528,8 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     try:
         username = ui_check._prepare_db_copy(tmp, None)
+        if args.deny:
+            _deny_tools(tmp / "db.sqlite", [t.strip() for t in args.deny.split(",") if t.strip()])
         port = ui_check._free_port()
         base_url = f"http://127.0.0.1:{port}"
         # Started in an empty folder: nothing in the agents' environment points at this

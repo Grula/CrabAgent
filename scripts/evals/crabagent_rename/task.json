@@ -1,0 +1,13 @@
+{
+  "agent": "engineer",
+  "timeout_minutes": 40,
+  "project": "repo",
+  "checks": [
+    {"label": "every ToolRegistry.get call renamed, nothing else (hidden)", "copy": ["verify", ".eval_verify"],
+     "command": ["python3", ".eval_verify/verify_rename.py"], "env": {"PYTHONPATH": "src"}},
+    {"label": "python suite",
+     "command": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-n", "auto",
+                 "--deselect", "tests/test_semantic_summary_real_provider.py"],
+     "env": {"PYTHONPATH": "src"}, "timeout": 900}
+  ]
+}

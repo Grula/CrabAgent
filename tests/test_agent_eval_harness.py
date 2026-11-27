@@ -329,3 +329,17 @@ def test_overlay_runs_hidden_files_then_restores_the_agents(tmp_path):
     assert "test_agents_own" in (workspace / "tests" / "test_t.py").read_text()  # restored
     assert not (workspace / "tests" / "test_new.py").exists()                  # removed again
     assert not report["tests"][1]["passed"] and "git clone" in report["tests"][1]["failures"][0]
+
+
+def test_deny_tools_changes_only_the_copy(tmp_path):
+    db = tmp_path / "db.sqlite"
+    raw = sqlite3.connect(db)
+    raw.execute("create table agent_profiles (name text, tool_permissions text)")
+    raw.execute("insert into agent_profiles values ('engineer', ?)", (json.dumps({"bash": "auto"}),))
+    raw.execute("insert into agent_profiles values ('general', null)")
+    raw.commit()
+    raw.close()
+    agent_eval._deny_tools(db, ["code_search", "code_nav"])
+    rows = dict(sqlite3.connect(db).execute("select name, tool_permissions from agent_profiles").fetchall())
+    assert json.loads(rows["engineer"]) == {"bash": "auto", "code_search": "deny", "code_nav": "deny"}
+    assert json.loads(rows["general"]) == {"code_search": "deny", "code_nav": "deny"}
