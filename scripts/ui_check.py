@@ -427,6 +427,11 @@ def _start_server(tmp: Path, port: int, cwd: Path | None = None) -> subprocess.P
         }
     )
     env.pop("PYTHONPATH", None)
+    git_config = Path.home() / ".gitconfig"
+    if git_config.exists() and "GIT_CONFIG_GLOBAL" not in env:
+        # The fake HOME hides the user's git identity: commits made by agents in a
+        # preview would fail with "Author identity unknown". Use the real config.
+        env["GIT_CONFIG_GLOBAL"] = str(git_config)
     if user_base:
         # The fake HOME would also hide the user's site-packages from every
         # command the agents run (e.g. `PYTHONPATH=src pytest` then can't import

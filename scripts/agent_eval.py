@@ -458,8 +458,12 @@ def main(argv: list[str] | None = None) -> int:
         username = ui_check._prepare_db_copy(tmp, None)
         port = ui_check._free_port()
         base_url = f"http://127.0.0.1:{port}"
-        # Started in the workspace: nothing in the agents' environment points at this repo.
-        proc = ui_check._start_server(tmp, port, cwd=workspace)
+        # Started in an empty folder: nothing in the agents' environment points at this
+        # repo, and the server's startup seeding (.crabagent/skills, tools) can't land in
+        # the workspace being scored.
+        server_cwd = tmp / "server-cwd"
+        server_cwd.mkdir()
+        proc = ui_check._start_server(tmp, port, cwd=server_cwd)
         ui_check._wait_until_up(base_url, proc)
         api = Api(base_url, ui_check._login(base_url, username, ui_check.PREVIEW_PASSWORD))
         session = api.call("POST", "/api/sessions", {"title": f"eval {task.name}", "workspace": str(workspace),

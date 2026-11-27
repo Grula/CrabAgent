@@ -74,6 +74,8 @@ def test_preview_server_env_does_not_point_agents_at_this_repo(tmp_path, monkeyp
     ui_check._start_server(tmp_path, 4321, cwd=tmp_path / "ws")
 
     assert "PYTHONPATH" not in seen["env"]
+    if (Path.home() / ".gitconfig").exists():
+        assert seen["env"]["GIT_CONFIG_GLOBAL"] == str(Path.home() / ".gitconfig")  # agents' commits work
     assert seen["cwd"] == str(tmp_path / "ws")
     assert seen["cmd"][1] == "-c" and seen["cmd"][3] == str(ui_check.REPO / "src")  # on sys.path only
     assert seen["cmd"][-3:] == ["--serve", "--port", "4321"]
