@@ -62,11 +62,12 @@ describe("custom themes", () => {
     let value!: ReturnType<typeof useTheme>;
     function Probe() { value = useTheme(); return null; }
     act(() => root.render(<ThemeProvider><Probe /></ThemeProvider>));
-    expect(value.chatFont).toBe("serif");
-    expect(document.documentElement.getAttribute("data-chat-font")).toBe("serif");
-    act(() => value.setChatFont("sans"));
+    // Sans by default (the system UI font, like VS Code); serif stays a choice.
+    expect(value.chatFont).toBe("sans");
     expect(document.documentElement.getAttribute("data-chat-font")).toBe("sans");
-    expect(localStorage.getItem("crabagent.chatFont")).toBe("sans");
+    act(() => value.setChatFont("serif"));
+    expect(document.documentElement.getAttribute("data-chat-font")).toBe("serif");
+    expect(localStorage.getItem("crabagent.chatFont")).toBe("serif");
   });
   it("exports and imports theme color schemes", () => {
     const theme: CustomTheme = { id: "t", name: "New theme", colors: DEFAULT_COLORS, backgroundImage: "indexeddb:abc", backgroundOverlay: 40 };

@@ -172,27 +172,24 @@
    ========================================================================= */
 
 :root {
-  --font-sans: "Inter", "Inter Fallback", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  /* The platform's UI font first (Segoe UI on Windows, SF on macOS), like VS Code and
+     Claude Code; CJK fonts last, for CJK text only. */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    "Inter", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-serif: "Tiempos Text", "Source Serif 4", "Source Serif Pro", "Iowan Old Style", "Charter",
     "Bitstream Charter", "Georgia", "Noto Serif", "Songti SC", ui-serif, serif;
-  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", "Menlo", "Consolas", monospace;
-  /* Font of assistant replies; switched in Settings → Appearance */
-  --font-chat: var(--font-serif);
-}
-:root[data-chat-font="sans"] {
+  --font-mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SF Mono", Menlo,
+    "JetBrains Mono", "Fira Code", monospace;
+  /* Font of assistant replies; switched in Settings → Appearance (sans by default) */
   --font-chat: var(--font-sans);
+}
+:root[data-chat-font="serif"] {
+  --font-chat: var(--font-serif);
 }
 
 /* =========================================================================
    Base
    ========================================================================= */
-
-@font-face {
-  font-family: "Inter Fallback";
-  src: local("Inter"), local("PingFang SC"), local("Microsoft YaHei");
-  font-display: swap;
-}
 
 .scrollbar-none::-webkit-scrollbar { display: none; }
 .scrollbar-none { scrollbar-width: none; }
@@ -251,7 +248,7 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Large serif headings: greetings, page titles, wordmark */
 .font-display {
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-weight: 400;
   letter-spacing: -0.015em;
 }
@@ -423,11 +420,12 @@ code {
 }
 
 :not(pre) > code {
-  padding: 1px 5px;
-  border-radius: 5px;
+  padding: 1px 6px;
+  border-radius: 6px;
   background: var(--bg-tertiary);
-  color: var(--danger);
+  color: var(--text-primary);
   border: 1px solid var(--border-subtle);
+  font-size: 0.85em;
 }
 
 pre {
@@ -659,7 +657,7 @@ pre code code {
 .visualization-error { color: var(--warning); }
 .kpi-block { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 0.25rem 1rem; padding: 0.35rem; }
 .kpi-block__title, .kpi-block small { color: var(--text-secondary); font-size: 12px; }
-.kpi-block strong { grid-column: 1; font-family: var(--font-serif); font-size: 2rem; line-height: 1; letter-spacing: -0.04em; }
+.kpi-block strong { grid-column: 1; font-family: var(--font-sans); font-size: 2rem; line-height: 1; letter-spacing: -0.04em; }
 .kpi-block__change { display: inline-flex; align-items: center; gap: 0.2rem; padding-bottom: 0.2rem; font-size: 12px; font-weight: 600; }
 .kpi-block__change--up { color: var(--success); }.kpi-block__change--down { color: var(--danger); }.kpi-block__change--neutral { color: var(--text-secondary); }
 .kpi-block small { grid-column: 1 / -1; }

@@ -287,7 +287,7 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 const read = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
 function initialMode(): ThemeMode { const value = read(STORAGE_KEY); return value === "light" || value === "dark" || value === "system" ? value : "system"; }
-function initialChatFont(): ChatFont { return read(CHAT_FONT_KEY) === "sans" ? "sans" : "serif"; }
+function initialChatFont(): ChatFont { return read(CHAT_FONT_KEY) === "serif" ? "serif" : "sans"; }
 function systemTheme(): Theme { return typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark"; }
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [mode, setModeState] = useState<ThemeMode>(initialMode);
