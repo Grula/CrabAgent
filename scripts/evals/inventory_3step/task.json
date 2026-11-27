@@ -1,6 +1,42 @@
 {
   "agent": "architect",
   "timeout_minutes": 60,
-  "acceptance_dir": "acceptance",
-  "project_test_command": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+  "checks": [
+    {
+      "label": "acceptance",
+      "copy": [
+        "acceptance",
+        ".eval_acceptance"
+      ],
+      "command": [
+        "python3",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        ".eval_acceptance"
+      ]
+    },
+    {
+      "label": "project tests",
+      "command": [
+        "python3",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tests"
+      ]
+    },
+    {
+      "label": "no commit made (nobody asked for one)",
+      "command": [
+        "bash",
+        "-c",
+        "test \"$(git rev-list --count HEAD)\" = 1"
+      ]
+    }
+  ]
 }

@@ -1,0 +1,15 @@
+{
+  "agent": "general",
+  "timeout_minutes": 30,
+  "checks": [
+    {"label": "acceptance", "copy": ["acceptance", ".eval_acceptance"],
+     "command": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", ".eval_acceptance"]},
+    {"label": "project tests", "command": ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]},
+    {"label": "committed on feature/inventory-persistence, main untouched",
+     "command": ["bash", "-c", "test \"$(git branch --show-current)\" = feature/inventory-persistence && test \"$(git rev-list --count main)\" = 1 && test \"$(git rev-list --count main..HEAD)\" -ge 1"]},
+    {"label": "nothing left uncommitted (besides the harness's own files)",
+     "command": ["bash", "-c", "git reset -q && test -z \"$(git status --porcelain --untracked-files=all | grep -v '^?? .eval_acceptance/')\""]},
+    {"label": "the commit touches only the package and its tests, with a real message",
+     "command": ["bash", "-c", "files=$(git diff --name-only main..HEAD); test -n \"$files\" && ! echo \"$files\" | grep -vE '^(inventory|tests)/' && test \"$(git log -1 --format=%s | wc -c)\" -gt 10"]}
+  ]
+}

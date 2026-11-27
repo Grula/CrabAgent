@@ -73,6 +73,7 @@ import crabagent.core.agent.tools.conversation  # noqa: F401
 import crabagent.core.agent.tools.diagnostics  # noqa: F401
 import crabagent.core.agent.tools.edit  # noqa: F401
 import crabagent.core.agent.tools.git  # noqa: F401
+import crabagent.core.agent.tools.git_write  # noqa: F401
 import crabagent.core.agent.tools.glob  # noqa: F401
 import crabagent.core.agent.tools.grep  # noqa: F401
 import crabagent.core.agent.tools.image  # noqa: F401

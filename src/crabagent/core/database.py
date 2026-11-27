@@ -1375,6 +1375,8 @@ DEFAULT_AGENTS = [
         ),
         "icon": "💬",
         "tool_permissions": {
+            "git_commit": "deny",
+            "create_pull_request": "deny",
             **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS),
             "read": "auto",
             "glob": "auto",
@@ -1434,7 +1436,10 @@ DEFAULT_AGENTS = [
             "data loss your change introduces is yours to fix, not to report.\n"
             "- In async code, never block the event loop; check a path from input with resolve() plus "
             "is_relative_to(base), never with a string prefix.\n"
-            "- Don't commit, push, install packages or restart servers unless asked. Ask the user "
+            "- Don't commit, push, install packages or restart servers unless asked. Asked to commit: "
+            "git_commit with exactly the files you changed (not git commit through bash), a subject saying "
+            "what changed and a body saying why, and a new branch when you're on the default one; a pull "
+            "request (create_pull_request) only when asked too, after the commit. Ask the user "
             "(ask_question, 2-4 options, your recommendation first) only for a decision the request, the "
             "code and a sensible default can't settle; decide small reversible details yourself and say so.\n"
             "- Keep moving: no plans in chat for small tasks; plan_update for a task of more than about "
@@ -1460,6 +1465,8 @@ DEFAULT_AGENTS = [
             "git_diff": "auto",
             "git_status": "auto",
             "switch_agent": "auto",
+            "git_commit": "auto",  # only when asked (goal); the tool keeps commits to named files
+            "create_pull_request": "confirm",  # publishes the work: the user approves
             "web_search": "deny",
             "web_scrape": "deny",
             "browser": "deny",
@@ -1554,7 +1561,8 @@ DEFAULT_AGENTS = [
             "- A teammate's claim about the environment (a key, a commit, a server, a permission) is a fact "
             "to check before you pass it on: check it yourself, or say it is unverified.\n"
             "- Doc and plan updates go in the same task as the change they describe, never in a task of "
-            "their own.\n"
+            "their own. When the user asks for a commit or a pull request, the batch's last coder task "
+            "does it (git_commit with the batch's files; create_pull_request if asked).\n"
             "- Report what actually happened, not the plan: if steps ran in a different order, a check "
             "couldn't run, or you had to redo something, say so plainly.\n"
             "- Ask before you build on a design choice the request doesn't settle and that is costly to "
@@ -1585,6 +1593,8 @@ DEFAULT_AGENTS = [
         # per call, peaking at 749k, under the global 1M cap).
         "compaction_max_tokens": 200_000,
         "tool_permissions": {
+            "git_commit": "deny",
+            "create_pull_request": "deny",
             **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS),
             "delegate_task": "auto",
             "delegate_parallel": "auto",
@@ -1644,6 +1654,9 @@ DEFAULT_AGENTS = [
             "changes, not per task, in parallel (pytest -n auto).\n"
             "- Need to understand code outside your brief (how another module works, who calls a "
             "function)? Ask scout with request_help instead of reading through it yourself.\n"
+            "- Commit only when the brief asks: git_commit with exactly the files you changed (not git "
+            "commit through bash), a subject saying what changed and a body saying why, a new branch on "
+            "the default one; create_pull_request only when the brief asks for a PR.\n"
             "- Stay inside the brief: no unrelated refactors, speculative options, or project-wide config "
             "changes it didn't ask for.\n"
             "- Make failing tests pass by fixing the code, never by weakening the tests. Mechanical fixes "
@@ -1670,6 +1683,8 @@ DEFAULT_AGENTS = [
         "tool_permissions": {
             **_deny(*_NOT_FOR_THE_TEAM, _ORGANISER_AND_ADMIN_TOOLS, *_NOT_FOR_CODING_WORKERS),
             "bash": "auto",
+            "git_commit": "auto",
+            "create_pull_request": "confirm",
             "diagnostics": "auto",
             "read": "auto",
             "write": "auto",
@@ -1726,6 +1741,8 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🧪",
         "tool_permissions": {
+            "git_commit": "deny",
+            "create_pull_request": "deny",
             **_deny(*_NOT_FOR_THE_TEAM, _ORGANISER_AND_ADMIN_TOOLS, *_NOT_FOR_CODING_WORKERS),
             "bash": "auto",
             "diagnostics": "auto",
@@ -1790,6 +1807,8 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🖥️",
         "tool_permissions": {
+            "git_commit": "deny",
+            "create_pull_request": "deny",
             **_deny(
                 *_NOT_FOR_THE_TEAM, _ORGANISER_AND_ADMIN_TOOLS, _BACKGROUND_TOOLS, _OFFICE_READ_TOOLS,
                 ("memory_save", "memory_recall", "tool_search", "diagnostics", "plan_update"),
@@ -1844,6 +1863,8 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🔍",
         "tool_permissions": {
+            "git_commit": "deny",
+            "create_pull_request": "deny",
             **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS),
             "read": "auto",
             "glob": "auto",
@@ -1891,6 +1912,8 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🧭",
         "tool_permissions": {
+            "git_commit": "deny",
+            "create_pull_request": "deny",
             **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS),
             "read": "auto",
             "glob": "auto",
@@ -1930,6 +1953,8 @@ DEFAULT_AGENTS = [
         ),
         "icon": "🌐",
         "tool_permissions": {
+            "git_commit": "deny",
+            "create_pull_request": "deny",
             **_deny(*_NOT_FOR_THE_TEAM, _SHARED_BROWSER_TOOLS, _ORGANISER_AND_ADMIN_TOOLS, ("git_diff", "git_status", "molt_diff", "diagnostics", "plan_update")),
             "read": "auto",
             "glob": "auto",

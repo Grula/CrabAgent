@@ -167,6 +167,8 @@ async def create_tool(
         "plan_update",
         "diagnostics",
         "git_status",
+        "git_commit",
+        "create_pull_request",
         "list_agents",
         "skill",
         "update_agents_md",

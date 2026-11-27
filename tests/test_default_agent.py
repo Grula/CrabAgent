@@ -402,3 +402,15 @@ def test_rebuilt_bundles_are_not_scope_creep():
     goals = {a["name"]: a["goal"] for a in db.DEFAULT_AGENTS}
     assert "expected output, not scope creep" in goals["engineer"]
     assert "expected output, not scope creep" in goals["coder"]
+
+
+def test_only_the_engineer_and_coder_commit_and_pull_requests_ask_first():
+    perms = {a["name"]: a["tool_permissions"] for a in db.DEFAULT_AGENTS}
+    for name in ("engineer", "coder"):
+        assert perms[name]["git_commit"] == "auto" and perms[name]["create_pull_request"] == "confirm"
+    for name in ("general", "architect", "tester", "ui_checker", "the_reviewer", "scout", "researcher"):
+        assert perms[name]["git_commit"] == perms[name]["create_pull_request"] == "deny", name
+    goals = {a["name"]: a["goal"] for a in db.DEFAULT_AGENTS}
+    assert "Asked to commit: git_commit with exactly the files you changed" in goals["engineer"]
+    assert "Commit only when the brief asks" in goals["coder"]
+    assert "the batch's last coder task does it" in goals["architect"]
